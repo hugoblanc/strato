@@ -20,17 +20,22 @@ export interface FakeSpec {
   connectError?: Partial<ProviderError> & { code: string };
   /** Threads the person took part in. */
   participated?: string[];
+  /**
+   * Makes the tool a push tool. Each connection, in turn (the last one repeated): the batches it delivers once open
+   * (an empty batch is a delivery without items), then how it ends; "hold" keeps it open until its signal aborts.
+   */
+  pushes?: { batches: Item[][]; end: "clean" | "cut" | "fatal" | "hold"; refused?: string }[];
 }
 
 /** A ticket tool on `tickets.example`, its links `https://tickets.example/t/PLAT-12`. */
-export function fakeDescriptor(id: string, label: string): ProviderDescriptor {
+export function fakeDescriptor(id: string, label: string, push = false): ProviderDescriptor {
   const text = (en: string) => ({ en });
   return {
     id,
     label: text(label),
     api: { min: PROVIDER_API, max: PROVIDER_API },
     kinds: ["tracker"],
-    capabilities: { ingest: { push: false, poll: true }, participation: true, context: false, actions: [], undo: [], idempotent: [], edits: false, identity: false },
+    capabilities: { ingest: { push, poll: true }, participation: true, context: false, actions: [], undo: [], idempotent: [], edits: false, identity: false },
     auth: [{ id: "api-key", kind: "api-key", label: text("API key"), docs: "https://tickets.example/docs/api-keys", steps: [{ kind: "paste", secret: "FAKE_API_KEY", say: text("Paste your API key") }], stores: [{ name: "FAKE_API_KEY" }] }],
     settings: [
       { key: "me", type: "string", label: text("Your user id"), ask: text("Your user id?"), triage: "me" },
@@ -53,9 +58,24 @@ function answer<T>(a: Answer<T>): T {
 export function fakeProvider(spec: FakeSpec): Provider & { calls: string[] } {
   const calls: string[] = [];
   let polls = 0;
+  let connections = 0;
   return {
     calls,
-    descriptor: fakeDescriptor(spec.id, spec.label),
+    descriptor: fakeDescriptor(spec.id, spec.label, !!spec.pushes),
+    ...(spec.pushes
+      ? {
+          async subscribe(ctx, onItems, events) {
+            const list = spec.pushes ?? [];
+            const c = list[Math.min(connections++, list.length - 1)];
+            calls.push("subscribe");
+            if (c.end === "fatal") return { end: "fatal" as const, ...(c.refused ? { refused: c.refused } : {}) };
+            events?.opened();
+            for (const batch of c.batches) onItems(batch);
+            if (c.end === "hold") await new Promise<void>((resolve) => (ctx.signal.aborted ? resolve() : ctx.signal.addEventListener("abort", () => resolve())));
+            return { end: c.end === "hold" ? ("cut" as const) : c.end, ...(c.refused ? { refused: c.refused } : {}) };
+          },
+        }
+      : {}),
     async connect(ctx) {
       calls.push("connect");
       if (spec.connectError) throw { retryable: false, fatal: true, message: spec.connectError.code, ...spec.connectError };

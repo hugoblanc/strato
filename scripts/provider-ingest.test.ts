@@ -283,6 +283,39 @@ describe("one tool down never stops the others", () => {
     expect(out.result.dead).toEqual(["connect"]);
   });
 
+  test("a push tool delivers as it goes and reconnects after a cut; one that will not push is polled instead", async () => {
+    const r = rig();
+    config(r, { ...PROFILE, providers: { chat: { accounts: { default: { me: "u-alice", watchTeams: ["PLAT"] } } }, mute: { accounts: { default: { watchTeams: ["PLAT"] } } } } });
+    cursorFor(r, "chat-default", "c0", 1);
+    cursorFor(r, "mute-default", "c0", 1);
+    const out = await script(
+      r,
+      `
+      const created = (n) => ticketItem({ thread: "PLAT-" + n, id: "PLAT-" + n, event: "created", text: "ticket " + n });
+      const chat = fakeProvider({ id: "chat", label: "Chat", polls: [{ items: [], cursor: { value: "c1", at: 1 }, complete: true }], pushes: [
+        { batches: [[], [created(400)]], end: "cut", refused: "socket closed" },
+        { batches: [[created(401)]], end: "hold" },
+      ] });
+      const mute = fakeProvider({ id: "mute", label: "Mute", polls: (n) => ({ items: [created(500 + n)], cursor: { value: "c" + (n + 1), at: n + 1 }, complete: true }), pushes: [{ batches: [], end: "fatal", refused: "no app-level token" }] });
+      registry.addProvider(chat);
+      registry.addProvider(mute);
+      const stop = new AbortController();
+      const loops = ingest.ingestAccounts().map((e) => ingest.runAccount(e, { mode: "listen", stop: stop.signal, intervalSec: 0.1, resyncMs: 60_000 }));
+      await Bun.sleep(1800);
+      stop.abort();
+      await Promise.all(loops);
+      return { chat: chat.calls, mute: mute.calls.filter((c) => c === "subscribe").length };
+    `,
+    );
+    expect(out.lines.filter((l) => l.includes("key=chat:PLAT-40")).map((l) => l.match(/key=(\S+)/)?.[1])).toEqual(["chat:PLAT-400", "chat:PLAT-401"]);
+    expect(out.lines).toContain("[strato] Chat: socket closed · retrying silently, one line when it is back");
+    expect(out.lines).toContain("[strato] Chat back after « socket closed »");
+    expect(out.result.chat).toEqual(["connect", "poll c0", "subscribe", "subscribe"]);
+    expect(out.lines).toContain("[strato] Mute: no app-level token · polled instead");
+    expect(out.lines.filter((l) => l.includes("key=mute:PLAT-5")).length).toBeGreaterThanOrEqual(3);
+    expect(out.result.mute).toBe(1);
+  });
+
   test("listen: Slack's lines come out unchanged next to a ticket tool's, and a tool that fails says so once", async () => {
     const r = goldenRig();
     const raw = JSON.parse(readFileSync(join(r.state, "config.json"), "utf8"));

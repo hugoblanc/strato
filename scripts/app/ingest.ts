@@ -318,6 +318,13 @@ function checkedPoll(r: unknown): PollResult {
   return { items: p.items.filter(isItem), cursor: p.cursor as IngestCursor, complete: p.complete };
 }
 
+/** A poll's items the core cannot read, said once per pass in the account's log. */
+function droppedItems(src: Source, r: unknown): void {
+  const raw = (r as { items?: unknown[] } | null)?.items;
+  const dropped = Array.isArray(raw) ? raw.filter((x) => !isItem(x)).length : 0;
+  if (dropped) src.ctx.log("warn", `${dropped} item(s) dropped: missing or mistyped fields`);
+}
+
 /** The fields the core reads on an item, with their types: an item without them is dropped. */
 export function isItem(x: unknown): x is Item {
   const i = x as Item;
@@ -358,7 +365,9 @@ export async function pollPass(run: AccountRun, opts: { maxItems?: number; threa
   if (!src.provider.poll) throw { code: "no_poll", message: "this tool cannot be polled", retryable: false, fatal: true };
   const first = run.cursor === null;
   const started = Date.now();
-  const r = checkedPoll(await src.provider.poll(src.ctx, run.cursor, { since: started - FIRST_WINDOW_MS, maxItems: opts.maxItems ?? PASS_MAX_ITEMS }));
+  const answer = await src.provider.poll(src.ctx, run.cursor, { since: started - FIRST_WINDOW_MS, maxItems: opts.maxItems ?? PASS_MAX_ITEMS });
+  const r = checkedPoll(answer);
+  droppedItems(src, answer);
   const fresh = r.items.filter((it) => {
     const id = itemKeyOf(src, it.id);
     return id !== null && !src.seen.has(id);
@@ -499,7 +508,8 @@ async function runPoll(run: AccountRun, opts: RunOptions, lines: ReturnType<type
 
 /**
  * The push loop of a listener: a poll pass at startup, every 5 min and on wake from sleep, because a dead connection
- * says nothing; the connection itself reopened with Retry-After or a growing delay, cut and reopened on wake.
+ * says nothing; the connection itself reopened with Retry-After or a growing delay, cut and reopened on wake. A tool
+ * that will not push at all (its connection ends "fatal") is polled instead, with one line.
  */
 async function runPush(run: AccountRun, opts: RunOptions, lines: ReturnType<typeof outageLines>): Promise<void> {
   const { src } = run;
@@ -538,6 +548,7 @@ async function runPush(run: AccountRun, opts: RunOptions, lines: ReturnType<type
   beat.unref?.();
 
   let backoff = 1;
+  let fellBack = false;
   let chain: Promise<void> = Promise.resolve();
   const onStop = () => connection?.abort();
   opts.stop.addEventListener("abort", onStop);
@@ -570,9 +581,14 @@ async function runPush(run: AccountRun, opts: RunOptions, lines: ReturnType<type
         },
       );
       await chain;
-      if (r?.refused) lines.failed(r.refused, r.end === "fatal");
-      else if (r?.end === "fatal") lines.failed("the connection ended for good", true);
-      if (r?.end === "fatal" || opts.stop.aborted) break;
+      if (r?.end === "fatal") {
+        // the tool will not push (no app-level token, a refused connection): polling still brings its items
+        say(`[strato] ${src.label}: ${untrusted(oneLine(truncate(r.refused ?? "the connection ended for good", 200)))} · polled instead`);
+        fellBack = true;
+        break;
+      }
+      if (r?.refused) lines.failed(r.refused);
+      if (opts.stop.aborted) break;
       await pause(Math.max(backoff, Math.min(900, (r?.retryAfterMs ?? 0) / 1000)) * 1000, opts.stop);
       backoff = r?.end === "clean" ? 1 : Math.min(60, backoff * 2);
     }
@@ -581,6 +597,7 @@ async function runPush(run: AccountRun, opts: RunOptions, lines: ReturnType<type
     clearInterval(timer);
     clearInterval(beat);
   }
+  if (fellBack && !opts.stop.aborted) await runPoll(run, opts, lines);
 }
 
 // ------------------------------------------------------------------ the Slack forms kept for older callers
