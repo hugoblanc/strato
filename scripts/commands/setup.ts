@@ -16,6 +16,7 @@
 import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, dirname, join } from "node:path";
+import { commandForEntry } from "../app/self.ts";
 import { CLAUDE_BIN, expandHome, F, fail, flags, localDay, out, readJson, run, SCRIPT, STATE, WORKSPACE, writeJson } from "../app/env.ts";
 import { appToken, tokenCandidates } from "../app/slack.ts";
 import { createStateDir } from "../app/store.ts";
@@ -35,7 +36,7 @@ export const SETUP_USAGE = [
   "  --live                  leave shadow mode: the board can post as you",
 ].join("\n");
 
-export const SHADOW_REFUSAL = "shadow mode: nothing is posted (bun strato.ts setup --live turns it off)";
+export const SHADOW_REFUSAL = "shadow mode: nothing is posted (`setup --live` turns it off)";
 
 /**
  * Shadow mode as config.json says now, not as it was when the process started: `setup --live` takes effect on a
@@ -54,7 +55,7 @@ export function shadowNow(): boolean {
 export const short = (path: string) => shortPath(path, homedir(), process.cwd());
 
 /** How the person calls Strato from where they are: commands in hints are copied as is. */
-export const cliCommand = () => `bun ${short(SCRIPT)}`;
+export const cliCommand = () => commandForEntry(short(SCRIPT));
 
 /** The "Next:" line that ends `setup --check` and `doctor`. */
 export const nextLine = (p: Progress) => `Next: ${nextStep(p, cliCommand())}`;
