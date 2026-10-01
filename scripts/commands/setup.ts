@@ -11,11 +11,12 @@
  * Slack is only read (auth.test, users.info, usergroups.list, search.messages). Every probe tolerates a missing scope,
  * a missing token and a missing network: `--detect` then returns what it could find, and says why the rest is missing.
  */
-import { existsSync, mkdirSync, readdirSync, readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, join } from "node:path";
 import { CLAUDE_BIN, F, fail, flags, localDay, out, readJson, run, SCRIPT, STATE, WORKSPACE, writeJson } from "../app/env.ts";
 import { appToken, tokenCandidates } from "../app/slack.ts";
+import { createStateDir } from "../app/store.ts";
 import manifestYaml from "../../examples/slack-app-manifest.yaml" with { type: "text" };
 import { type CheckItem, checkReport, tokenKindProblem, USER_TOKEN_WHERE, nextStep, type Progress, shortPath, slackAppLink, SLACK_SCOPES, type Detected, displayNameOf, firstNameOf, linearWorkspaces, localeFromEnv, mergeProfile, parseRemote, profileDiff, profileErrors, type Remote, type SearchMatch, slackWorkspaceFromUrl, suggestedConfig, ticketPrefixes, topChannels } from "../core/setup.ts";
 import { missingSettings, NEW_INSTALL_PROFILE, resolveSettings, settings, useSettings } from "../core/settings.ts";
@@ -279,7 +280,7 @@ async function detect() {
 function writeProfile(incoming: unknown, force: boolean, label: string) {
   const errors = profileErrors(incoming);
   if (errors.length) fail(`${label} refused, nothing written:\n  ${errors.join("\n  ")}`);
-  mkdirSync(STATE, { recursive: true });
+  createStateDir();
   const existed = existsSync(F.config);
   const before = existed ? readJson<unknown>(F.config, {}) : {};
   // a profile created here starts in shadow mode unless it says otherwise: the first day posts nothing

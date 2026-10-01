@@ -169,6 +169,9 @@ cp my-local.md .strato/local.md
 | `workers.shadow` | Shadow mode: nothing is posted (below) |
 | `ui.locale` | `en` or `fr`: the board and the master's messages to you |
 
+**The state folder ignores itself in git.** A new `.strato/` holds a `.gitignore` with `*`: Slack messages, reports and ids never land in your repository by a `git add .`.
+To version your profile, copy `config.json` and `local.md` somewhere else.
+
 **`local.md`.** Free Markdown, read by the master every morning.
 The interview writes five sections: *Who I am*, *My team*, *Ownership map*, *Never without my go*, *Notes*.
 The master uses it to triage: a request that belongs to someone on your ownership map is ignored, not turned into a topic.

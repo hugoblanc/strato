@@ -18,9 +18,20 @@ export interface Counters {
   digest?: string;
 }
 
+/**
+ * Creates the state folder. A new one ignores itself in git (`.gitignore` with `*`): it holds Slack message texts,
+ * reports and ids, and the workspace is often a repository. Only at creation: deleting that file to version the
+ * folder sticks.
+ */
+export function createStateDir() {
+  if (existsSync(STATE)) return;
+  mkdirSync(STATE, { recursive: true });
+  writeFileSync(join(STATE, ".gitignore"), "# Strato's state: Slack messages, reports, ids. Never committed.\n*\n");
+}
+
 /** Creates the state folder, and a complete config.json with default values if missing: that is the file to fill in. */
 export function ensureState() {
-  mkdirSync(STATE, { recursive: true });
+  createStateDir();
   if (!existsSync(F.config)) writeJson(F.config, newInstallSettings());
 }
 

@@ -380,6 +380,19 @@ describe("setup --write and --live", () => {
     expect(resolveSettings(config(r)).workers.shadow).toBe(false);
   }, 20_000);
 
+  test("a new state folder ignores itself in git; an existing one is left as is (O8)", async () => {
+    const r = rig();
+    const ws = join(r.dir, "ws");
+    Bun.spawnSync(["git", "init", "-q", ws]);
+    const file = join(r.dir, "profile.json");
+    writeFileSync(file, JSON.stringify({ owner: { name: "Alice" } }));
+    expect((await cli(r, ["setup", "--write", file], { STRATO_STATE: "", AIGUILLEUR_STATE: "" })).code).toBe(0);
+    expect(readFileSync(join(ws, ".strato", ".gitignore"), "utf8")).toContain("\n*\n");
+    expect(Bun.spawnSync(["git", "-C", ws, "status", "--porcelain"]).stdout.toString()).toBe("");
+    await cli(r, ["doctor"]);
+    expect(existsSync(join(r.state, ".gitignore"))).toBe(false);
+  }, 20_000);
+
   test("an existing profile is merged, never overwritten without --force, and the diff is shown", async () => {
     const r = rig();
     const file = join(r.dir, "profile.json");
