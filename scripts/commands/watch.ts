@@ -19,7 +19,9 @@ import {
   itemKeyOf,
   legacySeen,
   outageLines,
+  PASS_MAX_ITEMS,
   participatedOf,
+  pause,
   processItems,
   runAccount,
   type SeenStore,
@@ -30,11 +32,12 @@ import {
   triageErrorLine,
   triageItem,
 } from "../app/ingest.ts";
-import { appToken, defaultSlack, tokenCandidates } from "../app/slack.ts";
+import { appToken, defaultSlack, NO_TOKEN, SLACK_CONNECT_DELAYS, tokenCandidates } from "../app/slack.ts";
 import { runGc } from "./gc.ts";
 import { pickCards, refreshCards } from "./refresh.ts";
 import { type Counters, ensureState, loadSujets, logEvent, withLock } from "../app/store.ts";
 import { type Config, socketDeaf, type SocketHealth } from "../chat/slack-model.ts";
+import { checkedLink } from "../core/links.ts";
 import { type AgentRow, attentionChanged, sessionAttention } from "../claude/model.ts";
 import { digestLines, gateLine, type InfoEvent } from "../core/cards.ts";
 import { type MasterRequest, revueLine } from "../core/master.ts";
@@ -44,8 +47,8 @@ import { t } from "../core/i18n.ts";
 import { isSilent } from "../core/triage.ts";
 import { providerError } from "../providers/api.ts";
 import { type AccountEntry, accountContext } from "../providers/registry.ts";
-import type { Item } from "../providers/sdk.ts";
-import { slackProvider } from "../providers/slack/index.ts";
+import type { Item, ProviderError } from "../providers/sdk.ts";
+import { slackProvider, slackProviderError } from "../providers/slack/index.ts";
 
 export { connexionSocket, type FinSocket, type SocketDeps } from "../app/slack.ts";
 export { processMatches, triageErrorLine } from "../app/ingest.ts";
@@ -58,8 +61,9 @@ export function sessionLine(s: Sujet, label: string): string {
  * Rereads the Slack threads of open topics since `since` (Unix seconds) and passes their messages through the shared
  * triage, on the default Slack account (`catchUpThreads` in app/ingest.ts). `failed` counts threads unreadable for a
  * transient reason: the pass is not complete and the cursor must not move. `base` is the workspace's URL.
+ * Kept for the tests written against it (ingest.test.ts); `listen` calls `catchUpThreads` directly.
  */
-export async function backfillThreads(cfg: Config, seen: Set<string>, participated: Set<string>, base: string, since: number): Promise<{ items: Item[]; failed: number }> {
+export async function backfillThreads(cfg: Config, seen: Set<string>, participated: Set<string>, base: string, since: number): Promise<{ items: Item[]; failed: number; untriaged: number }> {
   if (base) defaultSlack.base = base.replace(/\/$/, "");
   return catchUpThreads(slackSource(cfg, legacySeen(seen), participated), since * 1000);
 }
@@ -80,28 +84,63 @@ function slackInUse(others: AccountEntry[]): boolean {
   return others.length === 0 || !!(s.team || s.me) || tokenCandidates().length > 0;
 }
 
-/**
- * Connects the default Slack account. Alone, a failure stops the command as before (exit 78); next to other accounts,
- * it is one line and the others carry on.
- */
-async function connectDefaultSlack(alone: boolean, seen: SeenStore): Promise<SlackRun | null> {
-  const cfg = settings().slack;
-  const probe = slackSource(cfg, seen);
-  try {
-    const identity = await slackProvider.connect(probe.ctx);
-    return { src: slackSource(cfg, seen, new Set(), identity) };
-  } catch (e) {
-    const pe = providerError(e);
-    if (alone) fail(pe.message, 78);
-    outageLines("Slack", out).failed(pe.message, true);
-    return null;
-  }
-}
+/** A Slack error's text for a line that already names Slack: Slack's own errors read "Slack: token_revoked". */
+const slackReason = (pe: Pick<ProviderError, "message">) => pe.message.replace(/^Slack: /, "");
 
-/** A Slack line, or the end of the command when Slack is alone. */
-function slackStops(alone: boolean, message: string, code: number): null {
-  if (alone) fail(message, code);
-  outageLines("Slack", out).failed(message, true);
+/** The longest wait between two connection attempts of the default Slack account next to other accounts. */
+const SLACK_RETRY_MAX_SEC = 300;
+
+/**
+ * Connects the default Slack account and, for `listen` (`socket`), reads its app token and its workspace's URL; then
+ * the threads the person took part in. Alone, a failure stops the command as before (exit 78), after the waits older
+ * versions made while Slack did not answer. Next to other accounts, a failure that may clear (network, rate limit) is
+ * said once and retried with a growing delay until Slack answers or `stop` aborts, while the others run; one that will
+ * not clear (no usable token, no app token) is one line, and the others carry on. `retry: false` (a one-shot command
+ * such as `backlog`) makes a single attempt.
+ */
+async function slackReady(alone: boolean, seen: SeenStore, opts: { socket: boolean; stop: AbortSignal; retry?: boolean }): Promise<SlackRun | null> {
+  const cfg = settings().slack;
+  const lines = outageLines("Slack", out);
+  const stops = (message: string, code = 78): null => {
+    if (alone) fail(message, code);
+    lines.failed(message, true);
+    return null;
+  };
+  for (let attempt = 0; !opts.stop.aborted; attempt++) {
+    let why: ProviderError;
+    let connected = false;
+    try {
+      const identity = await slackProvider.connect(slackSource(cfg, seen).ctx);
+      connected = true;
+      if (opts.socket) {
+        if (!appToken()) return stops(cfg.appTokenFile ? t("cli.listen.noAppTokenFile", { file: cfg.appTokenFile }) : t("cli.listen.noAppToken"));
+        let base: string;
+        try {
+          // the URL comes with the identity; a Slack that stops answering right after is retried like a failed connect
+          base = defaultSlack.base ?? (await defaultSlack.workspaceUrl());
+        } catch (e) {
+          throw slackProviderError(e);
+        }
+        if (!base) return stops(t("cli.listen.noWorkspaceUrl"));
+      }
+      lines.ok();
+      const src = slackSource(cfg, seen, new Set(), identity);
+      src.participated = await participatedOf(src);
+      return { src };
+    } catch (e) {
+      why = providerError(e);
+    }
+    if (why.fatal) return stops(alone ? why.message : slackReason(why));
+    if (alone) {
+      // as `connectSlack` did: a few rounds while Slack does not answer, then the reason no token was usable
+      if (attempt >= SLACK_CONNECT_DELAYS.length) return stops(connected ? why.message : NO_TOKEN(cfg));
+      await Bun.sleep(SLACK_CONNECT_DELAYS[attempt] * 1000);
+      continue;
+    }
+    if (opts.retry === false) return stops(slackReason(why));
+    lines.failed(slackReason(why));
+    await pause(Math.min(SLACK_RETRY_MAX_SEC, Math.max(5 * 2 ** Math.min(attempt, 6), (why.retryAfterMs ?? 0) / 1000)) * 1000, opts.stop);
+  }
   return null;
 }
 
@@ -205,20 +244,16 @@ export async function listen(opts: Record<string, string>) {
   const alone = others.length === 0;
   const stop = new AbortController();
 
-  const seenIds = new Set(readJson<string[]>(F.seen, []));
-  const seen = legacySeen(seenIds);
-  let slack = slackInUse(others) ? await connectDefaultSlack(alone, seen) : null;
-  const xapp = slack ? appToken() : null;
-  if (slack && !xapp) slack = slackStops(alone, settings().slack.appTokenFile ? t("cli.listen.noAppTokenFile", { file: settings().slack.appTokenFile }) : t("cli.listen.noAppToken"), 78);
-  const base = slack ? (defaultSlack.base ?? (await defaultSlack.workspaceUrl())) : "";
-  if (slack && !base) slack = slackStops(alone, t("cli.listen.noWorkspaceUrl"), 78);
+  const seen = legacySeen();
+  const wanted = slackInUse(others);
+  // alone, Slack is the listener: it connects first, and a failure stops the command as before
+  let slack: SlackRun | null = alone && wanted ? await slackReady(true, seen, { socket: true, stop: stop.signal }) : null;
 
   const minGap = Number(opts.sessions ?? 20);
   const saved = readJson<{ lastTick?: number; syncedTo?: number }>(F.tick, {});
   const firstRun = saved.lastTick === undefined;
   // up to where everything was surely read (`nextSyncCursor`); an installation older than the cursor starts from the heartbeat
   let syncedTo = saved.syncedTo ?? saved.lastTick ?? Date.now() / 1000 - 3600;
-  if (slack) slack.src.participated = await participatedOf(slack.src);
   const prev = new Map<string, string | null>();
   await knownAttention(prev);
 
@@ -245,11 +280,12 @@ export async function listen(opts: Record<string, string>) {
       let ok = true;
       let next = syncedTo;
       try {
-        const r = await src.provider.poll?.(src.ctx, { value: String(fromSec), at: fromSec * 1000 }, { since: fromSec * 1000, maxItems: 3000 });
+        const r = await src.provider.poll?.(src.ctx, { value: String(fromSec), at: fromSec * 1000 }, { since: fromSec * 1000, maxItems: PASS_MAX_ITEMS });
         if (!r) throw new Error("no poll");
-        if (!r.complete) out(cappedLine(null, 3000));
+        if (!r.complete) out(cappedLine(null, PASS_MAX_ITEMS));
         found = r.items.filter((it) => !seen.has(itemKeyOf(src, it.id) ?? ""));
-        await processItems(src, r.items, firstRun && why === "startup");
+        // a message whose triage failed holds the cursor back: the next pass reads it again (section 4.8)
+        if (await processItems(src, r.items, firstRun && why === "startup")) ok = false;
         next = Number(r.cursor.value);
       } catch {
         ok = false;
@@ -260,6 +296,7 @@ export async function listen(opts: Record<string, string>) {
         try {
           const threads = await catchUpThreads(src, (fromSec - 300) * 1000);
           found.push(...threads.items);
+          if (threads.untriaged) ok = false;
           if (threads.failed) {
             ok = false;
             health.syncFailedAt = Date.now();
@@ -292,10 +329,11 @@ export async function listen(opts: Record<string, string>) {
   // Catch-up: what arrived while stopped, before opening the socket. Dedup absorbs the overlap.
   // Search only sees what mentions the person served; replies in the threads of open topics are reread separately,
   // otherwise follow-ups in those threads would be missed.
-  if (slack) {
+  const armSlack = async () => {
     await resync(syncedTo, "startup", false);
     out(`[strato] Socket Mode listener armed · ${firstRun ? "first run: history marked as read" : "catch-up done"} · topics declared by hook`);
-  }
+  };
+  if (slack) await armSlack();
   if (!alone) out(`[strato] listener armed · ${labelsOf(others)} · each account in its own loop`);
 
   // Topics are watched through the file system, not by a tick.
@@ -340,6 +378,11 @@ export async function listen(opts: Record<string, string>) {
   // every other account in its own loop: one that fails never stops the others, nor Slack
   const loops = others.map((entry) => runAccount(entry, { mode: "listen", stop: stop.signal }));
   if (!slack) writeTick();
+  // next to other accounts, Slack connects while they run: a Slack that does not answer is retried, never holding them back
+  if (!alone && wanted) {
+    slack = await slackReady(false, seen, { socket: true, stop: stop.signal });
+    if (slack) await armSlack();
+  }
 
   // Messages are handled one at a time: processItems reads and writes `seen`.
   let file: Promise<void> = Promise.resolve();
@@ -368,10 +411,14 @@ export async function listen(opts: Record<string, string>) {
           outage.ouverte();
           backoff = 1;
         },
+        // an event Slack sent that could not be read into a message: the line older versions printed
+        failed: (link, reason) => out(triageErrorLine(checkedLink(link, "slack") ?? "Slack", reason)),
       },
     );
     if (!r) break;
-    if (r.refused) outage.refus(r.refused, r.end === "fatal");
+    // next to other accounts, a socket refused for good stops Slack only, said like any other account
+    if (r.refused && r.end === "fatal" && !alone) outageLines("Slack", out).failed(r.refused, true);
+    else if (r.refused) outage.refus(r.refused, r.end === "fatal");
     if (r.end === "fatal") break;
     // Slack's Retry-After first (capped at 15 min), else the backoff
     await Bun.sleep(Math.max(backoff, Math.min(900, (r.retryAfterMs ?? 0) / 1000)) * 1000);
@@ -510,7 +557,8 @@ function boardToMaster(): () => void {
 /**
  * Polling, for the Monitor: the default Slack account through search every `interval` seconds, every other account
  * in its own loop at its own `pollInterval` (or `interval` when given). A fatal Slack error stops the command when
- * Slack is alone (exit 75), as before; next to other accounts, it is one line and the others carry on.
+ * Slack is alone (exit 75), as before; next to other accounts, it is one line and the others carry on, and a Slack
+ * that does not answer at startup is retried in the background (`slackReady`).
  */
 export async function watch(intervalArg?: string) {
   ensureState();
@@ -519,21 +567,31 @@ export async function watch(intervalArg?: string) {
   const alone = others.length === 0;
   const stop = new AbortController();
   const seen = legacySeen();
-  let slack = slackInUse(others) ? await connectDefaultSlack(alone, seen) : null;
+  const wanted = slackInUse(others);
+  let slack: SlackRun | null = alone && wanted ? await slackReady(true, seen, { socket: false, stop: stop.signal }) : null;
   const interval = Number(intervalArg ?? cfg.pollInterval);
   const saved = readJson<{ lastTick?: number; syncedTo?: number }>(F.tick, {});
   const firstRun = saved.lastTick === undefined;
   // the catch-up cursor (`nextSyncCursor`), separate from the `lastTick` heartbeat the board reads
   let syncedTo = saved.syncedTo ?? saved.lastTick ?? Date.now() / 1000 - 3600;
   const prev = new Map<string, string | null>();
-  if (slack) slack.src.participated = await participatedOf(slack.src);
   await knownAttention(prev);
   boardToMaster();
 
-  if (slack) out(`[strato] polling armed · every ${interval} s · ${firstRun ? "first run: history marked as read" : "messages that arrived while stopped will come out"}`);
+  const armed = () => out(`[strato] polling armed · every ${interval} s · ${firstRun ? "first run: history marked as read" : "messages that arrived while stopped will come out"}`);
+  if (slack) armed();
   if (!alone) out(`[strato] polling armed · ${labelsOf(others)} · each account in its own loop`);
   // runAccount never rejects; the catch is a last guard so that one account can never take the process down
   for (const entry of others) void runAccount(entry, { mode: "watch", stop: stop.signal, ...(intervalArg ? { intervalSec: interval } : {}) }).catch((e) => outageLines(accountLabel(entry.account), out).failed(providerError(e).message, true));
+  // next to other accounts, Slack connects while they run, and its first pass is the next tick after it answers
+  if (!alone && wanted)
+    void slackReady(false, seen, { socket: false, stop: stop.signal }).then((s) => {
+      if (!s) return;
+      slack = s;
+      armed();
+    });
+  // the first Slack pass of a fresh state marks its history as read, whenever Slack answers
+  let slackFirst = firstRun;
 
   let backoff = 0;
   for (let tick = 0; ; tick++) {
@@ -543,13 +601,15 @@ export async function watch(intervalArg?: string) {
       if (slack) {
         const { src } = slack;
         // 5 min margin for the Slack index lag (in the provider), dedup absorbs the overlap
-        const r = await src.provider.poll?.(src.ctx, { value: String(syncedTo), at: syncedTo * 1000 }, { since: syncedTo * 1000, maxItems: 3000 });
+        const r = await src.provider.poll?.(src.ctx, { value: String(syncedTo), at: syncedTo * 1000 }, { since: syncedTo * 1000, maxItems: PASS_MAX_ITEMS });
         if (!r) throw new Error("no poll");
-        if (!r.complete) out(cappedLine(null, 3000));
-        await processItems(src, r.items, tick === 0 && firstRun);
+        if (!r.complete) out(cappedLine(null, PASS_MAX_ITEMS));
+        const untriaged = await processItems(src, r.items, slackFirst);
+        slackFirst = false;
         seen.save();
-        // incomplete pass: not beyond the oldest message read; a cursor never moves back
-        syncedTo = Math.max(syncedTo, Number(r.cursor.value) || syncedTo);
+        // incomplete pass: not beyond the oldest message read; a cursor never moves back, nor past a message whose
+        // triage failed (section 4.8): the next pass reads it again
+        if (!untriaged) syncedTo = Math.max(syncedTo, Number(r.cursor.value) || syncedTo);
       }
       writeJson(F.tick, { lastTick: tickStart, ...(slack || saved.syncedTo ? { syncedTo } : {}) });
 
@@ -563,7 +623,7 @@ export async function watch(intervalArg?: string) {
           out(`[strato] FATAL: ${pe.code}, polling stopped`);
           process.exit(75);
         }
-        outageLines("Slack", out).failed(pe.message, true);
+        outageLines("Slack", out).failed(slackReason(pe), true);
         slack = null;
       }
       backoff = Math.min(300, backoff === 0 ? interval : backoff * 2);
@@ -576,21 +636,20 @@ export async function backlog(opts: Record<string, string>) {
   ensureState();
   const others = ingestAccounts();
   const alone = others.length === 0;
-  const slack = slackInUse(others) ? await connectDefaultSlack(alone, legacySeen(new Set())) : null;
+  const slack = slackInUse(others) ? await slackReady(alone, legacySeen(new Set()), { socket: false, stop: new AbortController().signal, retry: false }) : null;
   const since = opts.since ?? "12h";
   const ms = durationOrFail(since);
   const sujets = loadSujets();
   const tracked = trackedKeys(sujets);
   const count = { n: 0, silent: 0 };
   if (slack) {
-    slack.src.participated = await participatedOf(slack.src);
     try {
       const r = await slack.src.provider.poll?.(slack.src.ctx, null, { since: Date.now() - ms, maxItems: 6000 });
       if (r && !r.complete) out(cappedLine(null, 6000, true));
       await backlogItems(slack.src, r?.items ?? [], sujets, tracked, count);
     } catch (e) {
       if (alone) fail(providerError(e).message);
-      outageLines("Slack", out).failed(providerError(e).message);
+      outageLines("Slack", out).failed(slackReason(providerError(e)));
     }
   }
   for (const entry of others) await backlogAccount(entry, Date.now() - ms, sujets, tracked, count);

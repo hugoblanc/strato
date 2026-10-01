@@ -5,7 +5,7 @@
  * names of users.json; a named account reads its tokens from its own secret file and goes through the fetch its
  * account context limits to Slack's API host. Writes (`act`, `undo`) join it in the act stage.
  */
-import { appToken, connectSlack, connexionSocket, defaultSlack, NO_TOKEN, REPLIES_MAX, SlackClient, SlackError } from "../../app/slack.ts";
+import { appToken, connexionSocket, defaultSlack, NO_TOKEN, probeSlack, REPLIES_MAX, SlackClient, SlackError } from "../../app/slack.ts";
 import { bestText, channelLabel, conversationKind, nextSyncCursor, permalinkFor, slackItem, type SlackMatch } from "../../chat/slack-model.ts";
 import { linkOfNative } from "../../core/links.ts";
 import { settings } from "../../core/settings.ts";
@@ -55,16 +55,25 @@ const fail = (code: string, message: string, fatal = true): ProviderError => ({ 
 export const slackProvider = defineProvider({
   descriptor: SLACK_DESCRIPTOR,
 
+  /**
+   * One auth.test, whose answer also gives the workspace's id and URL. The default account tries each token found once:
+   * a network failure or a rate limit is a retryable error, and the caller decides how long to wait (`listen` alone
+   * waits as `connectSlack` did; next to other accounts it retries without end); no usable token is fatal.
+   */
   async connect(ctx: AccountContext): Promise<Identity> {
     const client = clientOf(ctx);
     const s = ctx.account.settings;
     let team: string;
     let me: string;
+    let tenant: string | undefined;
+    let url = "";
     if (ctx.account.id === "default") {
       const cfg = settings().slack;
-      const r = await connectSlack(cfg);
-      if (!r) throw fail("invalid_auth", NO_TOKEN(cfg));
-      ({ team, me } = r);
+      const p = await probeSlack(cfg);
+      if (!p.found) throw p.transient ? fail(p.transient, `no answer (${p.transient})`, false) : fail("invalid_auth", NO_TOKEN(cfg));
+      ({ team, me } = p.found);
+      tenant = p.found.teamId;
+      url = p.found.url ?? "";
     } else if (!client.token) {
       throw fail("invalid_auth", `Slack account "${ctx.account.id}": no SLACK_USER_TOKEN in its secret file`);
     } else {
@@ -76,14 +85,11 @@ export const slackProvider = defineProvider({
       }
       team = String(r.team ?? "");
       me = String(r.user_id ?? "");
+      tenant = String(r.team_id ?? "") || undefined;
+      url = String(r.url ?? "").replace(/\/$/, "");
       if (typeof s.team === "string" && s.team && s.team !== team) throw fail("wrong_workspace", `Slack account "${ctx.account.id}": its token belongs to the workspace "${team}", not "${s.team}"`);
     }
-    let tenant: string | undefined;
-    try {
-      const r = await client.call("auth.test");
-      tenant = String(r.team_id ?? "") || undefined;
-      client.base = String(r.url ?? "").replace(/\/$/, "") || client.base;
-    } catch {}
+    if (url) client.base = url;
     const groups = Array.isArray(s.subteams) ? s.subteams.filter((x): x is string => typeof x === "string") : [];
     return { me, name: await client.nameOf(me), workspace: team, ...(tenant ? { tenant } : {}), groups };
   },
@@ -105,7 +111,7 @@ export const slackProvider = defineProvider({
     return { items: matches.map((m) => slackItem(m, cfg)), cursor: { value: String(next), at: Math.round(next * 1000) }, complete };
   },
 
-  async subscribe(ctx: AccountContext, onItems: (items: Item[]) => void, events?: { opened(): void }) {
+  async subscribe(ctx: AccountContext, onItems: (items: Item[]) => void, events?: { opened(): void; failed?(link: string, reason: string): void }) {
     const client = clientOf(ctx);
     const xapp = ctx.account.id === "default" ? appToken() : ctx.secret("SLACK_APP_TOKEN");
     if (!xapp) return { end: "fatal" as const, refused: "no app-level token (xapp-)" };
@@ -135,7 +141,10 @@ export const slackProvider = defineProvider({
               const m = await client.matchFromEvent(e, base, cfg);
               if (m) onItems([slackItem(m, cfg)]);
             } catch (err) {
-              ctx.log("error", `event ${String(e.channel ?? "?")}:${String(e.ts ?? "?")} unreadable: ${(err as Error).message}`);
+              // never silently: the listener prints it for the master, who must know a message was not triaged
+              const reason = (err as Error)?.message ?? String(err);
+              if (events?.failed) events.failed(permalinkFor(base, String(e.channel ?? "?"), String(e.ts ?? "?"), e.thread_ts), reason);
+              else ctx.log("error", `event ${String(e.channel ?? "?")}:${String(e.ts ?? "?")} unreadable: ${reason}`);
             }
           });
         },

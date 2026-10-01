@@ -320,6 +320,18 @@ export const NO_TOKEN = (cfg: SlackSettings) => {
   return `${found.length} Slack token(s) found, none usable${cfg.team ? ` for workspace "${cfg.team}" (slack.team)` : ""}: ${seen.join(", ")}`;
 };
 
+/** The seconds `connectSlack` waits between rounds while Slack does not answer, before giving up. */
+export const SLACK_CONNECT_DELAYS = [5, 15, 30, 60];
+
+/** Who the person is on the default account, from the auth.test of its token: also the workspace's id and URL. */
+export interface SlackIdentity {
+  team: string;
+  me: string;
+  teamUnset?: true;
+  teamId?: string;
+  url?: string;
+}
+
 /**
  * Several tokens can live on the machine (other workspaces): keep the first one that belongs to the right workspace, else null.
  * While `slack.team` is not set (a new installation), the first token Slack accepts is used, as `setup --check` does,
@@ -327,27 +339,39 @@ export const NO_TOKEN = (cfg: SlackSettings) => {
  * Only an answer from Slack rules a token out (other workspace, token refused). A network failure or a timeout says
  * nothing about the token: retry, otherwise a few seconds of outage at startup would stop the listener with "no token".
  */
-export async function connectSlack(cfg: SlackSettings): Promise<{ team: string; me: string; teamUnset?: true } | null> {
-  const delays = [5, 15, 30, 60];
+export async function connectSlack(cfg: SlackSettings, delays: number[] = SLACK_CONNECT_DELAYS): Promise<SlackIdentity | null> {
   for (let attempt = 0; ; attempt++) {
-    let transient = false;
-    probed = [];
-    for (const t of tokenCandidates()) {
-      defaultSlack.token = t;
-      try {
-        const r = await slack("auth.test");
-        probed.push({ token: t, team: r.team });
-        if (!cfg.team) return { team: r.team, me: r.user_id, teamUnset: true };
-        if (r.team === cfg.team) return { team: r.team, me: r.user_id };
-      } catch (e) {
-        probed.push({ token: t, error: e instanceof SlackError ? e.code : "network" });
-        if (!(e instanceof SlackError) || e.code === "ratelimited") transient = true;
-      }
-    }
-    defaultSlack.token = "";
-    if (!transient || attempt >= delays.length) return null;
+    const p = await probeSlack(cfg);
+    if (p.found) return p.found;
+    if (!p.transient || attempt >= delays.length) return null;
     await Bun.sleep(delays[attempt] * 1000);
   }
+}
+
+/**
+ * One round of `connectSlack` over the tokens found: the first one of the right workspace, or none, with the code of a
+ * failure that may clear on the next round (network, rate limit) in `transient`. The caller decides whether to retry.
+ */
+export async function probeSlack(cfg: SlackSettings): Promise<{ found: SlackIdentity | null; transient: string | null }> {
+  let transient: string | null = null;
+  probed = [];
+  for (const t of tokenCandidates()) {
+    defaultSlack.token = t;
+    try {
+      const r = await slack("auth.test");
+      probed.push({ token: t, team: r.team });
+      const url = String(r.url ?? "").replace(/\/$/, "");
+      const who: SlackIdentity = { team: r.team, me: r.user_id, ...(r.team_id ? { teamId: String(r.team_id) } : {}), ...(url ? { url } : {}) };
+      if (!cfg.team) return { found: { ...who, teamUnset: true }, transient };
+      if (r.team === cfg.team) return { found: who, transient };
+    } catch (e) {
+      probed.push({ token: t, error: e instanceof SlackError ? e.code : "network" });
+      if (!(e instanceof SlackError)) transient ??= "network";
+      else if (e.code === "ratelimited") transient ??= e.code;
+    }
+  }
+  defaultSlack.token = "";
+  return { found: null, transient };
 }
 
 export async function initSlack(cfg: SlackSettings): Promise<{ team: string; me: string }> {

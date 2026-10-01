@@ -23,11 +23,17 @@ export interface FakeSpec {
   /** Threads the person took part in. */
   participated?: string[];
   /**
-   * Makes the tool a push tool. Each connection, in turn (the last one repeated): the batches it delivers once open
-   * (an empty batch is a delivery without items), then how it ends; "hold" keeps it open until its signal aborts;
-   * `throws`, an Error with this message thrown instead of an answer, as a crashing socket library would.
+   * Gives the tool a `complete` (the second step of triage) that throws "names service down" on its first
+   * `completeFails` calls, then returns the items unchanged: a triage error.
    */
-  pushes?: { batches: Item[][]; end: "clean" | "cut" | "fatal" | "hold"; refused?: string; throws?: string }[];
+  completeFails?: number;
+  /**
+   * Makes the tool a push tool. Each connection, in turn (the last one repeated): the batches it delivers once open
+   * (an empty batch is a delivery without items; a batch can carry the tool's cursor), then how it ends; "hold" keeps
+   * it open until its signal aborts; `throws`, an Error with this message thrown instead of an answer, as a crashing
+   * socket library would.
+   */
+  pushes?: { batches: (Item[] | { items: Item[]; cursor: IngestCursor })[]; end: "clean" | "cut" | "fatal" | "hold"; refused?: string; throws?: string }[];
 }
 
 /** A ticket tool on `tickets.example`, its links `https://tickets.example/t/PLAT-12`. */
@@ -62,6 +68,7 @@ export function fakeProvider(spec: FakeSpec): Provider & { calls: string[] } {
   const calls: string[] = [];
   let polls = 0;
   let connections = 0;
+  let completions = 0;
   return {
     calls,
     descriptor: fakeDescriptor(spec.id, spec.label, !!spec.pushes),
@@ -74,9 +81,18 @@ export function fakeProvider(spec: FakeSpec): Provider & { calls: string[] } {
             if (c.throws) throw new Error(c.throws);
             if (c.end === "fatal") return { end: "fatal" as const, ...(c.refused ? { refused: c.refused } : {}) };
             events?.opened();
-            for (const batch of c.batches) onItems(batch);
+            for (const batch of c.batches) Array.isArray(batch) ? onItems(batch) : onItems(batch.items, batch.cursor);
             if (c.end === "hold") await new Promise<void>((resolve) => (ctx.signal.aborted ? resolve() : ctx.signal.addEventListener("abort", () => resolve())));
             return { end: c.end === "hold" ? ("cut" as const) : c.end, ...(c.refused ? { refused: c.refused } : {}) };
+          },
+        }
+      : {}),
+    ...(spec.completeFails !== undefined
+      ? {
+          async complete(_ctx, items) {
+            calls.push("complete");
+            if (completions++ < (spec.completeFails ?? 0)) throw new Error("names service down");
+            return items;
           },
         }
       : {}),

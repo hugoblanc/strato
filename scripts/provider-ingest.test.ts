@@ -187,6 +187,63 @@ describe("the cursor contract", () => {
   });
 });
 
+describe("a triage error", () => {
+  test("holds a poll's cursor back: the item comes out on the next pass, and only then does the cursor move", async () => {
+    const r = rig();
+    config(r, PROFILE);
+    cursorFor(r, "tickets-default", "c0", 1);
+    const out = await script(
+      r,
+      `
+      const fake = fakeProvider({ id: "tickets", label: "Tickets", completeFails: 1, polls: (n) => ({ items: [ticketItem({ thread: "PLAT-70", id: "PLAT-70", event: "created", text: "ticket 70" })], cursor: { value: "c" + (n + 1), at: n + 2 }, complete: true }) });
+      registry.addProvider(fake);
+      ${SOURCE}
+      const passes = [];
+      for (let i = 0; i < 3; i++) {
+        const p = await ingest.pollPass(run);
+        passes.push({ untriaged: p.untriaged, cursor: run.cursor?.value ?? null, onDisk: ingest.readCursor(entry.account)?.value ?? null });
+      }
+      return { passes, calls: fake.calls };
+    `,
+    );
+    expect(out.lines[0]).toBe("[strato] triage error https://tickets.example/t/PLAT-70: names service down");
+    expect(out.lines.slice(1).map((l) => l.match(/key=(\S+)/)?.[1])).toEqual(["tickets:PLAT-70"]);
+    expect(out.result.passes).toEqual([
+      { untriaged: 1, cursor: "c0", onDisk: "c0" },
+      { untriaged: 0, cursor: "c2", onDisk: "c2" },
+      { untriaged: 0, cursor: "c3", onDisk: "c3" },
+    ]);
+    // the second pass read the same window again; the third did not ask for names, the item was handled
+    expect(out.result.calls).toEqual(["connect", "poll c0", "complete", "poll c0", "complete", "poll c2"]);
+  });
+
+  test("holds a push cursor back: the next catch-up reads the item again from the cursor before it", async () => {
+    const r = rig();
+    config(r, { ...PROFILE, providers: { chat: { accounts: { default: { me: "u-alice", watchTeams: ["PLAT"] } } } } });
+    cursorFor(r, "chat-default", "c0", 1);
+    const out = await script(
+      r,
+      `
+      const item = ticketItem({ thread: "PLAT-80", id: "PLAT-80", event: "created", text: "ticket 80" });
+      const chat = fakeProvider({ id: "chat", label: "Chat", completeFails: 1,
+        polls: (n) => n === 0 ? { items: [], cursor: { value: "c1", at: 1 }, complete: true } : { items: [item], cursor: { value: "c" + (n + 1), at: n + 1 }, complete: true },
+        pushes: [{ batches: [{ items: [item], cursor: { value: "p1", at: 5 } }], end: "hold" }] });
+      registry.addProvider(chat);
+      const stop = new AbortController();
+      const loops = ingest.ingestAccounts().map((e) => ingest.runAccount(e, { mode: "listen", stop: stop.signal, resyncMs: 300 }));
+      await Bun.sleep(1000);
+      stop.abort();
+      await Promise.all(loops);
+      return { polls: chat.calls.filter((c) => c.startsWith("poll")).slice(0, 2) };
+    `,
+    );
+    expect(out.lines[0]).toBe("[strato] triage error https://tickets.example/t/PLAT-80: names service down");
+    expect(out.lines.filter((l) => l.includes("key=chat:PLAT-80"))).toHaveLength(1);
+    // the push cursor p1 was never stored: the periodic catch-up polled from c1
+    expect(out.result.polls).toEqual(["poll c0", "poll c1"]);
+  });
+});
+
 describe("a provider's strings", () => {
   test("a hostile link, author and title stay on one line, and a link off the provider's hosts is dropped", async () => {
     const r = rig();
@@ -500,11 +557,132 @@ describe("one tool down never stops the others", () => {
     await p.exited;
     await reader;
     const out = text.split("\n").filter(Boolean);
-    expect(out[0]).toStartWith("[strato] Slack: no Slack user token found");
-    expect(out[0]).toEndWith(", listening to this account stopped");
+    // Slack connects once the other accounts run, so its line may follow theirs
+    const slackLines = out.filter((l) => l.startsWith("[strato] Slack"));
+    expect(slackLines).toHaveLength(1);
+    expect(slackLines[0]).toStartWith("[strato] Slack: no Slack user token found");
+    expect(slackLines[0]).toEndWith(", listening to this account stopped");
     expect(out).toContain("[strato] listener armed · tickets · each account in its own loop");
     expect(out.filter((l) => l.includes("key=tickets:PLAT-30")).length).toBeGreaterThanOrEqual(2);
     expect(JSON.parse(readFileSync(join(r.state, "tick.json"), "utf8"))).toHaveProperty("lastTick");
+  }, 30_000);
+});
+
+/** A preload that adds a working ticket tool and a broken one, for the golden rig's process. */
+function ticketPreload(r: Rig, base: number): string {
+  const preload = join(r.dir, "fake-providers.ts");
+  writeFileSync(
+    preload,
+    [
+      `import { addProvider } from ${JSON.stringify(join(SCRIPTS, "providers/registry.ts"))};`,
+      `import { fakeProvider, ticketItem } from ${JSON.stringify(join(SCRIPTS, "test-provider.ts"))};`,
+      `addProvider(fakeProvider({ id: "tickets", label: "Tickets", polls: (n) => ({ items: [ticketItem({ thread: "PLAT-" + (${base} + n), id: "PLAT-" + (${base} + n), event: "created" })], cursor: { value: "c" + (n + 1), at: n + 1 }, complete: true }) }));`,
+      `addProvider(fakeProvider({ id: "broken", label: "Broken", polls: [{ error: { code: "unavailable", message: "Broken API down" } }] }));`,
+    ].join("\n"),
+  );
+  return preload;
+}
+
+/** The golden rig with a ticket tool and a broken one next to Slack. */
+function goldenWithTickets(): Rig {
+  const r = goldenRig();
+  const raw = JSON.parse(readFileSync(join(r.state, "config.json"), "utf8"));
+  config(r, { ...raw, providers: { tickets: { accounts: { default: { me: "u-alice", watchTeams: ["PLAT"], pollInterval: 1 } } }, broken: { accounts: { default: { pollInterval: 1 } } } } });
+  cursorFor(r, "tickets-default", "c0", 1);
+  return r;
+}
+
+/** A preload that replaces some of the fake Slack's answers: `body` runs on each Slack call, with `method`, and returns a Response or nothing. */
+function slackPatch(r: Rig, body: string): string {
+  const path = join(r.dir, "slack-patch.ts");
+  writeFileSync(
+    path,
+    `const inner = globalThis.fetch;
+const calls = {};
+globalThis.fetch = (async (input, init) => {
+  const url = new URL(input instanceof Request ? input.url : String(input));
+  if (url.hostname !== "slack.com") return inner(input, init);
+  const method = url.pathname.replace("/api/", "");
+  calls[method] = (calls[method] ?? 0) + 1;
+  const n = calls[method];
+  ${body}
+  return inner(input, init);
+});
+`,
+  );
+  return path;
+}
+
+const GOLDEN_LISTEN = () => JSON.parse(readFileSync(join(SCRIPTS, "ingest-golden.json"), "utf8")).listen.stdout as string[];
+
+describe("the default Slack account next to other accounts", () => {
+  test("backlog: Slack's lines come out unchanged next to a ticket tool's, and a tool that fails says so once", async () => {
+    const r = goldenWithTickets();
+    const out = stdout(await runUntil(r, ["backlog", "--since", "12h"], () => false, 20_000, [ticketPreload(r, 210)]));
+    const golden = JSON.parse(readFileSync(join(SCRIPTS, "ingest-golden.json"), "utf8")).backlog.stdout as string[];
+    const slackLines = golden.slice(0, -1);
+    expect(out.filter((l) => slackLines.includes(l))).toEqual(slackLines);
+    expect(out.filter((l) => l.includes("key=tickets:")).map((l) => l.match(/key=(\S+)/)?.[1])).toEqual(["tickets:PLAT-210"]);
+    expect(out.filter((l) => l.startsWith("[strato] Broken"))).toEqual(["[strato] Broken: Broken API down · retrying silently, one line when it is back"]);
+    // Slack's nine and the ticket's one; nothing is written to the log
+    expect(out.at(-1)).toBe("[strato] 10 relevant message(s) over 12h · 3 set aside (third parties, bots)");
+    expect(events(r)).toEqual([]);
+  }, 30_000);
+
+  test("listen: Slack that does not answer at startup is retried while a ticket tool delivers, then comes back with its lines", async () => {
+    const r = goldenWithTickets();
+    const patch = slackPatch(r, `if (method === "auth.test" && n === 1) throw new TypeError("fetch failed");`);
+    const out = stdout(await runUntil(r, ["listen"], (o) => o.includes("last socket message"), 30_000, [patch, ticketPreload(r, 220)]));
+    const down = out.indexOf("[strato] Slack: no answer (network) · retrying silently, one line when it is back");
+    const back = out.indexOf("[strato] Slack back after « no answer (network) »");
+    expect(down).toBeGreaterThanOrEqual(0);
+    expect(back).toBeGreaterThan(down);
+    // the ticket tool was not held back while Slack was retried
+    expect(out.slice(0, back).filter((l) => l.includes("key=tickets:PLAT-22")).length).toBeGreaterThanOrEqual(2);
+    expect(out.filter((l) => GOLDEN_LISTEN().includes(l))).toEqual(GOLDEN_LISTEN());
+  }, 40_000);
+
+  test("listen: Slack whose network fails right after it connected still listens, one auth.test per connection", async () => {
+    const r = goldenWithTickets();
+    const patch = slackPatch(r, `if (method === "auth.test" && n > 1) throw new TypeError("fetch failed");`);
+    const out = stdout(await runUntil(r, ["listen"], (o) => o.includes("last socket message") && o.includes("key=tickets:PLAT-231"), 20_000, [patch, ticketPreload(r, 230)]));
+    expect(out.filter((l) => l.startsWith("[strato] Slack"))).toEqual([]);
+    expect(out.filter((l) => GOLDEN_LISTEN().includes(l))).toEqual(GOLDEN_LISTEN());
+  }, 30_000);
+
+  test("listen: a socket refused for good stops Slack only, said like any other account", async () => {
+    const r = goldenWithTickets();
+    const patch = slackPatch(r, `if (method === "apps.connections.open") return Response.json({ ok: false, error: "invalid_auth" });`);
+    const out = stdout(await runUntil(r, ["listen"], (o) => o.includes("listening to this account stopped") && o.includes("key=tickets:PLAT-242"), 20_000, [patch, ticketPreload(r, 240)]));
+    expect(out).toContain("[strato] Slack: invalid_auth, listening to this account stopped");
+    expect(out.some((l) => l.includes("listener stopped"))).toBe(false);
+    const stopped = out.indexOf("[strato] Slack: invalid_auth, listening to this account stopped");
+    expect(out.slice(stopped).some((l) => l.includes("key=tickets:PLAT-24"))).toBe(true);
+  }, 30_000);
+
+  test("watch: a revoked Slack token is one line that names Slack once, and the ticket tool carries on", async () => {
+    const r = goldenWithTickets();
+    const patch = slackPatch(r, `if (method === "search.messages") return Response.json({ ok: false, error: "token_revoked" });`);
+    const out = stdout(await runUntil(r, ["watch", "1"], (o) => o.includes("listening to this account stopped") && o.includes("key=tickets:PLAT-252"), 20_000, [patch, ticketPreload(r, 250)]));
+    expect(out.filter((l) => l.startsWith("[strato] Slack"))).toEqual(["[strato] Slack: token_revoked, listening to this account stopped"]);
+  }, 30_000);
+});
+
+describe("a Slack event that cannot be read", () => {
+  test("listen prints a triage error line with its permalink on stdout, as before, and carries on", async () => {
+    const r = goldenRig();
+    const patch = join(r.dir, "unreadable.ts");
+    writeFileSync(
+      patch,
+      [
+        `import { defaultSlack } from ${JSON.stringify(join(SCRIPTS, "app/slack.ts"))};`,
+        `const real = defaultSlack.matchFromEvent.bind(defaultSlack);`,
+        `defaultSlack.matchFromEvent = async (e, base, cfg) => { if (e.ts === "1790000300.000100") throw new Error("conversation cache corrupt"); return real(e, base, cfg); };`,
+      ].join("\n"),
+    );
+    const out = stdout(await runUntil(r, ["listen"], (o) => o.includes("last socket message"), 20_000, [patch]));
+    expect(out).toContain("[strato] triage error https://acme.slack.com/archives/D0ACME0002/p1790000300000100: conversation cache corrupt");
+    expect(out.some((l) => l.includes("are you around?"))).toBe(false);
   }, 30_000);
 });
 

@@ -24,7 +24,6 @@ import { type AccountEntry, accountContext, accountDir, accountOf, accounts, key
 import type { Account, AccountContext, Identity, IngestCursor, Item, PollResult, Provider } from "../providers/sdk.ts";
 import { slackProvider } from "../providers/slack/index.ts";
 import { F, nowIso, out, readJson, writeJson } from "./env.ts";
-import { REPLIES_MAX } from "./slack.ts";
 import { keepMessage, loadSujets, logEvent, updateSujet } from "./store.ts";
 
 // ------------------------------------------------------------------ seen
@@ -213,10 +212,13 @@ export async function triageItem(src: Source, item: Item, key: string, tracked: 
  * `markOnly` marks as read without a word, for the first pass of a fresh state.
  * An item enters `seen` only once handled (line printed, logged, or ignored): a triage error leaves it for the next
  * pass and says so on stdout. Marking it before would lose it silently on an error.
+ * Returns how many items failed triage: their caller must not move its cursor past them (section 4.8), so that the
+ * next pass reads them again; `seen` absorbs the items of the batch already handled.
  */
-export async function processItems(src: Source, items: Item[], markOnly = false): Promise<void> {
+export async function processItems(src: Source, items: Item[], markOnly = false): Promise<number> {
   const sujets = loadSujets();
   const tracked = trackedKeys(sujets);
+  let untriaged = 0;
   for (const item of items) {
     const key = threadKeyOf(src, item.thread);
     const id = itemKeyOf(src, item.id);
@@ -243,9 +245,11 @@ export async function processItems(src: Source, items: Item[], markOnly = false)
     try {
       await sortOne(src, item, key, id, tracked, sujets, mark);
     } catch (e) {
+      untriaged++;
       out(triageErrorLine(checkedLink(item.link, src.account.provider) ?? id, e));
     }
   }
+  return untriaged;
 }
 
 /**
@@ -309,15 +313,19 @@ async function dropSentDraft(key: string, text: string, permalink: string): Prom
 
 // ------------------------------------------------------------------ the catch-up of tracked threads
 
+/** Most replies of one tracked thread a catch-up reads: the newest are kept. */
+export const THREAD_REPLIES_MAX = 2000;
+
 /**
  * Rereads the threads of open topics that belong to this account, since `sinceMs`, and passes their new replies
- * through the shared triage. `failed` counts threads unreadable for a reason that may clear (network, rate limit):
- * the pass is not complete and the cursor must not move. A thread unreadable for good (archived) does not hold it back.
+ * through the shared triage. `failed` counts threads unreadable for a reason that may clear (network, rate limit),
+ * `untriaged` the replies whose triage failed: either way the pass is not complete and the cursor must not move.
+ * A thread unreadable for good (archived) does not hold it back.
  */
-export async function catchUpThreads(src: Source, sinceMs: number): Promise<{ items: Item[]; failed: number }> {
+export async function catchUpThreads(src: Source, sinceMs: number): Promise<{ items: Item[]; failed: number; untriaged: number }> {
   const items: Item[] = [];
   let failed = 0;
-  if (!src.provider.replies) return { items, failed };
+  if (!src.provider.replies) return { items, failed, untriaged: 0 };
   for (const s of loadSujets()) {
     if (s.status === "closed") continue;
     for (const key of sujetKeys(s)) {
@@ -326,7 +334,7 @@ export async function catchUpThreads(src: Source, sinceMs: number): Promise<{ it
       if (!target || target.entry.account.provider !== src.account.provider || target.entry.account.id !== src.account.id) continue;
       let replies: Item[];
       try {
-        replies = await src.provider.replies(src.ctx, target.native, { since: sinceMs, max: REPLIES_MAX });
+        replies = await src.provider.replies(src.ctx, target.native, { since: sinceMs, max: THREAD_REPLIES_MAX });
       } catch (e) {
         if (providerError(e).retryable) failed++;
         continue;
@@ -337,8 +345,8 @@ export async function catchUpThreads(src: Source, sinceMs: number): Promise<{ it
       }
     }
   }
-  if (items.length) await processItems(src, items);
-  return { items, failed };
+  const untriaged = items.length ? await processItems(src, items) : 0;
+  return { items, failed, untriaged };
 }
 
 // ------------------------------------------------------------------ the loop of one account
@@ -410,10 +418,10 @@ export interface AccountRun {
 /**
  * One poll pass of an account (section 4.8): the items since its cursor, then, when asked, the replies of its tracked
  * threads. The first pass of an account without a cursor marks its history as read. The cursor is stored only once
- * every item is handled, and not when a tracked thread could not be read: the next pass retries the same window.
- * A failed poll throws, and nothing moves.
+ * every item is handled: not when an item failed triage (`untriaged`), nor when a tracked thread could not be read;
+ * the next pass retries the same window. A failed poll throws, and nothing moves.
  */
-export async function pollPass(run: AccountRun, opts: { maxItems?: number; threads?: boolean } = {}): Promise<{ complete: boolean; items: Item[]; threadsFailed: number }> {
+export async function pollPass(run: AccountRun, opts: { maxItems?: number; threads?: boolean } = {}): Promise<{ complete: boolean; items: Item[]; threadsFailed: number; untriaged: number }> {
   const { src } = run;
   if (!src.provider.poll) throw { code: "no_poll", message: "this tool cannot be polled", retryable: false, fatal: true };
   const first = run.cursor === null;
@@ -425,20 +433,21 @@ export async function pollPass(run: AccountRun, opts: { maxItems?: number; threa
     const id = itemKeyOf(src, it.id);
     return id !== null && !src.seen.has(id);
   });
-  await processItems(src, r.items, first);
+  let untriaged = await processItems(src, r.items, first);
   let threadsFailed = 0;
   const items = [...fresh];
   if (opts.threads && !first) {
     const t = await catchUpThreads(src, (run.cursor?.at ?? started) - THREADS_MARGIN_MS);
     threadsFailed = t.failed;
+    untriaged += t.untriaged;
     items.push(...t.items);
   }
   src.seen.save();
-  if (!threadsFailed) {
+  if (!threadsFailed && !untriaged) {
     run.cursor = r.cursor;
     writeCursor(src.account, r.cursor);
   }
-  return { complete: r.complete, items, threadsFailed };
+  return { complete: r.complete, items, threadsFailed, untriaged };
 }
 
 /**
@@ -462,7 +471,7 @@ export function outageLines(label: string, say: (line: string) => void): { faile
 }
 
 /** Sleeps `ms`, or less when `stop` aborts. */
-function pause(ms: number, stop: AbortSignal): Promise<void> {
+export function pause(ms: number, stop: AbortSignal): Promise<void> {
   if (stop.aborted) return Promise.resolve();
   return new Promise((resolve) => {
     const timer = setTimeout(done, ms);
@@ -545,9 +554,11 @@ async function runConnected(entry: AccountEntry, opts: RunOptions, lines: Return
 /** How a push connection ended, read from what `subscribe` resolved or threw: a throw is a cut, or the end of push when fatal. */
 type PushEnd = { end: "clean" | "cut" | "fatal"; retryAfterMs?: number; refused?: string };
 
-async function pushOnce(src: Source, signal: AbortSignal, onItems: Parameters<NonNullable<Provider["subscribe"]>>[1], opened: () => void): Promise<PushEnd> {
+type PushEvents = NonNullable<Parameters<NonNullable<Provider["subscribe"]>>[2]>;
+
+async function pushOnce(src: Source, signal: AbortSignal, onItems: Parameters<NonNullable<Provider["subscribe"]>>[1], events: PushEvents): Promise<PushEnd> {
   try {
-    const r = await (src.provider.subscribe as NonNullable<Provider["subscribe"]>)({ ...src.ctx, signal }, onItems, { opened });
+    const r = await (src.provider.subscribe as NonNullable<Provider["subscribe"]>)({ ...src.ctx, signal }, onItems, events);
     const end = r?.end === "clean" || r?.end === "fatal" ? r.end : "cut";
     return { end, ...(typeof r?.retryAfterMs === "number" ? { retryAfterMs: r.retryAfterMs } : {}), ...(typeof r?.refused === "string" ? { refused: r.refused } : {}) };
   } catch (e) {
@@ -639,9 +650,10 @@ async function runPush(run: AccountRun, opts: RunOptions, lines: ReturnType<type
           if (!valid.length) return;
           chain = chain.then(async () => {
             try {
-              await processItems(src, valid);
+              const untriaged = await processItems(src, valid);
               src.seen.save();
-              if (cursor && typeof cursor.value === "string" && typeof cursor.at === "number") {
+              // an item that failed triage holds the cursor back: the next catch-up reads it again
+              if (!untriaged && cursor && typeof cursor.value === "string" && typeof cursor.at === "number") {
                 run.cursor = cursor;
                 writeCursor(src.account, cursor);
               }
@@ -650,9 +662,12 @@ async function runPush(run: AccountRun, opts: RunOptions, lines: ReturnType<type
             }
           });
         },
-        () => {
-          lines.ok();
-          backoff = 1;
+        {
+          opened: () => {
+            lines.ok();
+            backoff = 1;
+          },
+          failed: (link, reason) => say(triageErrorLine(checkedLink(link, src.account.provider) ?? src.label, reason)),
         },
       );
       await chain;
@@ -679,7 +694,8 @@ async function runPush(run: AccountRun, opts: RunOptions, lines: ReturnType<type
 
 /**
  * Slack messages through the shared triage, on the default Slack account: `cfg` gives who the person is and the rules,
- * `seen` the ids already handled. The form `listen` and `watch` used before ingest went through providers.
+ * `seen` the ids already handled. The form `listen` and `watch` used before ingest went through providers, kept for
+ * the tests written against it (ingest.test.ts); no command calls it.
  */
 export async function processMatches(matches: SlackMatch[], cfg: Config, seen: Set<string>, participated: Set<string>, markOnly = false): Promise<void> {
   await processItems(slackSource(cfg, legacySeen(seen), participated), matches.map((m) => slackItem(m, cfg)), markOnly);

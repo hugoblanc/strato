@@ -365,13 +365,14 @@ export interface Provider {
   /**
    * Push: resolves when the connection ends, or soon after `ctx.signal` aborts it. `onItems` is called as items
    * arrive, with a cursor when the tool gives one, and with no item at all for a delivery that carried none, which
-   * tells the listener the connection is alive. `events.opened` says the connection is open; `refused` says why the
-   * tool refused to open it.
+   * tells the listener the connection is alive. `events.opened` says the connection is open; `events.failed` says a
+   * delivery could not be read into an item (its link, and why), which the listener prints like a triage error;
+   * `refused` says why the tool refused to open it.
    */
   subscribe?(
     ctx: AccountContext,
     onItems: (items: Item[], cursor?: IngestCursor) => void,
-    events?: { opened(): void },
+    events?: { opened(): void; failed?(link: string, reason: string): void },
   ): Promise<{ end: "clean" | "cut" | "fatal"; retryAfterMs?: number; refused?: string }>;
   /**
    * The replies of one thread posted since `since` (Unix ms), oldest first, without the item that opened the thread:
