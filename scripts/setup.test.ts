@@ -500,8 +500,22 @@ describe("setup --write and --live", () => {
     expect(config(r).workers).toEqual({ shadow: false, allow: ["Read"] });
   }, 20_000);
 
-  test("no option: usage, exit 64", async () => {
-    expect((await cli(rig(), ["setup"])).code).toBe(64);
+  test("no option: what each flag does, exit 64", async () => {
+    const res = await cli(rig(), ["setup"]);
+    expect(res.code).toBe(64);
+    expect(res.out).toContain("--token                 store your Slack user token");
+  }, 20_000);
+
+  test("help, --help and -h: the commands a person types, exit 0 (O14)", async () => {
+    for (const flag of ["help", "--help", "-h"]) {
+      const res = await cli(rig(), [flag]);
+      expect(res.code).toBe(0);
+      expect(res.out).toContain("Getting started");
+      expect(res.out).toContain("Every day");
+      expect(res.out).toMatch(/Commands below start with: bun \S*strato\.ts/);
+      expect(res.out).not.toContain(" * ");
+    }
+    expect((await cli(rig(), ["nope"])).code).toBe(64);
   }, 20_000);
 });
 

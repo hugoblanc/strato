@@ -23,6 +23,18 @@ import manifestYaml from "../../examples/slack-app-manifest.yaml" with { type: "
 import { backgroundSessionsOk, type CheckItem, checkReport, setEnvLine, tokenKindProblem, USER_TOKEN_WHERE, nextStep, type Progress, shortPath, slackAppLink, SLACK_SCOPES, type Detected, displayNameOf, firstNameOf, linearWorkspaces, localeFromEnv, mergeProfile, parseRemote, profileDiff, profileErrors, type Remote, type SearchMatch, slackWorkspaceFromUrl, suggestedConfig, ticketPrefixes, topChannels } from "../core/setup.ts";
 import { missingSettings, NEW_INSTALL_PROFILE, resolveSettings, settings, useSettings } from "../core/settings.ts";
 
+/** What each flag of `setup` does, printed when none is given. */
+export const SETUP_USAGE = [
+  "usage: setup <one of>",
+  "  --check                 what the profile lacks and the state of each prerequisite (exit 1 if one blocks)",
+  "  --detect                JSON of what can be guessed: Slack identity, groups, channels, git remotes, ticket prefixes",
+  "  --write <file.json>     merge a profile into config.json and show the diff (--force replaces it)",
+  "  --slack-app [--print]   open Slack's app creation with Strato's manifest filled in",
+  "  --token                 store your Slack user token (xoxp-), pasted on stdin",
+  "  --app-token             store the Socket Mode token (xapp-), pasted on stdin",
+  "  --live                  leave shadow mode: the board can post as you",
+].join("\n");
+
 export const SHADOW_REFUSAL = "shadow mode: nothing is posted (bun strato.ts setup --live turns it off)";
 
 /**
@@ -412,5 +424,6 @@ export async function setup(args: string[]) {
     }
     return writeProfile(incoming, opts.force === "true", opts.write);
   }
-  fail("usage: setup --check | --detect | --write <profile.json> [--force] | --live | --slack-app [--print] | --token | --app-token", 64);
+  out(SETUP_USAGE);
+  process.exit(64);
 }

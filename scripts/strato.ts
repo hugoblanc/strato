@@ -84,6 +84,11 @@ switch (cmd) {
   case "demo":
     await (await import("./commands/demo.ts")).demo(rest);
     break;
+  case "help":
+  case "--help":
+  case "-h":
+    (await import("./commands/help.ts")).help();
+    break;
   case "watch":
     await watch(rest[0]);
     break;
