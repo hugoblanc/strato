@@ -18,7 +18,7 @@ It is the shape the interview aims at.
 
 | Tool | Needed for | Required |
 | --- | --- | --- |
-| [Bun](https://bun.sh) 1.1 or later | Running Strato | Yes |
+| [Bun](https://bun.sh) 1.1 or later | Running Strato from a clone (the binary needs nothing) | Only from a clone |
 | [Claude Code](https://claude.com/claude-code) with background sessions (`claude --bg`, `claude agents`) | The master and one work session per topic | Yes |
 | A Slack user token (`xoxp-…`) | Reading Slack as you, and posting your approved drafts | Yes |
 | A Slack app-level token (`xapp-…`) | Socket Mode: messages within a second instead of polling every minute | No |
@@ -31,24 +31,37 @@ GitHub is not wired as a forge yet: sessions can still use `gh`, but the board h
 
 ## 2. Install
 
-Strato is a Claude Code skill. Clone it into the project you work from:
+Install the binary (macOS or Linux, x64 or arm64):
 
 ```bash
-git clone <repo-url> <project>/.claude/skills/strato
-cd <project>/.claude/skills/strato/scripts && bun install
+curl -fsSL https://raw.githubusercontent.com/hugoblanc/strato/main/install.sh | sh
 ```
 
-The project folder is the **workspace**: work sessions run there, with its `CLAUDE.md` and `.mcp.json`.
+It installs `~/.local/bin/strato` after checking its SHA-256, and writes the skill to `~/.claude/skills/strato/SKILL.md`.
+`STRATO_INSTALL_DIR` changes the folder, `STRATO_VERSION=v0.2.0` pins a release, and `STRATO_SKILL_ARGS="--project $HOME/dev/acme"` writes a project skill instead of the global one.
+If the script says `~/.local/bin` is not in your `PATH`, add it: the skill then calls `strato` by name, else by its full path.
+To write the skill again later, or for another project: `strato install-skill [--project <project>]` (`--force` replaces a SKILL.md it did not write).
+On Windows, download `strato-windows-x64.exe` from the releases page, rename it `strato.exe` in a folder of your `PATH`, and run `strato install-skill`; iTerm2, `osascript` and the sidebar panel do not exist there.
+
+Your project folder is the **workspace**: work sessions run there, with its `CLAUDE.md` and `.mcp.json`.
+Start Claude Code from it; Strato finds its state folder (`.strato/`) from there, or from any subfolder.
 An umbrella folder that holds several repositories works well.
 
 Check what is missing:
 
 ```bash
 cd <project>
-bun .claude/skills/strato/scripts/strato.ts setup --check
+strato setup --check
 ```
 
 It prints one line per prerequisite and exits with code 1 while a blocking one is missing.
+
+**From a clone instead** (to contribute), with Bun: clone the repository into the project and use `bun .claude/skills/strato/scripts/strato.ts` wherever this guide says `strato`.
+
+```bash
+git clone https://github.com/hugoblanc/strato <project>/.claude/skills/strato
+cd <project>/.claude/skills/strato/scripts && bun install
+```
 
 ## 3. Connect Slack
 

@@ -18,19 +18,35 @@ Nothing is posted on your behalf and nothing is written to production without yo
 
 ## Requirements
 
-- macOS or Linux, [Bun](https://bun.sh) 1.1 or later.
+- macOS or Linux (x64 or arm64). Windows is best effort: the binary runs, but iTerm2, `osascript` and the sidebar panel do not exist there.
+- No runtime to install: Strato ships as a standalone binary. [Bun](https://bun.sh) 1.1 or later only to run it from a clone.
 - [Claude Code](https://claude.com/claude-code) with background sessions (`claude --bg`, `claude agents`).
 - A Slack user token (`xoxp-…`) for your workspace, from a Slack app created with [`examples/slack-app-manifest.yaml`](examples/slack-app-manifest.yaml). Socket Mode and its app token (`xapp-…`) are optional: without them, Strato polls the search API.
 - Optional: `glab` and a `GITLAB_TOKEN` to follow merge requests, the Linear MCP for tickets, `ttyd` for the in-page terminal, iTerm2 for the sidebar panel.
 
 ## Installation
 
-Clone the repository as a Claude Code skill, either for one project or for your user:
+One line, on macOS or Linux:
 
 ```bash
-git clone <repo-url> <project>/.claude/skills/strato     # project skill: the project is the workspace
+curl -fsSL https://raw.githubusercontent.com/hugoblanc/strato/main/install.sh | sh
+```
+
+It downloads the binary of your platform from the [latest release](https://github.com/hugoblanc/strato/releases/latest), checks its SHA-256 against `SHA256SUMS`, installs it as `~/.local/bin/strato` (`STRATO_INSTALL_DIR` to change it), tells you if that folder is not in your `PATH`, and writes the Claude Code skill to `~/.claude/skills/strato/SKILL.md` (`strato install-skill`).
+For a skill scoped to one project instead: `strato install-skill --project <project>`.
+Updates come from the board's Update button, or `strato update`; the previous binary stays as `strato.previous` (`strato update --rollback`).
+
+**Windows** (best effort): download `strato-windows-x64.exe` from the [releases page](https://github.com/hugoblanc/strato/releases/latest), check it against `SHA256SUMS`, put it in a folder of your `PATH` as `strato.exe`, then run `strato install-skill`.
+The iTerm2 panel, `dive` and `iterm-mark` are macOS only, and the board's terminal needs `ttyd`.
+
+**From a clone** (to contribute, or to run unreleased code), with Bun:
+
+```bash
+git clone https://github.com/hugoblanc/strato <project>/.claude/skills/strato     # project skill: the project is the workspace
 cd <project>/.claude/skills/strato/scripts && bun install
 ```
+
+The clone's SKILL.md is used as is: its commands read `$STRATO`, which the master expands to `bun <clone>/scripts/strato.ts`.
 
 Then, from the project folder, run the guided setup:
 
@@ -76,8 +92,12 @@ Strato acts with your identity. Read this before installing it.
 
 ```bash
 cd scripts
-bun run check    # strict typecheck and tests
+bun run check        # strict typecheck and tests
+bun run build:host   # the binary of this machine, in dist/
+bun run build        # the five release binaries and SHA256SUMS, in dist/
 ```
+
+A release is a tag `v<version>` matching `scripts/package.json`: `.github/workflows/release.yml` runs the checks, compiles the binaries, and publishes them with "What's new" from the `feat:` and `fix:` commits since the previous tag.
 
 ## License
 
