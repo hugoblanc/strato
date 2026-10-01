@@ -1720,6 +1720,29 @@ Each stage is one or more commits that leave `bun run check` green and the guard
   Two changes are intentional and said in the commit messages: the default templates ask for a Go on ticket comments and creation (the invariant names comments), and sessions run an explicit list of Strato subcommands (anything else asks for a permission, which the board shows).
   Policy overrides are never touched.
 - **Done when.** Check green; a grep shows `Provider.act` called from `app/act.ts` only; `slackPost` is no longer imported by `server/serve.ts`; the check that a resumed session keeps its settings is recorded in the merge request.
+- **As built.** The stage was cut in two: this first part puts every write the board makes behind the gate; the parts of the scope above that concern sessions and the master move to a second act stage (listed last).
+  Where it departs from the text above, and why:
+  - The board's Send, Undo and ✅ go through `app/act.ts` (`actOnTask`, `undoTask`, `actDone`), which runs the pure checks of `core/gate.ts` on the state read under the lock, writes `inFlight` on the task, calls the provider outside the lock with a 30 s bound, and writes the result under the lock again.
+    `slackPost` and every other Slack write left `server/serve.ts`; the board keeps `board-post`, `board-unpost` and `board-check` next to the new `act`, `act-refused` and `act-undo` lines.
+  - One act path, enforced structurally: the registry hands out views of the providers without `act` and `undo` (`ProviderView`), a provider's writes live in their own module (`providers/slack/act.ts`) that only the registry imports, and `actorOf` is imported by `app/act.ts` alone.
+    `act.test.ts` scans the program's sources for any other caller or importer, and checks in a child process that the registry, the accounts and the installed pure parts never carry `act` or `undo`, even for an added provider that has them.
+  - The Go covers the task as the board showed it: the board renders the hash of the task's plan (`data-sha`) and Send sends it back; the gate recomputes it from the task on disk.
+    An edit made on the board is the person's own text: the hash covers the destination and the draft shown, and what goes out is the edited text.
+    A page loaded before this stage sends no hash: the server hashes the draft and destination that page sent back, which `draftConflict` already compared with the disk.
+  - The providers' pure parts (`parseTarget`, `render`, `threadInfo`, `deepLink`) are installed with their descriptors (`ProviderPure`, `core/links.ts`), and `core/targets.ts` resolves a task's destination for the board, the panel and the gate alike.
+    The interface gains `threadInfo` (what a native thread id says: its conversation and time, for the board's and the panel's thread labels), a `names` argument to `render.html` (people's and conversations' names the board knows), a `label` on `parseTarget`'s error (the board still shows the destination's words), and the descriptor's `done` (the marker of a settled thread, which ✅ puts).
+  - A typed `to` is a key; the core resolves it without the provider's `parseTarget`: a thread when the provider's `threadInfo` reads one in the native id, a ticket for a tracker, else a conversation (a separate message).
+    `parseTarget` stays for free text only, so a legacy `draftTo` keeps exactly today's meaning.
+  - A topic whose tool reads no destination (a ticket topic, Linear before its stage) has its free-text `draftTo` read by the default account of the first installed tool that does: a ticket topic's draft went to Slack before, and still does.
+  - An account counts as able to act only when its provider implements `act`: the Linear descriptor declares its actions ahead of the linear stage, and a draft aimed at Linear is refused by the gate, not failed by the provider.
+  - Unknown outcomes: there is no separate **Mark as sent** button; the task's **Done** closes it without writing.
+    The board shows "may have gone out: check …" on the task, and Send becomes **Send again**, which sends `retry: true`; a Send without it is refused while the outcome is unknown.
+  - The undo token and the topic's fields to put back (`sent.restore`: status, waiting, posted) live in the task's `sent` record, so a board restarted within the window still offers Undo and the session's note still goes out.
+  - ✅ has no task: its plan is built at the click, which is the Go on it; a second click finds the reaction already there, which Slack's `act` reads as done.
+  - The board opens links in their tool's app through the provider that owns the host, with the identity its `connect` returns (Slack's team id), and only when `ui.slackApp` asks for it for Slack.
+  - `shadowNow` moved to `app/env.ts` (re-exported by `commands/setup.ts`), so the act path does not load the setup command.
+  - A golden render of a Slack-only board and panel (`board-golden.test.ts`), recorded before the change, is unchanged but for the new `data-sha` attribute.
+  - Left for the second act stage, with the tests the scope above lists for them: `strato act` for the master and `workers.goFrom`; `workers.gate` strict and legacy and `NEW_INSTALL_PROFILE` strict; the command line gate (allowlist, deny rules, `STRATO_CALLER`, a TTY or the board for loosening switches, `--strict-gate`, `--legacy-gate`, `--deny-master-writes`); the Go recorded on non-provider tasks and the wrap of `send` and `relay`; MCP write deny rules; sessions spawned without provider secrets; the prompts (`gateRule`, the Go on ticket comments, SKILL.md's "Carrying out a go"); the check that a resumed session keeps its settings.
 
 ### prompts
 
