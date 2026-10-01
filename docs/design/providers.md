@@ -136,6 +136,7 @@ These parts do not change shape; they only stop assuming Slack.
 | `scripts/core/triage.ts` | `classifyItem`, `TriageRules`, and the rules derived from settings (section 7) | yes |
 | `scripts/core/gate.ts` | Canonical action content, its hash, the act decisions (section 8) | yes |
 | `scripts/core/caller.ts` | Which commands a caller may run, and which switches loosen the gate (section 8.6) | yes |
+| `scripts/providers/builtin.ts` | The built-in descriptors, installed into `core/links.ts` at startup (`useProviders`, called by `app/env.ts` and the test preload) | yes |
 | `scripts/providers/registry.ts` | Built-in providers, external loading, accounts resolved from settings | no |
 | `scripts/providers/slack/` | `model.ts` (re-exports and adapts `chat/slack-model.ts`, the link patterns), `index.ts` (adapts `app/slack.ts`) | split |
 | `scripts/providers/linear/` | `model.ts` (link patterns, GraphQL shapes to items), `client.ts` (HTTP), `index.ts` | split |
@@ -500,22 +501,33 @@ export interface LinkSpec {
 }
 ```
 
-Slack's links, as data:
+Slack's links, as data (`REPLY` and `MESSAGE` stand for the two patterns of the first entries, repeated as is):
 
 ```json
 {
   "parse": [
-    { "host": "*.slack.com", "pattern": "^/archives/([A-Z0-9]+)/p(\\d{10})(\\d{6})\\?(?:[^#]*&)?thread_ts=(\\d{10}\\.\\d{6})", "thread": "$1:$4", "item": "$1:$2.$3" },
-    { "host": "*.slack.com", "pattern": "^/archives/([A-Z0-9]+)/p(\\d{10})(\\d{6})", "thread": "$1:$2.$3" }
+    { "host": "{settings.workspace}.slack.com", "pattern": "^/archives/([A-Z0-9]+)/p(\\d{10})(\\d{6})[^?#]*\\?(?:[^#]*&)?thread_ts=(\\d+\\.\\d+)", "thread": "$1:$4", "item": "$1:$2.$3" },
+    { "host": "{settings.workspace}.slack.com", "pattern": "^/archives/([A-Z0-9]+)/p(\\d{10})(\\d{6})", "thread": "$1:$2.$3" },
+    { "host": "*.slack.com", "pattern": "REPLY", "thread": "$1:$4", "item": "$1:$2.$3" },
+    { "host": "*.slack.com", "pattern": "MESSAGE", "thread": "$1:$2.$3" }
   ],
-  "of": [{ "match": "^([A-Z0-9]+):(\\d{10})\\.(\\d{6})$", "url": "https://{settings.workspace}.slack.com/archives/$1/p$2$3" }]
+  "of": [
+    { "match": "^([A-Z0-9]+):(\\d{10})\\.(\\d{6})$", "url": "https://{settings.workspace}.slack.com/archives/$1/p$2$3" },
+    { "match": "^([CGD][A-Z0-9]+)$", "url": "https://{settings.workspace}.slack.com/archives/$1" }
+  ]
 }
 ```
+
+The exact-host entries are what lets a named Slack account claim its own workspace's links; the wildcard entries keep `parsePermalink`'s acceptance of any Slack host, and the default account comes first among the accounts, so it gets them.
+`thread_ts` keeps `parsePermalink`'s `\d+\.\d+`, and the second `of` entry links a channel, for a separate message.
 
 Rules of the evaluator:
 
 - Across accounts, exact hosts are tried before wildcard hosts, so `acme-partners.slack.com` resolves to the `partners` account and any other Slack host to the default account, which is today's behavior (`parsePermalink` accepts any host).
-- Substituted settings are regex-escaped; a link longer than 2 KiB is not parsed.
+- Substituted settings are regex-escaped in a pattern, where a list setting becomes alternatives (`{settings.prefixes}` gives `ENG|OPS`); in a host or a URL a list gives its first value.
+  An empty or missing setting makes the entry unusable, and it is skipped: without a workspace, no link is built, as today.
+- The input is the reference itself, the first `http(s)` link of a text, or a link written without its scheme (`acme.slack.com/archives/…`), which `parsePermalink` also accepted; a link longer than 2 KiB is not parsed.
+- A built link is kept only when it is https, without whitespace and on the provider's `hosts`, whatever the descriptor's `of` says.
 - The result is a native id; the core turns it into a key (section 5).
 - Built-in providers may add one pure function where a pattern cannot say it (`deepLink`, Slack's `slack://` link, which needs the team id); external providers only declare.
 
@@ -598,7 +610,8 @@ native       = 1*( ALPHA / DIGIT / "." / "_" / ":" / "/" / "+" / "=" / "@" / ","
 long-id      = "%h" 26( base32 character )
 ```
 
-A key starting with an uppercase letter or a digit and matching `^[A-Z0-9]+:\d{10}\.\d{6}$` is a legacy Slack key on the default account.
+A key whose part before the first `:` is uppercase letters and digits is a legacy Slack key on the default account, its native id the whole key.
+The exact shape `^[A-Z0-9]+:\d{10}\.\d{6}$` is what a link is built from; looser stored shapes (`CX:1` in fixtures and older states) keep reading as Slack keys, as every site that split them on `:` read them.
 Provider ids are lowercase and Slack conversation ids are uppercase, so the two never collide.
 `linear:PLAT-12`, the ticket key Strato writes today, is already a qualified key on the default Linear account.
 
@@ -769,6 +782,9 @@ No profile is migrated: an installation that never touches setup keeps its file 
 
 `profileErrors` (`core/setup.ts`) learns the `providers` section; `setup --write` refuses the whole file on any error, as today.
 `profileErrors` stays pure: the descriptors of external providers come from the trust cache (section 13.2), passed in by its caller, and validation never starts a process.
+The built-in descriptors are the ones installed in `core/links.ts`.
+The messages of the table ship with the seam stage, except two that depend on later stages: the `workers.gate` one comes with the act stage, which adds the key, and "no source account" with the setup stage, because checking it needs the token search, which is I/O, and `setup --write` must keep accepting the partial profiles the interview writes.
+Messages that name a later command (`setup --connect`, `provider trust`) keep their wording; the commands land in the setup and external stages.
 New messages go through `core/i18n.ts` under `cli.setup.*`, in English and French.
 They lead with a plain sentence and end with the path in parentheses, so a person who does not read JSON paths still knows what to do; existing messages keep their wording.
 
@@ -1600,6 +1616,19 @@ Each stage is one or more commits that leave `bun run check` green and the guard
   Every existing test unchanged.
 - **Compatibility.** No stored format changes; `reportFile` is unchanged for existing keys; no CLI change.
 - **Done when.** Check green; `doctor` prints the same lines on the test rig; no permalink or ticket URL is built from a key outside `providers/`, `core/links.ts` and `chat/slack-model.ts`; `app/slack.ts` keeps its API URLs, and `core/setup.ts` and `commands/setup.ts` their setup links.
+- **As built.** Where the seam departs from the text above, and why:
+  - The Linear descriptor ships with the seam (`providers/linear/model.ts`, and `providers/linear/index.ts` whose `connect` refuses): `linear:` keys and ticket links go through the link evaluator, so a descriptor is needed; it reproduces `ticketUrl` and `linearIssueId` exactly, the parse patterns requiring a configured prefix.
+  - The descriptors are installed in `core/links.ts` (`useProviders`) from `providers/builtin.ts`, by `app/env.ts` and `test-setup.ts`; `profileErrors` reads them there.
+  - The Slack provider serves the default account only: `app/slack.ts` keeps one token per process, found in today's search order, so a named Slack account gets its own client in the ingest stage.
+    Its only auth method is `user-token`; `oauth-pkce` joins in the setup stage, once Slack's PKCE endpoints are confirmed (section 16, question 6).
+  - The Slack provider implements `connect`, `participated`, `context`, `parseTarget`, `render` and `deepLink`; `poll` and `subscribe` come with ingest, `act` and `undo` with act.
+  - `sdk.ts` holds the types of section 4; the exec protocol's types join it in the external stage.
+  - `sujetKey` also returns the canonical form of a key typed as is, when its account is configured (`slack:C…` gives the bare key); a key of an unknown tool stays unrecognized, so a ⌘K search for `re:deploy` is still a text search.
+  - `reportFile` adds its suffix to provider-qualified keys only (`<provider>[@<account>]:`), so any key stored today, Slack, `linear:` or another shape, keeps its report name.
+  - The event line lists the open topics of the same conversation for Slack keys only, until items carry their conversation id (ingest).
+  - The demo builds its fixture links with `permalinkFor`, so no link is built from a key outside the three places named above.
+  - A Slack path on a host that is not Slack's (`https://example.com/archives/C…/p…`), which `parsePermalink` matched anywhere in a string, is no longer read as a Slack thread: the patterns name their hosts.
+  - The registry captures the global `fetch` when it loads, and gives each account a fetch limited to its `apiHosts`; nothing calls it yet, since the Slack provider keeps `app/slack.ts`'s own client.
 
 ### ingest
 
