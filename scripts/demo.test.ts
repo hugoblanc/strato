@@ -27,7 +27,7 @@ describe("demo data", () => {
     expect(topics.map((t) => `${t.letter}:${t.status}`)).toEqual(["A:gate", "B:gate", "C:working", "D:waiting"]);
     expect(topics[0].tasks?.[0]).toMatchObject({ kind: "draft", status: "open" });
     expect(topics[1].tasks?.[0]).toMatchObject({ kind: "decision", status: "open" });
-    expect(JSON.stringify(topics)).not.toContain("—");
+    expect(JSON.stringify(topics)).not.toContain("\u2014");
   });
 
   test("the environment of its server points inside the demo folder and carries no token", () => {
