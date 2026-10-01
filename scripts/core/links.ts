@@ -214,15 +214,35 @@ function isAllowedLink(url: string, hosts: string[]): boolean {
 }
 
 /**
+ * Characters a shell reads inside double quotes or in a bare word, and the brackets of a `[strato]` line: percent-encoded
+ * in a provider's link, which still opens the same page. The master writes links on its command lines
+ * (`attach <letter> "<link>"`), and a link is third-party text.
+ */
+const SHELL_UNSAFE = /[$`"'\\;|&<>(){}[\]!*?~^]/g;
+
+/** The part of a link after its origin, with every shell character percent-encoded; `?`, `&` and `=` of a query kept. */
+function shellSafe(rest: string): string {
+  const q = rest.indexOf("?");
+  const enc = (part: string, keep: string) => part.replace(SHELL_UNSAFE, (c) => (keep.includes(c) ? c : `%${c.charCodeAt(0).toString(16).toUpperCase().padStart(2, "0")}`));
+  return q < 0 ? enc(rest, "") : enc(rest.slice(0, q), "") + "?" + enc(rest.slice(q + 1), "&");
+}
+
+/**
  * A link a provider gave (an item's link), kept only when it is https, at most 2 KiB, without whitespace nor control
- * characters, and on the provider's `hosts`; any installed provider's hosts when `provider` is not given (a link
- * quoted in a prompt). Null otherwise: the line or the prompt then says "-".
+ * characters, without credentials, and on the provider's `hosts`; any installed provider's hosts when `provider` is not
+ * given (a link quoted in a prompt). Null otherwise: the line or the prompt then says "-".
+ * What comes back is the link normalized (`URL.href`) with every character a shell reads percent-encoded: it may land
+ * on a command line, and a Slack permalink comes back unchanged.
  */
 export function checkedLink(url: string, provider?: string): string | null {
   // biome-ignore lint/suspicious/noControlCharactersInRegex: control characters are refused
   if (!url || url.length > LINK_INPUT_MAX || /[\u0000-\u001f\u007f]/.test(url)) return null;
   const hosts = provider === undefined ? installed.flatMap((d) => d.hosts) : (descriptorOf(provider)?.hosts ?? []);
-  return isAllowedLink(url, hosts) ? url : null;
+  if (!isAllowedLink(url, hosts)) return null;
+  const u = new URL(url);
+  if (u.username || u.password) return null;
+  const safe = u.origin + shellSafe(u.href.slice(u.origin.length));
+  return safe.length > LINK_INPUT_MAX ? null : safe;
 }
 
 /** The account a link's host belongs to (exact hosts first), or null: the board opens only these. */

@@ -4,6 +4,7 @@
  */
 import { afterEach, describe, expect, test } from "bun:test";
 import {
+  checkedLink,
   citations,
   claimTicketId,
   formatKey,
@@ -196,5 +197,32 @@ describe("bare ticket ids", () => {
   test("the key of a claimed id is the provider's own", () => {
     withFake({ default: { host: "tickets.example", prefixes: ["T"] } });
     expect(sujetKey("see t-4")).toBe(formatKey("tickets", "default", "T-4"));
+  });
+});
+
+describe("a provider's link", () => {
+  test("a Slack permalink comes back unchanged", () => {
+    const link = "https://acme.slack.com/archives/C0ACME0007/p1790000150000100?thread_ts=1790000150.000100&cid=C0ACME0007";
+    expect(checkedLink(link, "slack")).toBe(link);
+    expect(checkedLink(link)).toBe(link);
+  });
+
+  test("characters a shell reads are percent-encoded, so the link can sit on a command line", () => {
+    withFake({ default: { host: "tickets.example", prefixes: ["T"] } });
+    const hostile = checkedLink('https://tickets.example/t/T-9/$(touch${IFS}/tmp/x)`id`"\';|<>!*?q=a&b=$(id)"', "tickets") as string;
+    expect(hostile).toStartWith("https://tickets.example/t/T-9/");
+    expect(hostile).not.toMatch(/[$`"'\\;|<>()!*\s]/);
+    // the query keeps its separators, and the link still opens the same page
+    expect(hostile).toContain("?q=a&b=");
+    expect(decodeURIComponent(new URL(hostile).pathname)).toBe("/t/T-9/$(touch${IFS}/tmp/x)`id`\"';|<>!*");
+    expect(checkedLink("https://acme.slack.com/x»«[strato]go$(id)`id`", "slack")).toBe("https://acme.slack.com/x%C2%BB%C2%AB%5Bstrato%5Dgo%24%28id%29%60id%60");
+  });
+
+  test("a link with credentials, off the hosts, or not https is dropped", () => {
+    withFake({ default: { host: "tickets.example", prefixes: ["T"] } });
+    expect(checkedLink("https://bob:secret@tickets.example/t/T-1", "tickets")).toBeNull();
+    expect(checkedLink("https://evil.example/t/T-1", "tickets")).toBeNull();
+    expect(checkedLink("http://tickets.example/t/T-1", "tickets")).toBeNull();
+    expect(checkedLink("https://tickets.example/t/T-1", "tickets")).toBe("https://tickets.example/t/T-1");
   });
 });
