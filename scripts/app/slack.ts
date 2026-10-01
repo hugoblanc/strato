@@ -1,38 +1,20 @@
 /**
- * Slack, network side: the token, the Web API, names, search, thread reads and the socket's app token.
- * Message triage and formatting, pure, live in chat/slack-model.ts.
+ * Slack, network side: the token, the Web API, names, search, thread reads and the socket.
+ * One `SlackClient` per Slack account, each with its token and its caches; the functions exported at the top level
+ * work on the default account's client, the one found by today's token search (`connectSlack`), and keep their
+ * signatures. Message triage and formatting, pure, live in chat/slack-model.ts.
  */
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { bestText, channelGuess, channelLabel, classify, type Config, humanize, type Kind, matchFromEditEvent, matchFromSocketEvent, type SlackChannel, type SlackMatch, SOCKET_SUBTYPES, threadKey } from "../chat/slack-model.ts";
+import { bestText, channelGuess, channelLabel, type Config, humanize, matchFromEditEvent, matchFromSocketEvent, type SlackChannel, type SlackMatch, SOCKET_SUBTYPES, threadKey } from "../chat/slack-model.ts";
 import { type ThreadDump } from "../core/cards.ts";
 import { permalinkOfKey, threadOfKey } from "../core/keys.ts";
 import { settings, type SlackSettings } from "../core/settings.ts";
 import { tokenKindProblem, USER_TOKEN_WHERE } from "../core/setup.ts";
-import { type Sujet, sujetKeys, type Trigger } from "../core/sujet.ts";
-import { truncate } from "../core/text.ts";
+import { type Sujet, sujetKeys } from "../core/sujet.ts";
 import { expandHome, F, fail, localDay, readJson, WORKSPACE, writeJson } from "./env.ts";
 
 // ------------------------------------------------------------------ slack
-
-let TOKEN = "";
-
-/** A token of the right workspace was already found: calls can go out without `connectSlack`. */
-export const hasSlackToken = () => TOKEN !== "";
-
-/** A write call (chat.postMessage, chat.delete): as a POST, the text does not travel in the URL. */
-// biome-ignore lint/suspicious/noExplicitAny: untyped Slack responses
-export async function slackPost(method: string, params: Record<string, string>): Promise<any> {
-  const res = await fetch(`https://slack.com/api/${method}`, {
-    method: "POST",
-    headers: { Authorization: `Bearer ${TOKEN}`, "Content-Type": "application/x-www-form-urlencoded; charset=utf-8" },
-    body: new URLSearchParams(params),
-    signal: AbortSignal.timeout(20_000),
-  });
-  const body = (await res.json()) as { ok?: boolean; error?: string };
-  if (!body.ok) throw new SlackError(body.error ?? "unknown");
-  return body;
-}
 
 export class SlackError extends Error {
   constructor(readonly code: string) {
@@ -70,24 +52,252 @@ export function tokenCandidates(): string[] {
   return [...new Set(all.filter((t): t is string => Boolean(t)))];
 }
 
+/** Slack's answer to a call, untyped. */
 // biome-ignore lint/suspicious/noExplicitAny: untyped Slack responses
-export async function slack(method: string, params: Record<string, string | number> = {}, attempt = 0): Promise<any> {
-  const qs = new URLSearchParams(Object.entries(params).map(([k, v]): [string, string] => [k, String(v)]));
-  const res = await fetch(`https://slack.com/api/${method}?${qs}`, {
-    headers: { Authorization: `Bearer ${TOKEN}` },
-    signal: AbortSignal.timeout(25_000),
-  });
-  if (res.status === 429) {
-    // search.messages is Tier 2 (~20 calls/min): a long catch-up hits it, wait as long as Slack asks
-    if (attempt >= 4) throw new SlackError("ratelimited");
-    await Bun.sleep((Number(res.headers.get("retry-after")) || 10) * 1000);
-    return slack(method, params, attempt + 1);
+type SlackBody = any;
+
+/** A conversations.info failure on a private conversation: the person served is not in it. */
+const NOT_MINE_TTL_MS = 3_600_000;
+
+/** A private conversation (DM, group DM) according to the event: only those are checked for membership. */
+const isPrivateConversation = (id: string, channelType?: string) => channelType === "im" || channelType === "mpim" || id.startsWith("D");
+
+/** Cap on a thread read: past it, the most recent replies are not read. */
+export const REPLIES_MAX = 2000;
+
+/**
+ * One Slack account's connection: its token, its HTTP, and what it remembers (people's names, conversations).
+ * `fetch` is read at each call, so the default account follows a fetch replaced by tests, and a named account goes
+ * through the fetch its account context limits to Slack's API host. `saveUsers` keeps the names between runs.
+ */
+export class SlackClient {
+  token = "";
+  /** The workspace's URL (`https://acme.slack.com`), from auth.test: the base of the links the socket does not give. */
+  base: string | null = null;
+  /** Full channel objects, cached: triage needs is_im/is_mpim, the socket only gives the id. */
+  private readonly channelObjects = new Map<string, SlackChannel>();
+  /** The DMs and group DMs the person served belongs to, read with their token. */
+  private readonly myConversations = new Set<string>();
+  /** Conversations they are known not to belong to (Slack answers channel_not_found with their token), and since when. */
+  private readonly notMine = new Map<string, number>();
+  /** Readable channel names ("#sales", "DM"), in memory only; a failure is not remembered. */
+  private readonly channelNames = new Map<string, string>();
+
+  constructor(
+    private readonly http: () => typeof fetch,
+    readonly users: Map<string, string>,
+    private readonly saveUsers: (users: Map<string, string>) => void,
+  ) {}
+
+  async call(method: string, params: Record<string, string | number> = {}, attempt = 0): Promise<SlackBody> {
+    const qs = new URLSearchParams(Object.entries(params).map(([k, v]): [string, string] => [k, String(v)]));
+    const res = await this.http()(`https://slack.com/api/${method}?${qs}`, {
+      headers: { Authorization: `Bearer ${this.token}` },
+      signal: AbortSignal.timeout(25_000),
+    });
+    if (res.status === 429) {
+      // search.messages is Tier 2 (~20 calls/min): a long catch-up hits it, wait as long as Slack asks
+      if (attempt >= 4) throw new SlackError("ratelimited");
+      await Bun.sleep((Number(res.headers.get("retry-after")) || 10) * 1000);
+      return this.call(method, params, attempt + 1);
+    }
+    // some channel or profile names contain invalid bytes: lenient decoding
+    const body = JSON.parse(new TextDecoder("utf-8", { fatal: false }).decode(await res.arrayBuffer()));
+    if (!body.ok) throw new SlackError(body.error ?? "unknown");
+    return body;
   }
-  // some channel or profile names contain invalid bytes: lenient decoding
-  const body = JSON.parse(new TextDecoder("utf-8", { fatal: false }).decode(await res.arrayBuffer()));
-  if (!body.ok) throw new SlackError(body.error ?? "unknown");
-  return body;
+
+  /** A write call (chat.postMessage, chat.delete): as a POST, the text does not travel in the URL. */
+  async post(method: string, params: Record<string, string>): Promise<SlackBody> {
+    const res = await this.http()(`https://slack.com/api/${method}`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${this.token}`, "Content-Type": "application/x-www-form-urlencoded; charset=utf-8" },
+      body: new URLSearchParams(params),
+      signal: AbortSignal.timeout(20_000),
+    });
+    const body = (await res.json()) as { ok?: boolean; error?: string };
+    if (!body.ok) throw new SlackError(body.error ?? "unknown");
+    return body;
+  }
+
+  /** The workspace's URL, read once from auth.test. Throws when Slack does not answer. */
+  async workspaceUrl(): Promise<string> {
+    if (this.base) return this.base;
+    const url = String((await this.call("auth.test")).url ?? "").replace(/\/$/, "");
+    if (url) this.base = url;
+    return url;
+  }
+
+  /** A person's display name, remembered. A failure returns the id without writing: the next message asks again. */
+  async nameOf(uid: string): Promise<string> {
+    const hit = this.users.get(uid);
+    if (hit) return hit;
+    let name: string;
+    try {
+      const r = await this.call("users.info", { user: uid });
+      name = r.user?.profile?.display_name || r.user?.real_name || r.user?.name || uid;
+    } catch {
+      return uid;
+    }
+    this.users.set(uid, name);
+    this.saveUsers(this.users);
+    return name;
+  }
+
+  async readable(raw: string, keepLines = false): Promise<string> {
+    for (const [, uid] of raw.matchAll(/<@([A-Z0-9]+)/g)) await this.nameOf(uid);
+    return humanize(raw, (uid) => this.users.get(uid) ?? uid, keepLines);
+  }
+
+  /**
+   * Messages visible to the person served, posted since `sinceSec`, oldest first.
+   * A busy workspace yields about a thousand per working day: pages are read until `sinceSec`, `complete` says whether
+   * it got there. search.messages reads the search index, which lags a few seconds to a minute.
+   */
+  async fetchSince(sinceSec: number, maxPages: number): Promise<{ matches: SlackMatch[]; complete: boolean }> {
+    // after: excludes the given day, step back one day to lose nothing
+    const query = `after:${localDay((sinceSec - 86400) * 1000)}`;
+    const all: SlackMatch[] = [];
+    let complete = false;
+    for (let page = 1; page <= maxPages; page++) {
+      const r = await this.call("search.messages", { query, count: 100, page, sort: "timestamp", sort_dir: "desc" });
+      const matches = (r.messages?.matches ?? []) as SlackMatch[];
+      all.push(...matches);
+      const pages = r.messages?.paging?.pages ?? 1;
+      if (!matches.length || page >= pages || Number(matches[matches.length - 1].ts) < sinceSec) {
+        complete = true;
+        break;
+      }
+    }
+    return { matches: all.filter((m) => Number(m.ts) >= sinceSec).sort((a, b) => a.ts.localeCompare(b.ts)), complete };
+  }
+
+  /** Threads where the person served wrote in the last `days` days: a reply there without a mention is probably for them. */
+  async participatedThreads(cfg: Pick<Config, "me">, days = 7): Promise<Set<string>> {
+    const keys = new Set<string>();
+    const query = `from:<@${cfg.me}> after:${localDay(Date.now() - (days + 1) * 86400_000)}`;
+    for (let page = 1; page <= 3; page++) {
+      const r = await this.call("search.messages", { query, count: 100, page, sort: "timestamp", sort_dir: "desc" });
+      const matches = (r.messages?.matches ?? []) as SlackMatch[];
+      for (const m of matches) keys.add(threadKey(m));
+      if (matches.length < 100) break;
+    }
+    return keys;
+  }
+
+  /**
+   * A message's channel. `channelType` is the event's `channel_type` (im, mpim, channel, group) when there is one.
+   * A conversations.info failure is never cached: otherwise a single failure turns a DM into an unknown channel for
+   * the whole life of the process, and its messages stop being surfaced.
+   */
+  async channelOf(id: string, channelType?: string): Promise<SlackChannel> {
+    const hit = this.channelObjects.get(id);
+    if (hit) return hit;
+    // a DM or group DM is recognised from the event, without a call: its name is useless ("DM")
+    if (channelType === "im" || channelType === "mpim") {
+      const c = channelGuess(id, channelType);
+      this.channelObjects.set(id, c);
+      return c;
+    }
+    try {
+      const r = await this.call("conversations.info", { channel: id });
+      if (r.channel) {
+        const c: SlackChannel = { id, name: r.channel.name, is_im: r.channel.is_im, is_mpim: r.channel.is_mpim };
+        this.channelObjects.set(id, c);
+        return c;
+      }
+    } catch {}
+    return channelGuess(id, channelType);
+  }
+
+  /**
+   * True if the person served is in this private conversation, false if not, null when Slack does not tell (network,
+   * rate limit): the caller then keeps the message rather than risk losing one.
+   * A Slack app installed by several people receives everyone's DMs over Socket Mode: the event's `authorizations`
+   * field names only one of them, and Slack says not to rely on it. conversations.info with their token only sees
+   * their conversations: channel_not_found on one between two colleagues. A foreign conversation is checked again
+   * after an hour: one can be added to a group DM.
+   */
+  async isMyConversation(id: string): Promise<boolean | null> {
+    if (this.myConversations.has(id)) return true;
+    const seen = this.notMine.get(id);
+    if (seen !== undefined && Date.now() - seen < NOT_MINE_TTL_MS) return false;
+    try {
+      const r = await this.call("conversations.info", { channel: id });
+      if (!r.channel) return null;
+      this.myConversations.add(id);
+      this.notMine.delete(id);
+      return true;
+    } catch (e) {
+      if (/channel_not_found|not_in_channel/.test((e as Error).message)) {
+        this.notMine.set(id, Date.now());
+        return false;
+      }
+      return null;
+    }
+  }
+
+  /**
+   * A socket `message` event -> a SlackMatch, once the channel is resolved. The conversion itself lives in chat/slack-model.ts, tested.
+   * A `message_changed` only passes if it adds a mention of the person served (`cfg`), compared with its previous version.
+   */
+  async matchFromEvent(e: Record<string, any>, base: string, cfg: Pick<Config, "me" | "subteams">): Promise<SlackMatch | null> {
+    // the DM of two colleagues who also installed the app is not a DM of the person served
+    if (e?.channel && isPrivateConversation(String(e.channel), e.channel_type) && (await this.isMyConversation(String(e.channel))) === false) return null;
+    if (e?.subtype === "message_changed" && e.channel) return matchFromEditEvent(e, await this.channelOf(String(e.channel), e.channel_type), base, cfg);
+    if (e?.type !== "message" || !e.ts || !e.channel) return null;
+    if (e.subtype && !SOCKET_SUBTYPES.has(e.subtype)) return null;
+    return matchFromSocketEvent(e, await this.channelOf(String(e.channel), e.channel_type), base);
+  }
+
+  /**
+   * A thread's messages, root included, page by page (next_cursor) up to `REPLIES_MAX`.
+   * `extra` passes parameters to conversations.replies (`oldest` for the catch-up). A single page of 200 would make a
+   * long thread lose its most recent replies, the ones that matter.
+   */
+  async repliesOf(channel: string, ts: string, extra: Record<string, string> = {}): Promise<SlackBody[]> {
+    const all: SlackBody[] = [];
+    let cursor = "";
+    do {
+      const r = await this.call("conversations.replies", { channel, ts, limit: 200, ...extra, ...(cursor ? { cursor } : {}) });
+      all.push(...(r.messages ?? []));
+      cursor = r.response_metadata?.next_cursor ?? "";
+    } while (cursor && all.length < REPLIES_MAX);
+    return all.slice(0, REPLIES_MAX);
+  }
+
+  async channelNameOf(id: string): Promise<string | undefined> {
+    const hit = this.channelNames.get(id);
+    if (hit) return hit;
+    try {
+      const r = await this.call("conversations.info", { channel: id });
+      if (!r.channel) return undefined;
+      const name = channelLabel({ id, ...r.channel });
+      this.channelNames.set(id, name);
+      return name;
+    } catch {
+      return undefined;
+    }
+  }
 }
+
+/** The default Slack account's client: the token of today's search order, the names in users.json. */
+export const defaultSlack = new SlackClient(
+  () => fetch,
+  new Map<string, string>(Object.entries(readJson<Record<string, string>>(F.users, {}))),
+  (u) => writeJson(F.users, Object.fromEntries(u)),
+);
+
+/** The default account's remembered names. */
+export const users = defaultSlack.users;
+
+/** A token of the right workspace was already found: calls can go out without `connectSlack`. */
+export const hasSlackToken = () => defaultSlack.token !== "";
+
+/** A write call of the default account (chat.postMessage, chat.delete). */
+export const slackPost = (method: string, params: Record<string, string>): Promise<SlackBody> => defaultSlack.post(method, params);
+
+export const slack = (method: string, params: Record<string, string | number> = {}): Promise<SlackBody> => defaultSlack.call(method, params);
 
 /** What the last `connectSlack` saw, token by token: the "no token" message names the workspace of each. */
 let probed: { token: string; team?: string; error?: string }[] = [];
@@ -123,7 +333,7 @@ export async function connectSlack(cfg: SlackSettings): Promise<{ team: string; 
     let transient = false;
     probed = [];
     for (const t of tokenCandidates()) {
-      TOKEN = t;
+      defaultSlack.token = t;
       try {
         const r = await slack("auth.test");
         probed.push({ token: t, team: r.team });
@@ -134,7 +344,7 @@ export async function connectSlack(cfg: SlackSettings): Promise<{ team: string; 
         if (!(e instanceof SlackError) || e.code === "ratelimited") transient = true;
       }
     }
-    TOKEN = "";
+    defaultSlack.token = "";
     if (!transient || attempt >= delays.length) return null;
     await Bun.sleep(delays[attempt] * 1000);
   }
@@ -146,86 +356,16 @@ export async function initSlack(cfg: SlackSettings): Promise<{ team: string; me:
   return r;
 }
 
-export const users = new Map<string, string>(Object.entries(readJson<Record<string, string>>(F.users, {})));
+/** A person's display name on the default account, remembered in users.json. */
+export const nameOf = (uid: string): Promise<string> => defaultSlack.nameOf(uid);
 
-/** A person's display name, remembered in users.json. A failure returns the id without writing: the next message asks again. */
-export async function nameOf(uid: string): Promise<string> {
-  const hit = users.get(uid);
-  if (hit) return hit;
-  let name: string;
-  try {
-    const r = await slack("users.info", { user: uid });
-    name = r.user?.profile?.display_name || r.user?.real_name || r.user?.name || uid;
-  } catch {
-    return uid;
-  }
-  users.set(uid, name);
-  writeJson(F.users, Object.fromEntries(users));
-  return name;
-}
+export const readable = (raw: string, keepLines = false): Promise<string> => defaultSlack.readable(raw, keepLines);
 
-export async function readable(raw: string, keepLines = false): Promise<string> {
-  for (const [, uid] of raw.matchAll(/<@([A-Z0-9]+)/g)) await nameOf(uid);
-  return humanize(raw, (uid) => users.get(uid) ?? uid, keepLines);
-}
+/** Messages visible to the person served on the default account, posted since `sinceSec`, oldest first. */
+export const fetchSince = (sinceSec: number, maxPages: number) => defaultSlack.fetchSince(sinceSec, maxPages);
 
-/**
- * Messages visible to the person served, posted since `sinceSec`, oldest first.
- * A busy workspace yields about a thousand per working day: pages are read until `sinceSec`, `complete` says whether
- * it got there. search.messages reads the search index, which lags a few seconds to a minute.
- */
-export async function fetchSince(sinceSec: number, maxPages: number): Promise<{ matches: SlackMatch[]; complete: boolean }> {
-  // after: excludes the given day, step back one day to lose nothing
-  const query = `after:${localDay((sinceSec - 86400) * 1000)}`;
-  const all: SlackMatch[] = [];
-  let complete = false;
-  for (let page = 1; page <= maxPages; page++) {
-    const r = await slack("search.messages", { query, count: 100, page, sort: "timestamp", sort_dir: "desc" });
-    const matches = (r.messages?.matches ?? []) as SlackMatch[];
-    all.push(...matches);
-    const pages = r.messages?.paging?.pages ?? 1;
-    if (!matches.length || page >= pages || Number(matches[matches.length - 1].ts) < sinceSec) {
-      complete = true;
-      break;
-    }
-  }
-  return { matches: all.filter((m) => Number(m.ts) >= sinceSec).sort((a, b) => a.ts.localeCompare(b.ts)), complete };
-}
-
-/** Threads where the person served wrote in the last `days` days: a reply there without a mention is probably for them. */
-export async function participatedThreads(cfg: Config, days = 7): Promise<Set<string>> {
-  const keys = new Set<string>();
-  const query = `from:<@${cfg.me}> after:${localDay(Date.now() - (days + 1) * 86400_000)}`;
-  for (let page = 1; page <= 3; page++) {
-    const r = await slack("search.messages", { query, count: 100, page, sort: "timestamp", sort_dir: "desc" });
-    const matches = (r.messages?.matches ?? []) as SlackMatch[];
-    for (const m of matches) keys.add(threadKey(m));
-    if (matches.length < 100) break;
-  }
-  return keys;
-}
-
-async function describeMessage(m: SlackMatch): Promise<Trigger & { key: string }> {
-  const from = m.user ? await nameOf(m.user) : m.username || "bot";
-  return {
-    key: threadKey(m),
-    from,
-    channel: channelLabel(m.channel),
-    text: truncate(await readable(bestText(m)), 500),
-    permalink: m.permalink ?? "-",
-  };
-}
-
-/**
- * Two-step triage: first without the author's name (no Slack call for ignored messages), then with it,
- * for `ignoreAuthors`. The bot filter only silences a message already kept.
- */
-export async function triage(m: SlackMatch, cfg: Config, tracked: Set<string>, participated: Set<string>) {
-  if (!classify(m, cfg, tracked, participated)) return null;
-  const d = await describeMessage(m);
-  const kind = classify(m, cfg, tracked, participated, d.from) as Kind;
-  return { kind, d };
-}
+/** Threads where the person served wrote in the last `days` days, on the default account. */
+export const participatedThreads = (cfg: Pick<Config, "me">, days = 7) => defaultSlack.participatedThreads(cfg, days);
 
 /** The Socket Mode app token (xapp-): the environment first, then the profile's `slack.appTokenFile`. */
 export function appToken(): string | null {
@@ -234,106 +374,18 @@ export function appToken(): string | null {
   return file ? envFileValue(file, "SLACK_APP_TOKEN") : null;
 }
 
-/** Full channel objects, cached: `classify` needs is_im/is_mpim, the socket only gives the id. */
-const channelObjects = new Map<string, SlackChannel>();
+/** A message's channel on the default account. */
+export const channelOf = (id: string, channelType?: string): Promise<SlackChannel> => defaultSlack.channelOf(id, channelType);
 
-/**
- * A message's channel. `channelType` is the event's `channel_type` (im, mpim, channel, group) when there is one.
- * A conversations.info failure is never cached: otherwise a single failure turns a DM into an unknown channel for
- * the whole life of the process, and its messages stop being surfaced.
- */
-export async function channelOf(id: string, channelType?: string): Promise<SlackChannel> {
-  const hit = channelObjects.get(id);
-  if (hit) return hit;
-  // a DM or group DM is recognised from the event, without a call: its name is useless ("DM")
-  if (channelType === "im" || channelType === "mpim") {
-    const c = channelGuess(id, channelType);
-    channelObjects.set(id, c);
-    return c;
-  }
-  try {
-    const r = await slack("conversations.info", { channel: id });
-    if (r.channel) {
-      const c: SlackChannel = { id, name: r.channel.name, is_im: r.channel.is_im, is_mpim: r.channel.is_mpim };
-      channelObjects.set(id, c);
-      return c;
-    }
-  } catch {}
-  return channelGuess(id, channelType);
-}
+/** The person served is in this private conversation of the default account (null: Slack does not tell). */
+export const isMyConversation = (id: string): Promise<boolean | null> => defaultSlack.isMyConversation(id);
 
-/**
- * The DMs and group DMs the person served belongs to, read with their token.
- * A Slack app installed by several people receives everyone's DMs over Socket Mode: the event's `authorizations`
- * field names only one of them, and Slack says not to rely on it. Without this check, the listener surfaces
- * conversations between two colleagues as "DM".
- */
-const myConversations = new Set<string>();
-/** Conversations they are known not to belong to (Slack answers channel_not_found with their token), and since when. */
-const notMine = new Map<string, number>();
-/** A foreign conversation is checked again after an hour: one can be added to a group DM. */
-const NOT_MINE_TTL_MS = 3_600_000;
+/** A socket `message` event of the default account -> a SlackMatch. */
+// biome-ignore lint/suspicious/noExplicitAny: untyped Slack event
+export const matchFromEvent = (e: Record<string, any>, base: string, cfg: Pick<Config, "me" | "subteams">): Promise<SlackMatch | null> => defaultSlack.matchFromEvent(e, base, cfg);
 
-/**
- * True if the person served is in this private conversation, false if not, null when Slack does not tell (network,
- * rate limit): the caller then keeps the message rather than risk losing one.
- * conversations.info with their token only sees their conversations: channel_not_found on one between two colleagues.
- */
-export async function isMyConversation(id: string): Promise<boolean | null> {
-  if (myConversations.has(id)) return true;
-  const seen = notMine.get(id);
-  if (seen !== undefined && Date.now() - seen < NOT_MINE_TTL_MS) return false;
-  try {
-    const r = await slack("conversations.info", { channel: id });
-    if (!r.channel) return null;
-    myConversations.add(id);
-    notMine.delete(id);
-    return true;
-  } catch (e) {
-    if (/channel_not_found|not_in_channel/.test((e as Error).message)) {
-      notMine.set(id, Date.now());
-      return false;
-    }
-    return null;
-  }
-}
-
-/** A private conversation (DM, group DM) according to the event: only those are checked for membership. */
-const isPrivateConversation = (id: string, channelType?: string) => channelType === "im" || channelType === "mpim" || id.startsWith("D");
-
-/**
- * A socket `message` event -> a SlackMatch, once the channel is resolved. The conversion itself lives in chat/slack-model.ts, tested.
- * A `message_changed` only passes if it adds a mention of the person served (`cfg`), compared with its previous version.
- */
-export async function matchFromEvent(e: Record<string, any>, base: string, cfg: Pick<Config, "me" | "subteams">): Promise<SlackMatch | null> {
-  // the DM of two colleagues who also installed the app is not a DM of the person served
-  if (e?.channel && isPrivateConversation(String(e.channel), e.channel_type) && (await isMyConversation(String(e.channel))) === false) return null;
-  if (e?.subtype === "message_changed" && e.channel) return matchFromEditEvent(e, await channelOf(String(e.channel), e.channel_type), base, cfg);
-  if (e?.type !== "message" || !e.ts || !e.channel) return null;
-  if (e.subtype && !SOCKET_SUBTYPES.has(e.subtype)) return null;
-  return matchFromSocketEvent(e, await channelOf(String(e.channel), e.channel_type), base);
-}
-
-/** Cap on a thread read: past it, the most recent replies are not read. */
-export const REPLIES_MAX = 2000;
-
-/**
- * A thread's messages, root included, page by page (next_cursor) up to `REPLIES_MAX`.
- * `extra` passes parameters to conversations.replies (`oldest` for the catch-up). A single page of 200 would make a
- * long thread lose its most recent replies, the ones that matter.
- */
-// biome-ignore lint/suspicious/noExplicitAny: untyped Slack responses
-export async function repliesOf(channel: string, ts: string, extra: Record<string, string> = {}): Promise<any[]> {
-  // biome-ignore lint/suspicious/noExplicitAny: untyped Slack responses
-  const all: any[] = [];
-  let cursor = "";
-  do {
-    const r = await slack("conversations.replies", { channel, ts, limit: 200, ...extra, ...(cursor ? { cursor } : {}) });
-    all.push(...(r.messages ?? []));
-    cursor = r.response_metadata?.next_cursor ?? "";
-  } while (cursor && all.length < REPLIES_MAX);
-  return all.slice(0, REPLIES_MAX);
-}
+/** A thread's messages on the default account, root included, up to `REPLIES_MAX`. */
+export const repliesOf = (channel: string, ts: string, extra: Record<string, string> = {}): Promise<SlackBody[]> => defaultSlack.repliesOf(channel, ts, extra);
 
 /** Reads a whole Slack thread for the dive sheet. null for any key but a thread of the default Slack account. */
 export async function threadDump(key: string): Promise<ThreadDump | null> {
@@ -348,24 +400,7 @@ export async function threadDump(key: string): Promise<ThreadDump | null> {
     const stamp = `${localDay(at.getTime()).slice(5)} ${String(at.getHours()).padStart(2, "0")}:${String(at.getMinutes()).padStart(2, "0")}`;
     messages.push({ at: stamp, from, text: await readable(bestText({ ...m, channel: { id: channel } }), true) });
   }
-  return { key, permalink, channel: await channelNameOf(channel), messages };
-}
-
-/** Readable channel names ("#sales", "DM"), in memory only; a failure is not remembered. */
-const channelNames = new Map<string, string>();
-
-async function channelNameOf(id: string): Promise<string | undefined> {
-  const hit = channelNames.get(id);
-  if (hit) return hit;
-  try {
-    const r = await slack("conversations.info", { channel: id });
-    if (!r.channel) return undefined;
-    const name = channelLabel({ id, ...r.channel });
-    channelNames.set(id, name);
-    return name;
-  } catch {
-    return undefined;
-  }
+  return { key, permalink, channel: await defaultSlack.channelNameOf(channel), messages };
 }
 
 /** All the Slack threads of a topic, in the order of its keys; an unreadable thread leaves an error message in its place. */
@@ -380,4 +415,137 @@ export async function readThreads(s: Sujet): Promise<ThreadDump[]> {
     }),
   );
   return dumps.filter((d): d is ThreadDump => d !== null);
+}
+
+// ------------------------------------------------------------------ socket mode
+
+/**
+ * How a connection ended: "propre" (clean, Slack asked for a reconnect), "coupee" (cut), "fatal" (do not retry).
+ * `refus`: Slack refused to open (or answered something other than JSON).
+ */
+export interface FinSocket {
+  fin: "propre" | "coupee" | "fatal";
+  refus?: string;
+  /** Retry-After of apps.connections.open, in seconds. */
+  retryAfterSec?: number;
+}
+
+/** What tests replace: fetch, the WebSocket class, the delays. */
+export interface SocketDeps {
+  fetch?: typeof fetch;
+  WebSocket?: new (url: string) => WebSocket;
+  /** Beyond this silence (no frame, ping or pong included), the socket is considered dead. */
+  silenceMs?: number;
+  /** Watchdog period. */
+  checkMs?: number;
+  /** Timeout of apps.connections.open. */
+  openTimeoutMs?: number;
+  /** The socket just opened. */
+  onOpen?: () => void;
+}
+
+const FATAL_OPEN_ERRORS = new Set(["invalid_auth", "token_revoked", "not_authed"]);
+
+/**
+ * One WebSocket connection, from opening to closing. Resolves "propre" on a disconnect requested by Slack.
+ * Never hangs: an HTML page in answer to apps.connections.open (Slack outage, captive portal) must not throw outside
+ * any try inside a `new Promise(async …)`, or the promise never resolves and the listener stays deaf for good.
+ * The watchdog sends a ping at half the silence and closes the socket if nothing, not even a pong, came back: a
+ * half-open connection (sleep, network change) is invisible otherwise.
+ */
+export async function connexionSocket(xapp: string, onEvent: (e: Record<string, any>) => void, socket: { ws: WebSocket | null }, deps: SocketDeps = {}): Promise<FinSocket> {
+  let url: string;
+  try {
+    const r = await (deps.fetch ?? fetch)("https://slack.com/api/apps.connections.open", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${xapp}`, "Content-type": "application/x-www-form-urlencoded" },
+      signal: AbortSignal.timeout(deps.openTimeoutMs ?? 15_000),
+    });
+    const retryAfterSec = Number(r.headers.get("retry-after")) || undefined;
+    let j: { ok?: boolean; url?: string; error?: string };
+    try {
+      j = (await r.json()) as typeof j;
+    } catch {
+      return { fin: "coupee", refus: `unreadable answer from Slack (HTTP ${r.status})`, retryAfterSec };
+    }
+    if (!j.ok || !j.url) {
+      // a revoked or invalid token is not fixed by reconnecting
+      const fatal = FATAL_OPEN_ERRORS.has(j.error ?? "");
+      return { fin: fatal ? "fatal" : "coupee", refus: j.error ?? `unknown error (HTTP ${r.status})`, retryAfterSec };
+    }
+    url = j.url;
+  } catch {
+    // network down or timeout: no line per attempt, the board's pill says it
+    return { fin: "coupee" };
+  }
+
+  const silenceMs = deps.silenceMs ?? 120_000;
+  return new Promise((resolve) => {
+    let ws: WebSocket;
+    try {
+      ws = new (deps.WebSocket ?? WebSocket)(url);
+    } catch {
+      return resolve({ fin: "coupee" });
+    }
+    socket.ws = ws;
+    let reconnectRequested = false;
+    let lastFrame = Date.now();
+    let ended = false;
+    const frame = () => {
+      lastFrame = Date.now();
+    };
+    const end = (fin: FinSocket["fin"]) => {
+      if (ended) return;
+      ended = true;
+      clearInterval(watchdog);
+      if (socket.ws === ws) socket.ws = null;
+      resolve({ fin });
+    };
+    const watchdog = setInterval(() => {
+      const silence = Date.now() - lastFrame;
+      if (silence >= silenceMs) {
+        // a half-open socket does not always fire its onclose: do not wait for it
+        try {
+          ws.terminate();
+        } catch {}
+        end("coupee");
+      } else if (silence >= silenceMs / 2) {
+        try {
+          ws.ping();
+        } catch {}
+      }
+    }, deps.checkMs ?? 30_000);
+    watchdog.unref?.();
+
+    ws.addEventListener("ping", frame);
+    ws.addEventListener("pong", frame);
+    ws.onopen = () => {
+      frame();
+      deps.onOpen?.();
+    };
+    ws.onmessage = (ev: MessageEvent) => {
+      frame();
+      let m: Record<string, any>;
+      try {
+        m = JSON.parse(String(ev.data));
+      } catch {
+        return;
+      }
+      if (m.type === "disconnect") {
+        reconnectRequested = true;
+        return;
+      }
+      // Acknowledge at once: without an ack within 3 s, Slack redelivers three times.
+      if (m.envelope_id) ws.send(JSON.stringify({ envelope_id: m.envelope_id }));
+      if (m.type !== "events_api") return;
+      const e = m.payload?.event;
+      if (e) onEvent(e);
+    };
+    ws.onclose = () => end(reconnectRequested ? "propre" : "coupee");
+    ws.onerror = () => {
+      try {
+        ws.close();
+      } catch {}
+    };
+  });
 }

@@ -18,6 +18,11 @@ export interface Sujet {
   key: string;
   /** All the keys of the topic (Slack threads, tickets), the main key first. */
   threads: string[];
+  /**
+   * The conversation of the item the topic was opened from, as `<provider>[@<account>]:<id>` (core/keys.ts
+   * `conversationRef`), when its key does not say it: a Slack key names its channel, another tool's key does not.
+   */
+  conversation?: string;
   /** Stable letter (A, B… AA) the person served uses to give a go: "A send". */
   letter: string;
   title: string;
@@ -178,6 +183,9 @@ export interface Trigger {
   channel: string;
   text: string;
   permalink: string;
+  /** The key of its thread, and its conversation (`conversationRef`): kept with a message surfaced to the master. */
+  key?: string;
+  conversation?: string;
 }
 
 // ------------------------------------------------------------------ state

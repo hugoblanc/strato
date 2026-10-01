@@ -213,6 +213,18 @@ function isAllowedLink(url: string, hosts: string[]): boolean {
   }
 }
 
+/**
+ * A link a provider gave (an item's link), kept only when it is https, at most 2 KiB, without whitespace nor control
+ * characters, and on the provider's `hosts`; any installed provider's hosts when `provider` is not given (a link
+ * quoted in a prompt). Null otherwise: the line or the prompt then says "-".
+ */
+export function checkedLink(url: string, provider?: string): string | null {
+  // biome-ignore lint/suspicious/noControlCharactersInRegex: control characters are refused
+  if (!url || url.length > LINK_INPUT_MAX || /[\u0000-\u001f\u007f]/.test(url)) return null;
+  const hosts = provider === undefined ? installed.flatMap((d) => d.hosts) : (descriptorOf(provider)?.hosts ?? []);
+  return isAllowedLink(url, hosts) ? url : null;
+}
+
 /** The account a link's host belongs to (exact hosts first), or null: the board opens only these. */
 export function hostOwner(hostname: string): { provider: string; account: string } | null {
   const accounts = linkAccounts();

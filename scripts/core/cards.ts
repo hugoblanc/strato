@@ -1,6 +1,6 @@
 import { settings } from "./settings.ts";
 import { t } from "./i18n.ts";
-import { permalinkOfKey, threadOfKey } from "./keys.ts";
+import { conversationOfKey, permalinkOfKey } from "./keys.ts";
 import { parseSteps, type Sujet, sujetKeys, sujetsByKey, type Trigger } from "./sujet.ts";
 import { openTasks, taskDraftText } from "./tasks.ts";
 import { truncate, untrusted } from "./text.ts";
@@ -46,18 +46,23 @@ export function diveMarkdown(s: Sujet, threads: ThreadDump[], report: string | n
 }
 
 /**
- * A message raised to the master. Outside a tracked topic, the open topics of the same channel are listed to help
- * attach it. `msg` is the id of the message kept in inbox/: the master passes it to `open` and `relay` (--msg)
- * instead of copying the text into a shell command, where a `$(…)` written by a third party would run.
+ * A message raised to the master. Outside a tracked topic, the open topics of the same conversation are listed to
+ * help attach it: `d.conversation` names it (`conversationRef`), else the key does when it is a Slack thread. `msg` is
+ * the id of the message kept in inbox/: the master passes it to `open` and `relay` (--msg) instead of copying the
+ * text into a shell command, where a `$(…)` written by a third party would run.
  */
-export function eventLine(kind: string, d: Trigger & { key: string }, sujets: Sujet[], msg?: string): string {
+export function eventLine(kind: string, d: Trigger & { key: string; conversation?: string }, sujets: Sujet[], msg?: string): string {
   const sujet = sujetsByKey(sujets).get(d.key);
   const tag = sujet ? ` · topic ${sujet.letter} ${sujet.shortId ?? "?"} (${sujet.status})` : "";
-  // the open topics of the same Slack conversation; another tool's key has none until items carry their conversation
-  const channelId = threadOfKey(d.key)?.channel;
-  const nearby = sujet || !channelId ? [] : sujets.filter((s) => s.status !== "closed" && sujetKeys(s).some((k) => threadOfKey(k)?.channel === channelId));
+  const conversation = d.conversation ?? conversationOfKey(d.key);
+  const nearby = sujet || !conversation ? [] : sujets.filter((s) => s.status !== "closed" && conversationsOf(s).includes(conversation));
   const hint = nearby.length ? ` · open topics in this channel: ${nearby.map((s) => `${s.letter} « ${truncate(s.title, 40)} »`).join(", ")}` : "";
   return `[strato] ${kind} · ${untrusted(d.channel)} · ${untrusted(d.from)} · key=${d.key}${msg ? ` · msg=${msg}` : ""}${tag}${hint} · « ${untrusted(d.text)} » · ${d.permalink}`;
+}
+
+/** The conversations a topic's threads belong to: those its Slack keys name, and the one it was opened from. */
+function conversationsOf(s: Sujet): string[] {
+  return [...sujetKeys(s).map(conversationOfKey), s.conversation].filter((c): c is string => !!c);
 }
 
 // ------------------------------------------------------------------ cards

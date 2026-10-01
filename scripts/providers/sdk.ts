@@ -351,9 +351,33 @@ export interface Provider {
   descriptor: ProviderDescriptor;
   /** Checks the secrets and returns who the person is. */
   connect(ctx: AccountContext): Promise<Identity>;
+  /**
+   * Poll: reads newest first back to `cursor` (or to `since`, Unix ms, without one), keeps at most `maxItems`, and
+   * returns them oldest first. A capped pass returns the cursor of the oldest item it read; a failed pass throws.
+   */
   poll?(ctx: AccountContext, cursor: IngestCursor | null, opts: { since: number; maxItems: number }): Promise<PollResult>;
-  /** Push: resolves when the connection ends; `onItems` is called as items arrive, with a cursor when the tool gives one. */
-  subscribe?(ctx: AccountContext, onItems: (items: Item[], cursor?: IngestCursor) => void): Promise<{ end: "clean" | "cut" | "fatal"; retryAfterMs?: number }>;
+  /**
+   * Push: resolves when the connection ends, or soon after `ctx.signal` aborts it. `onItems` is called as items
+   * arrive, with a cursor when the tool gives one, and with no item at all for a delivery that carried none, which
+   * tells the listener the connection is alive. `events.opened` says the connection is open; `refused` says why the
+   * tool refused to open it.
+   */
+  subscribe?(
+    ctx: AccountContext,
+    onItems: (items: Item[], cursor?: IngestCursor) => void,
+    events?: { opened(): void },
+  ): Promise<{ end: "clean" | "cut" | "fatal"; retryAfterMs?: number; refused?: string }>;
+  /**
+   * The replies of one thread posted since `since` (Unix ms), oldest first, without the item that opened the thread:
+   * the catch-up of the threads of open topics, which a poll does not always return. At most `max`, the newest kept.
+   * An error that may clear on the next try is `retryable`; a thread unreadable for good (archived) is not.
+   */
+  replies?(ctx: AccountContext, thread: string, opts: { since: number; max: number }): Promise<Item[]>;
+  /**
+   * What was too costly to read for every item (people's display names, readable text), filled in only for the items
+   * triage keeps: the same items, in the same order. Items whose author's name is not read yet carry their id.
+   */
+  complete?(ctx: AccountContext, items: Item[]): Promise<Item[]>;
   /** Native ids of the threads the person took part in recently. */
   participated?(ctx: AccountContext, days: number): Promise<string[]>;
   context?(ctx: AccountContext, thread: string, opts: { since?: number; max: number }): Promise<ContextResult>;

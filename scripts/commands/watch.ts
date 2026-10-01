@@ -1,25 +1,52 @@
 /**
- * Listening: `listen` (Socket Mode), `watch` (fallback polling), the catch-ups, `backlog` and `digest`.
- * Both listeners go through the same triage (`processMatches`) and print the same lines for the master's Monitor.
+ * Listening: `listen` (push: Socket Mode for Slack), `watch` (polling), the catch-ups, `backlog` and `digest`.
+ * Every account that brings items in runs here, each in its own loop (app/ingest.ts), and every item goes through
+ * the same triage (`processItems`), printing the same lines for the master's Monitor. The default Slack account keeps
+ * the loop, the state files (seen.json, tick.json) and the lines it always had.
  */
 import { existsSync, mkdirSync, readFileSync, watch as fsWatch } from "node:fs";
 import { join } from "node:path";
 import { agentsBySessionAsync, declaredAttention, purgeLive } from "../app/claude.ts";
 import { dayTime, durationOrFail, F, fail, HEARTBEAT_MS, localTime, mtimeOf, nowIso, out, readJson, STATE, writeJson } from "../app/env.ts";
-import { appToken, channelOf, fetchSince, initSlack, matchFromEvent, participatedThreads, repliesOf, slack, SlackError, triage } from "../app/slack.ts";
+import {
+  accountLabel,
+  accountSeen,
+  catchUpThreads,
+  ingestAccounts,
+  itemKeyOf,
+  legacySeen,
+  outageLines,
+  participatedOf,
+  processItems,
+  runAccount,
+  type SeenStore,
+  type Source,
+  slackSource,
+  sourceOf,
+  threadKeyOf,
+  triageErrorLine,
+  triageItem,
+} from "../app/ingest.ts";
+import { appToken, defaultSlack, tokenCandidates } from "../app/slack.ts";
 import { runGc } from "./gc.ts";
 import { pickCards, refreshCards } from "./refresh.ts";
-import { type Counters, ensureState, keepMessage, loadSujets, logEvent, updateSujet, withLock } from "../app/store.ts";
-import { classify, type Config, isSilent, nextSyncCursor, permalinkFor, type SlackMatch, socketDeaf, type SocketHealth, threadKey } from "../chat/slack-model.ts";
+import { type Counters, ensureState, keepMessage, loadSujets, logEvent, withLock } from "../app/store.ts";
+import { type Config, socketDeaf, type SocketHealth } from "../chat/slack-model.ts";
 import { type AgentRow, attentionChanged, sessionAttention } from "../claude/model.ts";
 import { digestLines, eventLine, gateLine, type InfoEvent } from "../core/cards.ts";
+import { conversationRef } from "../core/keys.ts";
 import { type MasterRequest, revueLine } from "../core/master.ts";
-import { threadOfKey } from "../core/keys.ts";
 import { settings } from "../core/settings.ts";
-import { applyAssignments, draftMatches, dueReminders, findSujet, type Snooze, type Sujet, sujetKeys, trackedKeys } from "../core/sujet.ts";
-import { closeTask, openTasks, taskDraftText } from "../core/tasks.ts";
+import { dueReminders, findSujet, type Snooze, type Sujet, trackedKeys } from "../core/sujet.ts";
 import { t } from "../core/i18n.ts";
-import { truncate } from "../core/text.ts";
+import { isSilent } from "../core/triage.ts";
+import { providerError } from "../providers/api.ts";
+import { type AccountEntry, accountContext } from "../providers/registry.ts";
+import type { Item } from "../providers/sdk.ts";
+import { slackProvider } from "../providers/slack/index.ts";
+
+export { connexionSocket, type FinSocket, type SocketDeps } from "../app/slack.ts";
+export { processMatches, triageErrorLine } from "../app/ingest.ts";
 
 export function sessionLine(s: Sujet, label: string): string {
   return `[strato] session · ${label} · ${gateLine(s)} · claude attach ${s.shortId}`;
@@ -27,102 +54,57 @@ export function sessionLine(s: Sujet, label: string): string {
 
 /**
  * Rereads the Slack threads of open topics since `since` (Unix seconds) and passes their messages through the shared
- * triage. `seen` absorbs what was already handled; returns the new messages. No write outside seen and events.
- * `failed` counts threads unreadable for a transient reason (network, rate limit): the pass is not complete and the
- * cursor must not move. A thread unreadable for good (archived or left channel) does not hold the cursor back.
+ * triage, on the default Slack account (`catchUpThreads` in app/ingest.ts). `failed` counts threads unreadable for a
+ * transient reason: the pass is not complete and the cursor must not move. `base` is the workspace's URL.
  */
-export async function backfillThreads(cfg: Config, seen: Set<string>, participated: Set<string>, base: string, since: number): Promise<{ matches: SlackMatch[]; failed: number }> {
-  const matches: SlackMatch[] = [];
-  let failed = 0;
-  for (const s of loadSujets()) {
-    if (s.status === "closed") continue;
-    for (const key of sujetKeys(s)) {
-      // a ticket, or a key of another tool or account, has no Slack thread to catch up
-      const thread = threadOfKey(key);
-      if (!thread) continue;
-      const { channel: channelId, ts } = thread;
-      let replies: SlackMatch[];
-      try {
-        replies = await repliesOf(channelId, ts, { oldest: String(since) });
-      } catch (e) {
-        if (transientSlackError(e)) failed++;
-        continue;
-      }
-      const channel = await channelOf(channelId);
-      for (const m of replies) {
-        if (!m.ts || m.ts === ts || Number(m.ts) < since) continue;
-        if (seen.has(`${channelId}:${m.ts}`)) continue;
-        matches.push({ ...m, channel, permalink: permalinkFor(base, channelId, m.ts, ts) });
-      }
-    }
-  }
-  if (matches.length) await processMatches(matches, cfg, seen, participated);
-  return { matches, failed };
+export async function backfillThreads(cfg: Config, seen: Set<string>, participated: Set<string>, base: string, since: number): Promise<{ items: Item[]; failed: number }> {
+  if (base) defaultSlack.base = base.replace(/\/$/, "");
+  return catchUpThreads(slackSource(cfg, legacySeen(seen), participated), since * 1000);
 }
 
-/** An error that may clear on the next try: network, timeout, rate limit, Slack-side outage. */
-function transientSlackError(e: unknown): boolean {
-  if (!(e instanceof SlackError)) return true;
-  return ["ratelimited", "internal_error", "fatal_error", "request_timeout", "service_unavailable"].includes(e.code);
+// ------------------------------------------------------------------ the default Slack account
+
+/** The default Slack account, connected: the source its loop reads. */
+interface SlackRun {
+  src: Source;
 }
 
 /**
- * Handles a batch of messages: dedup by `channel:ts`, triage by `classify`, one line per kept event.
- * Shared by `watch` (which reads search.messages) and `listen` (which reads the WebSocket): triage must live only here.
- * `markOnly` marks as read without a word, for the first pass of a fresh state.
- * A message enters `seen` only once handled (line printed, logged, or ignored): a triage error leaves it for the next
- * pass and says so on stdout. Marking it before would lose it silently on an error.
+ * Whether the default Slack account is listened to. Alone, always, as before: a profile without Slack stops with the
+ * reason. Next to other accounts, when the `slack` section names the person or the workspace, or a Slack token is found.
  */
-export async function processMatches(
-  matches: SlackMatch[],
-  cfg: Config,
-  seen: Set<string>,
-  participated: Set<string>,
-  markOnly = false,
-): Promise<void> {
-  const sujets = loadSujets();
-  const tracked = trackedKeys(sujets);
-  for (const m of matches) {
-    if (m.user === cfg.me) participated.add(threadKey(m));
-    const id = `${m.channel.id}:${m.ts}`;
-    if (m.previous) {
-      // an edit that adds the mention: the original is often already read (ignored silently), it must still come out,
-      // unless its previous version already did (watched channel, tracked thread, DM): one line per message
-      const before = classify(m.previous, cfg, tracked, participated);
-      if (before && !isSilent(before)) continue;
-    } else if (seen.has(id)) continue;
-    if (markOnly) {
-      seen.add(id);
-      continue;
-    }
-    try {
-      await sortOne(m, cfg, tracked, participated, sujets, () => seen.add(id));
-    } catch (e) {
-      out(triageErrorLine(m.permalink ?? id, e));
-    }
+function slackInUse(others: AccountEntry[]): boolean {
+  const s = settings().slack;
+  return others.length === 0 || !!(s.team || s.me) || tokenCandidates().length > 0;
+}
+
+/**
+ * Connects the default Slack account. Alone, a failure stops the command as before (exit 78); next to other accounts,
+ * it is one line and the others carry on.
+ */
+async function connectDefaultSlack(alone: boolean, seen: SeenStore): Promise<SlackRun | null> {
+  const cfg = settings().slack;
+  const probe = slackSource(cfg, seen);
+  try {
+    const identity = await slackProvider.connect(probe.ctx);
+    return { src: slackSource(cfg, seen, new Set(), identity) };
+  } catch (e) {
+    const pe = providerError(e);
+    if (alone) fail(pe.message, 78);
+    outageLines("Slack", out).failed(pe.message, true);
+    return null;
   }
 }
 
-/** The line saying a message could not be triaged: the master reads it, the message will be retried. */
-export function triageErrorLine(permalink: string, e: unknown): string {
-  return `[strato] triage error ${permalink}: ${e instanceof Error ? e.message : String(e)}`;
+/** A Slack line, or the end of the command when Slack is alone. */
+function slackStops(alone: boolean, message: string, code: number): null {
+  if (alone) fail(message, code);
+  outageLines("Slack", out).failed(message, true);
+  return null;
 }
 
-/** Triages one message and prints its line; `done` marks it read as soon as its trace is written, not before. */
-async function sortOne(m: SlackMatch, cfg: Config, tracked: Set<string>, participated: Set<string>, sujets: Sujet[], done: () => void): Promise<void> {
-  const t = await triage(m, cfg, tracked, participated);
-  if (!t) return void done();
-  const { kind, d } = t;
-  if (isSilent(kind)) {
-    logEvent({ type: "info", kind, key: d.key, from: d.from, channel: d.channel, text: truncate(d.text, 200), permalink: d.permalink });
-    return void done();
-  }
-  if (kind === "moi") await dropSentDraft(d.key, d.text, d.permalink);
-  out(eventLine(kind, d, sujets, keepMessage(d)));
-  // the line is out: even if the log fails next, do not repeat it on the next pass
-  done();
-  logEvent({ type: "slack", kind, key: d.key, from: d.from, channel: d.channel, permalink: d.permalink });
-}
+/** The labels of the other accounts, for the armed line. */
+const labelsOf = (entries: AccountEntry[]) => entries.map((e) => `${e.account.provider}${e.account.id === "default" ? "" : `@${e.account.id}`}`).join(", ");
 
 /** A macOS notification, without dependencies: osascript. Fails silently outside macOS. */
 function notifyMac(title: string, body: string): void {
@@ -130,30 +112,6 @@ function notifyMac(title: string, body: string): void {
   try {
     Bun.spawn(["/usr/bin/osascript", "-e", `display notification ${q(body)} with title ${q("Strato")} subtitle ${q(title)} sound name "Glass"`], { stdout: "ignore", stderr: "ignore" });
   } catch {}
-}
-
-/**
- * The person served posted the text of a draft in a thread of the topic (the master sent it on a go, or they copied
- * it): its task closes and the card waits for the rest of the thread at once, as after Send, without waiting for the
- * session's turn. Otherwise the draft would stay on the board with its button until the session removed it.
- */
-async function dropSentDraft(key: string, text: string, permalink: string): Promise<void> {
-  const s = findSujet(loadSujets(), key);
-  if (!s || s.status === "closed") return;
-  // the open task whose draft is the message posted: the first one that matches
-  const match = (x: Sujet) => openTasks(x).find((y) => taskDraftText(y) && draftMatches(taskDraftText(y), text));
-  if (!match(s)) return;
-  const at = nowIso();
-  let taskId = "";
-  // checked again under the lock: the session may have changed its draft or closed the topic meanwhile
-  const done = await updateSujet(s.key, (x) => {
-    const y = x.status === "closed" ? undefined : match(x);
-    if (!y) return null;
-    taskId = y.id;
-    const next = closeTask(x, y.id, "done", at, t("task.note.postedByHand", { permalink }));
-    return applyAssignments(next, openTasks(next).length ? { posted: `${at} ${permalink}` } : { status: "waiting", waiting: t("task.waiting.restOfThread"), posted: `${at} ${permalink}` }, at);
-  });
-  if (done) logEvent({ type: "draft-dropped", key: s.key, task: taskId, permalink });
 }
 
 /** The starting state, read as `pollSessions` will read it next: a restart announces nothing that did not change. */
@@ -196,13 +154,6 @@ async function pollSessions(prev: Map<string, string | null>, opts: { spawn?: bo
   }
 }
 
-/** Purges keys older than three days and writes `seen.json`. */
-function saveSeen(seen: Set<string>): void {
-  const horizon = Date.now() / 1000 - 3 * 86400;
-  for (const id of seen) if (Number(threadOfKey(id)?.ts) < horizon) seen.delete(id);
-  writeJson(F.seen, [...seen]);
-}
-
 /**
  * Watches the state of topic sessions without a fixed tick.
  * The sessions' hooks rewrite `<state>/live/<sessionId>.json` on each change: polling happens only after a real
@@ -240,82 +191,88 @@ function watchSessions(prev: Map<string, string | null>, minGap = 5): () => void
 }
 
 /**
- * Listening through Socket Mode: same output lines as `watch`, but messages arrive over the WebSocket instead of
- * being searched for every 60 s in the search index.
- * At startup, a catch-up through search.messages covers the downtime; then the socket alone.
- * Topics are polled by a light tick that does not call Slack.
+ * Listening: the default Slack account through Socket Mode (messages arrive over the WebSocket instead of being
+ * searched for every 60 s in the search index), and every other account in its own loop (app/ingest.ts): a push
+ * account by its connection, a poll account by polling. Same output lines as `watch`.
+ * At startup, a catch-up through search and the threads of open topics covers the downtime; then the socket alone,
+ * with a catch-up every 5 min and on wake. Topics are polled by a light tick that does not call Slack.
  */
 export async function listen(opts: Record<string, string>) {
   ensureState();
-  const cfg = settings().slack;
-  await initSlack(cfg);
+  const others = ingestAccounts();
+  const alone = others.length === 0;
+  const stop = new AbortController();
 
-  const xapp = appToken();
-  if (!xapp) fail(settings().slack.appTokenFile ? t("cli.listen.noAppTokenFile", { file: settings().slack.appTokenFile }) : t("cli.listen.noAppToken"), 78);
-
-  const auth = await slack("auth.test");
-  const base = String(auth.url ?? "").replace(/\/$/, "");
-  if (!base) fail(t("cli.listen.noWorkspaceUrl"), 78);
+  const seenIds = new Set(readJson<string[]>(F.seen, []));
+  const seen = legacySeen(seenIds);
+  let slack = slackInUse(others) ? await connectDefaultSlack(alone, seen) : null;
+  const xapp = slack ? appToken() : null;
+  if (slack && !xapp) slack = slackStops(alone, settings().slack.appTokenFile ? t("cli.listen.noAppTokenFile", { file: settings().slack.appTokenFile }) : t("cli.listen.noAppToken"), 78);
+  const base = slack ? (defaultSlack.base ?? (await defaultSlack.workspaceUrl())) : "";
+  if (slack && !base) slack = slackStops(alone, t("cli.listen.noWorkspaceUrl"), 78);
 
   const minGap = Number(opts.sessions ?? 20);
-  const seen = new Set(readJson<string[]>(F.seen, []));
   const saved = readJson<{ lastTick?: number; syncedTo?: number }>(F.tick, {});
   const firstRun = saved.lastTick === undefined;
   // up to where everything was surely read (`nextSyncCursor`); an installation older than the cursor starts from the heartbeat
   let syncedTo = saved.syncedTo ?? saved.lastTick ?? Date.now() / 1000 - 3600;
-  const participated = await participatedThreads(cfg);
+  if (slack) slack.src.participated = await participatedOf(slack.src);
   const prev = new Map<string, string | null>();
   await knownAttention(prev);
 
   // Socket health, written with each tick: the board reads it to tell whether Slack still delivers.
   const health: SocketHealth = { lastEventAt: Date.now(), missedAt: 0, missed: 0, wokeAt: 0, syncedAt: 0 };
-  const writeTick = () => writeJson(F.tick, { lastTick: Date.now() / 1000, syncedTo, beat: HEARTBEAT_MS / 1000, socket: health });
+  const writeTick = () => writeJson(F.tick, slack ? { lastTick: Date.now() / 1000, syncedTo, beat: HEARTBEAT_MS / 1000, socket: health } : { lastTick: Date.now() / 1000, ...(saved.syncedTo ? { syncedTo: saved.syncedTo } : {}), beat: HEARTBEAT_MS / 1000 });
 
   /**
-   * Catch-up through search and through the threads of open topics, since `sinceSec`.
+   * Catch-up of the default Slack account through search and through the threads of open topics, from `fromSec`.
    * At startup it covers the downtime; then it runs every 5 min and on wake from sleep, because a dead socket says
    * nothing: neither a half-open connection after sleep, nor a delivery cut by Slack (Slack can disable an app's
    * events, and the socket then stays open and silent for as long as nobody notices).
    * `countMissed`: a message caught up here, older than 2 min, is a message the socket should have brought.
    */
   let syncing: Promise<void> | null = null;
-  const resync = (sinceSec: number, why: string, countMissed: boolean): Promise<void> => {
+  const resync = (fromSec: number, why: string, countMissed: boolean): Promise<void> => {
+    if (!slack) return Promise.resolve();
+    const { src } = slack;
     if (syncing) return syncing;
     syncing = (async () => {
       const startedSec = Date.now() / 1000;
-      let found: SlackMatch[] = [];
+      let found: Item[] = [];
       // the pass moves the cursor only if it read everything: search and threads
-      const pass: { ok: boolean; complete: boolean; oldestReadSec?: number } = { ok: true, complete: true };
+      let ok = true;
+      let next = syncedTo;
       try {
-        const { matches, complete } = await fetchSince(sinceSec, 30);
-        if (!complete) out("[strato] more than 3,000 messages since the last pass: the oldest were not read, run backlog if needed");
-        pass.complete = complete;
-        pass.oldestReadSec = matches.length ? Number(matches[0].ts) : undefined;
-        found = matches.filter((m) => !seen.has(`${m.channel.id}:${m.ts}`));
-        await processMatches(matches, cfg, seen, participated, firstRun && why === "startup");
+        const r = await src.provider.poll?.(src.ctx, { value: String(fromSec), at: fromSec * 1000 }, { since: fromSec * 1000, maxItems: 3000 });
+        if (!r) throw new Error("no poll");
+        if (!r.complete) out("[strato] more than 3,000 messages since the last pass: the oldest were not read, run backlog if needed");
+        found = r.items.filter((it) => !seen.has(itemKeyOf(src, it.id) ?? ""));
+        await processItems(src, r.items, firstRun && why === "startup");
+        next = Number(r.cursor.value);
       } catch {
-        pass.ok = false;
+        ok = false;
         health.syncFailedAt = Date.now();
         if (why !== "periodic") out(`[strato] search catch-up failed (${why})`);
       }
       if (!firstRun) {
         try {
-          const threads = await backfillThreads(cfg, seen, participated, base, sinceSec);
-          found.push(...threads.matches);
+          const threads = await catchUpThreads(src, (fromSec - 300) * 1000);
+          found.push(...threads.items);
           if (threads.failed) {
-            pass.ok = false;
+            ok = false;
             health.syncFailedAt = Date.now();
             if (why !== "periodic") out(`[strato] thread catch-up incomplete (${why}): ${threads.failed} unreadable thread(s), retried on the next pass`);
           }
         } catch (e) {
-          pass.ok = false;
+          ok = false;
           health.syncFailedAt = Date.now();
           if (why !== "periodic") out(`[strato] thread catch-up failed (${why}): ${(e as Error).message}`);
         }
       }
-      syncedTo = nextSyncCursor(syncedTo, startedSec, pass);
-      saveSeen(seen);
-      const late = countMissed ? found.filter((m) => Number(m.ts) < startedSec - 120) : [];
+      // a failed pass leaves the cursor where it was; a cursor never moves back
+      if (ok && Number.isFinite(next)) syncedTo = Math.max(syncedTo, next);
+      seen.save();
+      const late = countMissed ? found.filter((it) => it.time / 1000 < startedSec - 120) : [];
       if (late.length) {
         health.missed += late.length;
         health.missedAt = Date.now();
@@ -333,28 +290,30 @@ export async function listen(opts: Record<string, string>) {
   // Catch-up: what arrived while stopped, before opening the socket. Dedup absorbs the overlap.
   // Search only sees what mentions the person served; replies in the threads of open topics are reread separately,
   // otherwise follow-ups in those threads would be missed.
-  await resync(syncedTo - 300, "startup", false);
-
-  out(`[strato] Socket Mode listener armed · ${firstRun ? "first run: history marked as read" : "catch-up done"} · topics declared by hook`);
+  if (slack) {
+    await resync(syncedTo, "startup", false);
+    out(`[strato] Socket Mode listener armed · ${firstRun ? "first run: history marked as read" : "catch-up done"} · topics declared by hook`);
+  }
+  if (!alone) out(`[strato] listener armed · ${labelsOf(others)} · each account in its own loop`);
 
   // Topics are watched through the file system, not by a tick.
   const stopSessions = watchSessions(prev, minGap);
   // A slow tick: state on disk, dead sessions, and catch-up of what the socket may have missed, from the cursor.
   const timer = setInterval(() => {
     try {
-      saveSeen(seen);
+      if (slack) seen.save();
       writeTick();
       // The safety net: the one thing no hook can say is that a session died abruptly.
       pollSessions(prev, { spawn: true }).catch(() => {});
       purgeLive();
     } catch {}
-    void resync(syncedTo - 300, "periodic", true);
+    void resync(syncedTo, "periodic", true);
   }, 300_000);
   timer.unref?.();
 
   // Wake from sleep: the clock jumps. The WebSocket from before sleep is half open (Slack closed it, the machine does
   // not know): close it to open a new one, and catch up on what arrived during sleep.
-  const socket: { ws: WebSocket | null } = { ws: null };
+  let connection: AbortController | null = null;
   let lastBeat = Date.now();
   let lastWrite = Date.now();
   const beat = setInterval(() => {
@@ -370,182 +329,59 @@ export async function listen(opts: Record<string, string>) {
     }
     if (gap < 60_000) return;
     health.wokeAt = now;
-    try {
-      socket.ws?.close();
-    } catch {}
-    void resync(Math.min(syncedTo, (now - gap) / 1000) - 300, "wake", false);
+    connection?.abort();
+    void resync(Math.min(syncedTo, (now - gap) / 1000), "wake", false);
   }, 10_000);
   beat.unref?.();
 
   const stopChannel = boardToMaster();
+  // every other account in its own loop: one that fails never stops the others, nor Slack
+  const loops = others.map((entry) => runAccount(entry, { mode: "listen", stop: stop.signal }));
+  if (!slack) writeTick();
 
-  // Events are handled one at a time: processMatches reads and writes `seen`.
+  // Messages are handled one at a time: processItems reads and writes `seen`.
   let file: Promise<void> = Promise.resolve();
-  const onEvent = (e: Record<string, any>) => {
-    health.lastEventAt = Date.now();
-    file = file.then(async () => {
-      try {
-        const match = await matchFromEvent(e, base, cfg);
-        if (!match) return;
-        await processMatches([match], cfg, seen, participated);
-        saveSeen(seen);
-      } catch (err) {
-        // never silently: the master must know a message was not triaged
-        out(triageErrorLine(permalinkFor(base, String(e.channel ?? "?"), String(e.ts ?? "?"), e.thread_ts), err));
-      }
-    });
-  };
-
   const outage = suiviOuverture(out);
   let backoff = 1;
-  for (;;) {
-    const r = await connexionSocket(xapp, onEvent, socket, {
-      onOpen: () => {
-        outage.ouverte();
-        backoff = 1;
+  while (slack) {
+    const { src } = slack;
+    connection = new AbortController();
+    const r = await src.provider.subscribe?.(
+      { ...src.ctx, signal: connection.signal },
+      (items) => {
+        health.lastEventAt = Date.now();
+        if (!items.length) return;
+        file = file.then(async () => {
+          try {
+            await processItems(src, items);
+            seen.save();
+          } catch (err) {
+            // never silently: the master must know a message was not triaged
+            out(triageErrorLine(items[0].link || items[0].id, err));
+          }
+        });
       },
-    });
-    if (r.refus) outage.refus(r.refus, r.fin === "fatal");
-    if (r.fin === "fatal") break;
+      {
+        opened: () => {
+          outage.ouverte();
+          backoff = 1;
+        },
+      },
+    );
+    if (!r) break;
+    if (r.refused) outage.refus(r.refused, r.end === "fatal");
+    if (r.end === "fatal") break;
     // Slack's Retry-After first (capped at 15 min), else the backoff
-    await Bun.sleep(Math.max(backoff, Math.min(900, r.retryAfterSec ?? 0)) * 1000);
-    backoff = r.fin === "propre" ? 1 : Math.min(60, backoff * 2);
+    await Bun.sleep(Math.max(backoff, Math.min(900, (r.retryAfterMs ?? 0) / 1000)) * 1000);
+    backoff = r.end === "clean" ? 1 : Math.min(60, backoff * 2);
   }
+  await file;
+  await Promise.all(loops);
+  stop.abort();
   clearInterval(beat);
   clearInterval(timer);
   stopChannel();
   stopSessions();
-}
-
-/**
- * How a connection ended: "propre" (clean, Slack asked for a reconnect), "coupee" (cut), "fatal" (do not retry).
- * `refus`: Slack refused to open (or answered something other than JSON).
- */
-export interface FinSocket {
-  fin: "propre" | "coupee" | "fatal";
-  refus?: string;
-  /** Retry-After of apps.connections.open, in seconds. */
-  retryAfterSec?: number;
-}
-
-/** What tests replace: fetch, the WebSocket class, the delays. */
-export interface SocketDeps {
-  fetch?: typeof fetch;
-  WebSocket?: new (url: string) => WebSocket;
-  /** Beyond this silence (no frame, ping or pong included), the socket is considered dead. */
-  silenceMs?: number;
-  /** Watchdog period. */
-  checkMs?: number;
-  /** Timeout of apps.connections.open. */
-  openTimeoutMs?: number;
-  /** The socket just opened. */
-  onOpen?: () => void;
-}
-
-const FATAL_OPEN_ERRORS = new Set(["invalid_auth", "token_revoked", "not_authed"]);
-
-/**
- * One WebSocket connection, from opening to closing. Resolves "propre" on a disconnect requested by Slack.
- * Never hangs: an HTML page in answer to apps.connections.open (Slack outage, captive portal) must not throw outside
- * any try inside a `new Promise(async …)`, or the promise never resolves and the listener stays deaf for good.
- * The watchdog sends a ping at half the silence and closes the socket if nothing, not even a pong, came back: a
- * half-open connection (sleep, network change) is invisible otherwise.
- */
-export async function connexionSocket(xapp: string, onEvent: (e: Record<string, any>) => void, socket: { ws: WebSocket | null }, deps: SocketDeps = {}): Promise<FinSocket> {
-  let url: string;
-  try {
-    const r = await (deps.fetch ?? fetch)("https://slack.com/api/apps.connections.open", {
-      method: "POST",
-      headers: { Authorization: `Bearer ${xapp}`, "Content-type": "application/x-www-form-urlencoded" },
-      signal: AbortSignal.timeout(deps.openTimeoutMs ?? 15_000),
-    });
-    const retryAfterSec = Number(r.headers.get("retry-after")) || undefined;
-    let j: { ok?: boolean; url?: string; error?: string };
-    try {
-      j = (await r.json()) as typeof j;
-    } catch {
-      return { fin: "coupee", refus: `unreadable answer from Slack (HTTP ${r.status})`, retryAfterSec };
-    }
-    if (!j.ok || !j.url) {
-      // a revoked or invalid token is not fixed by reconnecting
-      const fatal = FATAL_OPEN_ERRORS.has(j.error ?? "");
-      return { fin: fatal ? "fatal" : "coupee", refus: j.error ?? `unknown error (HTTP ${r.status})`, retryAfterSec };
-    }
-    url = j.url;
-  } catch {
-    // network down or timeout: no line per attempt, the board's pill says it
-    return { fin: "coupee" };
-  }
-
-  const silenceMs = deps.silenceMs ?? 120_000;
-  return new Promise((resolve) => {
-    let ws: WebSocket;
-    try {
-      ws = new (deps.WebSocket ?? WebSocket)(url);
-    } catch {
-      return resolve({ fin: "coupee" });
-    }
-    socket.ws = ws;
-    let reconnectRequested = false;
-    let lastFrame = Date.now();
-    let ended = false;
-    const frame = () => {
-      lastFrame = Date.now();
-    };
-    const end = (fin: FinSocket["fin"]) => {
-      if (ended) return;
-      ended = true;
-      clearInterval(watchdog);
-      if (socket.ws === ws) socket.ws = null;
-      resolve({ fin });
-    };
-    const watchdog = setInterval(() => {
-      const silence = Date.now() - lastFrame;
-      if (silence >= silenceMs) {
-        // a half-open socket does not always fire its onclose: do not wait for it
-        try {
-          ws.terminate();
-        } catch {}
-        end("coupee");
-      } else if (silence >= silenceMs / 2) {
-        try {
-          ws.ping();
-        } catch {}
-      }
-    }, deps.checkMs ?? 30_000);
-    watchdog.unref?.();
-
-    ws.addEventListener("ping", frame);
-    ws.addEventListener("pong", frame);
-    ws.onopen = () => {
-      frame();
-      deps.onOpen?.();
-    };
-    ws.onmessage = (ev: MessageEvent) => {
-      frame();
-      let m: Record<string, any>;
-      try {
-        m = JSON.parse(String(ev.data));
-      } catch {
-        return;
-      }
-      if (m.type === "disconnect") {
-        reconnectRequested = true;
-        return;
-      }
-      // Acknowledge at once: without an ack within 3 s, Slack redelivers three times.
-      if (m.envelope_id) ws.send(JSON.stringify({ envelope_id: m.envelope_id }));
-      if (m.type !== "events_api") return;
-      const e = m.payload?.event;
-      if (e) onEvent(e);
-    };
-    ws.onclose = () => end(reconnectRequested ? "propre" : "coupee");
-    ws.onerror = () => {
-      try {
-        ws.close();
-      } catch {}
-    };
-  });
 }
 
 /**
@@ -669,73 +505,123 @@ function boardToMaster(): () => void {
   };
 }
 
+/**
+ * Polling, for the Monitor: the default Slack account through search every `interval` seconds, every other account
+ * in its own loop at its own `pollInterval` (or `interval` when given). A fatal Slack error stops the command when
+ * Slack is alone (exit 75), as before; next to other accounts, it is one line and the others carry on.
+ */
 export async function watch(intervalArg?: string) {
   ensureState();
   const cfg = settings().slack;
-  await initSlack(cfg);
+  const others = ingestAccounts();
+  const alone = others.length === 0;
+  const stop = new AbortController();
+  const seen = legacySeen();
+  let slack = slackInUse(others) ? await connectDefaultSlack(alone, seen) : null;
   const interval = Number(intervalArg ?? cfg.pollInterval);
-  const seen = new Set(readJson<string[]>(F.seen, []));
   const saved = readJson<{ lastTick?: number; syncedTo?: number }>(F.tick, {});
   const firstRun = saved.lastTick === undefined;
   // the catch-up cursor (`nextSyncCursor`), separate from the `lastTick` heartbeat the board reads
   let syncedTo = saved.syncedTo ?? saved.lastTick ?? Date.now() / 1000 - 3600;
   const prev = new Map<string, string | null>();
-  const participated = await participatedThreads(cfg);
+  if (slack) slack.src.participated = await participatedOf(slack.src);
   await knownAttention(prev);
   boardToMaster();
 
-  out(`[strato] polling armed · every ${interval} s · ${firstRun ? "first run: history marked as read" : "messages that arrived while stopped will come out"}`);
+  if (slack) out(`[strato] polling armed · every ${interval} s · ${firstRun ? "first run: history marked as read" : "messages that arrived while stopped will come out"}`);
+  if (!alone) out(`[strato] polling armed · ${labelsOf(others)} · each account in its own loop`);
+  for (const entry of others) void runAccount(entry, { mode: "watch", stop: stop.signal, ...(intervalArg ? { intervalSec: interval } : {}) });
+
   let backoff = 0;
   for (let tick = 0; ; tick++) {
     if (tick > 0) await Bun.sleep((interval + backoff) * 1000);
     try {
       const tickStart = Date.now() / 1000;
-      // 5 min margin for the Slack index lag, dedup absorbs the overlap
-      const { matches, complete } = await fetchSince(syncedTo - 300, 30);
-      if (!complete) out("[strato] more than 3,000 messages since the last pass: the oldest were not read, run backlog if needed");
-      await processMatches(matches, cfg, seen, participated, tick === 0 && firstRun);
-      saveSeen(seen);
-      // incomplete pass: not beyond the oldest message read (results are sorted oldest first)
-      syncedTo = nextSyncCursor(syncedTo, tickStart, { ok: true, complete, oldestReadSec: matches.length ? Number(matches[0].ts) : undefined });
-      writeJson(F.tick, { lastTick: tickStart, syncedTo });
+      if (slack) {
+        const { src } = slack;
+        // 5 min margin for the Slack index lag (in the provider), dedup absorbs the overlap
+        const r = await src.provider.poll?.(src.ctx, { value: String(syncedTo), at: syncedTo * 1000 }, { since: syncedTo * 1000, maxItems: 3000 });
+        if (!r) throw new Error("no poll");
+        if (!r.complete) out("[strato] more than 3,000 messages since the last pass: the oldest were not read, run backlog if needed");
+        await processItems(src, r.items, tick === 0 && firstRun);
+        seen.save();
+        // incomplete pass: not beyond the oldest message read; a cursor never moves back
+        syncedTo = Math.max(syncedTo, Number(r.cursor.value) || syncedTo);
+      }
+      writeJson(F.tick, { lastTick: tickStart, ...(slack || saved.syncedTo ? { syncedTo } : {}) });
 
       await pollSessions(prev);
       backoff = 0;
     } catch (e) {
-      if (e instanceof SlackError && e.fatal) {
-        out(`[strato] FATAL: ${e.code}, polling stopped`);
-        process.exit(75);
+      const pe = providerError(e);
+      if (pe.fatal) {
+        out(`[strato] FATAL: ${pe.code}, polling stopped`);
+        if (alone) process.exit(75);
+        slack = null;
       }
       backoff = Math.min(300, backoff === 0 ? interval : backoff * 2);
     }
   }
 }
 
+/** Recent relevant messages of every account that can be polled, over `--since` (12 h by default), without writing the log. */
 export async function backlog(opts: Record<string, string>) {
   ensureState();
-  const cfg = settings().slack;
-  await initSlack(cfg);
+  const others = ingestAccounts();
+  const alone = others.length === 0;
+  const slack = slackInUse(others) ? await connectDefaultSlack(alone, legacySeen(new Set())) : null;
   const since = opts.since ?? "12h";
   const ms = durationOrFail(since);
   const sujets = loadSujets();
   const tracked = trackedKeys(sujets);
-  let n = 0;
-  let silent = 0;
-  const participated = await participatedThreads(cfg);
-  const { matches, complete } = await fetchSince((Date.now() - ms) / 1000, 60);
-  if (!complete) out("[strato] more than 6,000 messages over the period: only the most recent are read");
-  for (const m of matches) {
-    if (m.user === cfg.me) participated.add(threadKey(m));
-    const t = await triage(m, cfg, tracked, participated);
-    if (!t) continue;
-    if (isSilent(t.kind)) {
-      silent++;
+  const count = { n: 0, silent: 0 };
+  if (slack) {
+    slack.src.participated = await participatedOf(slack.src);
+    try {
+      const r = await slack.src.provider.poll?.(slack.src.ctx, null, { since: Date.now() - ms, maxItems: 6000 });
+      if (r && !r.complete) out("[strato] more than 6,000 messages over the period: only the most recent are read");
+      await backlogItems(slack.src, r?.items ?? [], sujets, tracked, count);
+    } catch (e) {
+      if (alone) fail(providerError(e).message);
+      outageLines("Slack", out).failed(providerError(e).message);
+    }
+  }
+  for (const entry of others) await backlogAccount(entry, Date.now() - ms, sujets, tracked, count);
+  out(`[strato] ${count.n} relevant message(s) over ${since} · ${count.silent} set aside (third parties, bots)`);
+}
+
+/** The relevant items of one batch, printed; set aside ones counted. Nothing is logged nor marked as read. */
+async function backlogItems(src: Source, items: Item[], sujets: Sujet[], tracked: Set<string>, count: { n: number; silent: number }): Promise<void> {
+  for (const item of items) {
+    const key = threadKeyOf(src, item.thread);
+    if (!key) continue;
+    if (item.author.isMe) src.participated.add(key);
+    const r = await triageItem(src, item, key, tracked);
+    if (!r) continue;
+    if (isSilent(r.kind)) {
+      count.silent++;
       continue;
     }
-    out(eventLine(t.kind, t.d, sujets, keepMessage(t.d)));
-    n++;
+    const conversation = conversationRef(src.account.provider, src.account.id, r.item.conversation.id) ?? undefined;
+    out(eventLine(r.kind, { ...r.d, conversation }, sujets, keepMessage(r.d, { key: r.d.key, item: itemKeyOf(src, item.id) ?? undefined, conversation })));
+    count.n++;
   }
-  out(`[strato] ${n} relevant message(s) over ${since} · ${silent} set aside (third parties, bots)`);
+}
+
+/** The backlog of another account: connected for this command only, a failure is one line. */
+async function backlogAccount(entry: AccountEntry, sinceMs: number, sujets: Sujet[], tracked: Set<string>, count: { n: number; silent: number }): Promise<void> {
+  const lines = outageLines(accountLabel(entry.account), out);
+  if (!entry.provider?.poll) return;
+  try {
+    const identity = await entry.provider.connect(accountContext(entry));
+    const src = sourceOf(entry, identity, accountSeen(entry.account));
+    src.participated = await participatedOf(src);
+    const r = await entry.provider.poll(src.ctx, null, { since: sinceMs, maxItems: 6000 });
+    if (!r.complete) out(`[strato] ${src.label}: more than 6,000 items over the period: only the most recent are read`);
+    await backlogItems(src, r.items, sujets, tracked, count);
+  } catch (e) {
+    lines.failed(providerError(e).message);
+  }
 }
 
 /** The messages the listener set aside, read from events.ndjson: no Slack call. */

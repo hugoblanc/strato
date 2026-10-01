@@ -265,11 +265,15 @@ export function messageId(permalink: string): string {
   return new Bun.CryptoHasher("sha1").update(permalink).digest("hex").slice(0, 12);
 }
 
-/** Keeps the message surfaced to the master and returns its id; purges those older than 7 days on the way. */
-export function keepMessage(t: Trigger): string {
-  const id = messageId(t.permalink);
+/**
+ * Keeps the message surfaced to the master and returns its id; purges those older than 7 days on the way. The id comes
+ * from its link, else from its item key (`ref.item`), for a tool whose link was not kept. The key of its thread and
+ * its conversation are kept with it: `open --msg` opens the topic on them when the link says nothing.
+ */
+export function keepMessage(t: Trigger, ref: { key?: string; item?: string; conversation?: string } = {}): string {
+  const id = messageId(t.permalink === "-" && ref.item ? ref.item : t.permalink);
   mkdirSync(F.inbox, { recursive: true });
-  writeJson(join(F.inbox, `${id}.json`), { from: t.from, channel: t.channel, text: t.text, permalink: t.permalink });
+  writeJson(join(F.inbox, `${id}.json`), { from: t.from, channel: t.channel, text: t.text, permalink: t.permalink, ...(ref.key ? { key: ref.key } : {}), ...(ref.conversation ? { conversation: ref.conversation } : {}) });
   const cutoff = Date.now() - INBOX_KEEP_MS;
   for (const f of readdirSync(F.inbox)) {
     try {
@@ -284,7 +288,14 @@ export function messageOf(id: string): Trigger | null {
   if (!/^[0-9a-f]{12}$/.test(id)) return null;
   const t = readJson<Partial<Trigger> | null>(join(F.inbox, `${id}.json`), null);
   if (!t || typeof t.permalink !== "string") return null;
-  return { from: String(t.from ?? "?"), channel: String(t.channel ?? ""), text: String(t.text ?? ""), permalink: t.permalink };
+  return {
+    from: String(t.from ?? "?"),
+    channel: String(t.channel ?? ""),
+    text: String(t.text ?? ""),
+    permalink: t.permalink,
+    ...(typeof t.key === "string" ? { key: t.key } : {}),
+    ...(typeof t.conversation === "string" ? { conversation: t.conversation } : {}),
+  };
 }
 
 /** The whole events.ndjson, unreadable lines dropped. The card sweep reads it once per pass. */

@@ -3,7 +3,7 @@
  * ignored, set aside for the digest, or raised to the master, and under which `<type>`. Pure: the facts come from the
  * provider on each item (`Item`), the rules from the account's settings that declare a triage role.
  */
-import type { Item, SettingSpec } from "../providers/sdk.ts";
+import type { Identity, Item, SettingSpec } from "../providers/sdk.ts";
 
 /**
  * suite/moi ("follow-up"/"me"): thread of a tracked topic. dm/mention/canal/fil ("channel"/"thread"): outside a
@@ -94,6 +94,19 @@ export function triageRules(settings: Record<string, unknown>, specs: Pick<Setti
         return Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : [];
       });
   return { watch: list("watch"), ignore: list("ignore"), ignoreAuthors: list("ignoreAuthors"), teammates: list("teammates") };
+}
+
+/**
+ * Who the person is on an account, as triage reads it: the `me` setting when it is set (it decides today, `doctor`
+ * warns when `connect` says otherwise), else what `connect` returned; the groups of both.
+ */
+export function effectiveIdentity(identity: Identity, settings: Record<string, unknown>, specs: Pick<SettingSpec, "key" | "triage">[]): Identity {
+  const me = specs.map((s) => (s.triage === "me" ? settings[s.key] : undefined)).find((v): v is string => typeof v === "string" && v !== "");
+  const groups = specs.filter((s) => s.triage === "groups").flatMap((s) => {
+    const v = settings[s.key];
+    return Array.isArray(v) ? v.filter((x): x is string => typeof x === "string" && x !== "") : [];
+  });
+  return { ...identity, me: me ?? identity.me, groups: [...new Set([...(identity.groups ?? []), ...groups])] };
 }
 
 /**

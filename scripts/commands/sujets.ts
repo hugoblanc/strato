@@ -10,7 +10,7 @@ import { claimResume, createSujet, dropSujet, endResume, ensureState, loadSujets
 import { attention, inboundNote, isStuck, routeDecision } from "../claude/model.ts";
 import { gateLine } from "../core/cards.ts";
 import { locale } from "../core/i18n.ts";
-import { parseKey, sujetKey, threadOfKey, ticketUrl } from "../core/keys.ts";
+import { canonicalKey, conversationOfKey, parseKey, sujetKey, threadOfKey, ticketUrl } from "../core/keys.ts";
 import { providerLabel } from "../core/links.ts";
 import { missingSettings, settings } from "../core/settings.ts";
 import { nextLine, short } from "./setup.ts";
@@ -76,7 +76,8 @@ export async function open(args: string[]) {
   // --msg: the message surfaced by listen, reread as is; the master never copies a Slack text into the command
   const kept = opts.msg ? keptOrFail(opts.msg) : null;
   const ref = positional[0] ?? kept?.permalink;
-  const key = ref ? sujetKey(ref) : null;
+  // a message of a tool whose link was not kept ("-"): the key it was kept with
+  const key = (ref ? sujetKey(ref) : null) ?? (!positional[0] && kept?.key ? canonicalKey(kept.key) : null);
   if (!ref || !key) fail("usage: open [<Slack link | ABC-123 | Linear link>] --msg <id> --title …   (or --from … --channel … --text … without --msg)");
   const issueId = key.startsWith("linear:") ? key.slice("linear:".length) : null;
   const permalink = issueId ? (ticketUrl(issueId) ?? ref) : ref;
@@ -134,6 +135,8 @@ export async function open(args: string[]) {
     next: LAUNCHING,
     summary: "",
     report,
+    // the conversation the message came from, when the key does not name it: the event line's nearby topics read it
+    ...(kept?.conversation && !conversationOfKey(key) ? { conversation: kept.conversation } : {}),
     createdAt: now,
     updatedAt: now,
     history: [{ at: now, what: "opened" }],

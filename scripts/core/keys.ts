@@ -144,6 +144,26 @@ export function threadOfKey(key: string): { channel: string; ts: string } | null
 }
 
 /**
+ * A conversation of an account, as one comparable string: `<provider>[@<account>]:<id>`, its id escaped like a native
+ * id (`slack:C0ACME0001`, `tickets@work:PLAT`). Null when the id is empty or the names are not valid.
+ */
+export function conversationRef(provider: string, account: string, id: string): string | null {
+  if (!PROVIDER_ID.test(provider) || !(account === "default" || ACCOUNT_ID.test(account)) || !id || id.length > KEY_MAX) return null;
+  return `${prefixOf(provider, account)}${escapeNative(id)}`;
+}
+
+/**
+ * The conversation a thread key belongs to, when the key says it: a Slack thread (any account) names its channel.
+ * Null for any other key; a topic opened from another tool's item carries its conversation instead (`Sujet.conversation`).
+ */
+export function conversationOfKey(key: string): string | null {
+  const p = parseKey(key);
+  if (!p || p.provider !== "slack" || p.long) return null;
+  const [channel, rest] = p.native.split(":");
+  return channel && rest !== undefined ? conversationRef(p.provider, p.account, channel) : null;
+}
+
+/**
  * How a key that is not a thread of the default Slack account reads on the board: the tool's label, the account when
  * it is not the default one, and the native id ("Linear ENG-12", "Slack (partners) C0ACME0002:…"). The key itself
  * when it does not parse.

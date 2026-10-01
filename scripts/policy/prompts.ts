@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { COMPILED, commandForEntry } from "../app/self.ts";
 import { locale } from "../core/i18n.ts";
+import { checkedLink } from "../core/links.ts";
 import { ownerForms, settings } from "../core/settings.ts";
 import { untrusted } from "../core/text.ts";
 
@@ -210,6 +211,12 @@ Values between double quotes: escape the ", $ and backticks they contain. A valu
 ${cardStyle()}`;
 }
 
+/**
+ * The link of a message quoted in a prompt: kept only when it is https, without whitespace and on a known tool's
+ * hosts, else "-". A third party cannot slip a line or a link of its choosing into a session's prompt through it.
+ */
+const quotedLink = (link: string) => checkedLink(link) ?? "-";
+
 /** Session opened from a message: prepare everything until only a go is left. */
 export function workerPrompt(title: string, key: string, t: Trigger, script: string, report: string, teammates: string[] = []): string {
   const prompt = policyText("worker", {
@@ -218,7 +225,7 @@ export function workerPrompt(title: string, key: string, t: Trigger, script: str
     from: untrusted(t.from),
     channel: untrusted(t.channel),
     text: t.text ? untrusted(t.text) : "(see the thread)",
-    permalink: t.permalink,
+    permalink: quotedLink(t.permalink),
     teammates: teammates.join(", "),
     report,
     script,
@@ -249,7 +256,7 @@ export function ticketPrompt(title: string, key: string, issueId: string, url: s
 /** A new message in a thread of the topic, relayed to its session: from the person served, a teammate, or someone else. */
 export function followUpMessage(kind: "suite" | "moi", t: Trigger, script: string, key: string, teammates: string[] = []): string {
   const teammate = teammates.some((x) => x.trim().toLowerCase() === t.from.trim().toLowerCase());
-  const vars = { from: untrusted(t.from), channel: untrusted(t.channel), text: untrusted(t.text), permalink: t.permalink, script, key };
+  const vars = { from: untrusted(t.from), channel: untrusted(t.channel), text: untrusted(t.text), permalink: quotedLink(t.permalink), script, key };
   const head = kind === "moi" ? "follow-up-moi" : teammate ? "follow-up-coequipier" : "follow-up-autre";
   return `${policyText(head, vars)}\n${policyText("follow-up-fin", vars)}\n${untrustedRule()}${shadowRule()}`;
 }

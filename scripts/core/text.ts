@@ -63,6 +63,16 @@ export function reportPathAllowed(path: string, reportsDir: string): boolean {
 }
 
 /**
+ * A provider's string on one line: every run of line breaks and other control characters becomes one space, so a
+ * third party cannot start a line of its own in the master's Monitor (a fake `[strato]` line). Slack's readable text
+ * is already on one line (`humanize`); every provider string goes through this before `untrusted`.
+ */
+export function oneLine(text: string): string {
+  // biome-ignore lint/suspicious/noControlCharactersInRegex: control characters are what this removes
+  return text.replace(/[\u0000-\u001f\u007f\u0085\u2028\u2029]+/g, " ");
+}
+
+/**
  * A text written by a third party (Slack message, display name, channel) before it goes into a prompt.
  * It must not be able to close the « … » quote nor imitate a trust marker: the master's `[strato]` (or legacy
  * `[aiguilleur]`), or the prefix of a message sent from the board. Square brackets become parentheses, guillemets

@@ -9,11 +9,12 @@ import { basename, dirname, join } from "node:path";
 import { envFileValue } from "../app/slack.ts";
 import { expandHome, F, readJson, writeJson } from "../app/env.ts";
 import { formatKey, parseKey } from "../core/keys.ts";
-import { hostMatches } from "../core/links.ts";
+import { hostMatches, useProviders } from "../core/links.ts";
 import { locale } from "../core/i18n.ts";
 import { type ResolvedAccount, resolveAccounts, type Settings, settings } from "../core/settings.ts";
 import { setEnvLine } from "../core/setup.ts";
 import { apiSupported } from "./api.ts";
+import { BUILTIN_DESCRIPTORS } from "./builtin.ts";
 import { linearProvider } from "./linear/index.ts";
 import type { Account, AccountContext, Identity, Provider, ProviderDescriptor } from "./sdk.ts";
 import { slackProvider } from "./slack/index.ts";
@@ -21,7 +22,22 @@ import { slackProvider } from "./slack/index.ts";
 /** The built-in providers, by id. */
 export const BUILTIN: Readonly<Record<string, Provider>> = { slack: slackProvider, linear: linearProvider };
 
-const descriptors = (): Record<string, ProviderDescriptor> => Object.fromEntries(Object.entries(BUILTIN).map(([id, p]) => [id, p.descriptor]));
+/** Providers added at runtime, by id: the external stage's loader adds the trusted ones here, tests add fakes. */
+const added: Record<string, Provider> = {};
+
+/**
+ * Adds a provider that is not built in, and installs its descriptor for keys and links. A built-in id is refused:
+ * a provider never replaces Slack or Linear.
+ */
+export function addProvider(p: Provider): void {
+  if (BUILTIN[p.descriptor.id]) throw new Error(`${p.descriptor.id} is a built-in provider`);
+  added[p.descriptor.id] = p;
+  useProviders([...BUILTIN_DESCRIPTORS, ...Object.values(added).map((x) => x.descriptor)]);
+}
+
+const providerById = (id: string): Provider | null => BUILTIN[id] ?? added[id] ?? null;
+
+const descriptors = (): Record<string, ProviderDescriptor> => Object.fromEntries([...Object.entries(BUILTIN), ...Object.entries(added)].map(([id, p]) => [id, p.descriptor]));
 
 /** An account and the provider that serves it, or why none does. */
 export interface AccountEntry extends ResolvedAccount {
@@ -32,16 +48,16 @@ export interface AccountEntry extends ResolvedAccount {
 /** Every account of the profile, each with its provider instance, in the order of `resolveAccounts`. */
 export function accounts(s: Settings = settings()): AccountEntry[] {
   return resolveAccounts(s, descriptors()).map((a) => {
-    const builtin = BUILTIN[a.account.provider] ?? null;
+    const known = providerById(a.account.provider);
     const source = s.providers[a.account.provider]?.source;
-    const problem = builtin
-      ? apiSupported(builtin.descriptor)
+    const problem = known
+      ? apiSupported(known.descriptor)
         ? null
         : `${a.account.provider}: written for another version of the provider interface`
       : source
         ? `${a.account.provider}: external providers are not loaded by this version`
         : `${a.account.provider}: not a built-in tool`;
-    return { ...a, provider: problem ? null : builtin, problem };
+    return { ...a, provider: problem ? null : known, problem };
   });
 }
 
@@ -53,11 +69,16 @@ export const accountOf = (provider: string, id: string, s: Settings = settings()
 /** `<state>/providers/<provider>-<account>/`: the only folder an account's provider may write in. */
 export const accountDir = (a: Pick<Account, "provider" | "id">) => join(F.providers, `${a.provider}-${a.id}`);
 
-/** A file name of the account's store: one plain name, never a path; `.json` added when missing. */
+/** The files of an account's folder that the core writes: a provider's store cannot overwrite them. */
+export const CORE_FILES = ["keys.json", "seen.json", "ingest.json"] as const;
+
+/** A file name of the account's store: one plain name, never a path nor a file of the core; `.json` added when missing. */
 function storeFile(a: Pick<Account, "provider" | "id">, name: string): string {
   const base = basename(name);
   if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/.test(base) || base !== name) throw new Error(`store name refused: ${name}`);
-  return join(accountDir(a), base.endsWith(".json") ? base : `${base}.json`);
+  const file = base.endsWith(".json") ? base : `${base}.json`;
+  if ((CORE_FILES as readonly string[]).includes(file)) throw new Error(`store name refused: ${name} is kept by Strato`);
+  return join(accountDir(a), file);
 }
 
 // ------------------------------------------------------------------ long keys
@@ -90,7 +111,11 @@ export function nativeOfKey(key: string, s: Settings = settings()): { entry: Acc
 
 // ------------------------------------------------------------------ what a provider receives
 
-/** The secret names an account's auth method stores, with the environment variables also accepted. */
+/**
+ * The secret names an account's auth method stores, with the environment variables also accepted. Those variables are
+ * legacy sources of the default account: a named account reads its own secret file only, or it would pick up the
+ * default account's token.
+ */
 function secretSpecs(entry: AccountEntry) {
   return entry.provider?.descriptor.auth.find((m) => m.id === entry.account.auth)?.stores ?? [];
 }
@@ -157,7 +182,8 @@ export function accountContext(entry: AccountEntry, opts: { identity?: Identity 
   const secret = (name: string): string | null => {
     const spec = declared(name);
     if (!spec) return null;
-    const value = secretFiles(entry).map((file) => envFileValue(file, name)).find(Boolean) ?? (spec.env ?? []).map((env) => process.env[env]).find(Boolean) ?? null;
+    const env = entry.account.id === "default" ? (spec.env ?? []) : [];
+    const value = secretFiles(entry).map((file) => envFileValue(file, name)).find(Boolean) ?? env.map((v) => process.env[v]).find(Boolean) ?? null;
     if (value) known.push(value);
     return value;
   };

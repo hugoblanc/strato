@@ -48,19 +48,24 @@ describe("registry", () => {
     ]);
   });
 
-  test("until ingest, the Slack provider serves the default account only, and Linear connects nowhere", async () => {
+  test("a named Slack account connects with its own token only, and Linear connects nowhere", async () => {
     const r = rig();
     config(r, { owner: { name: "Alice" }, slack: { team: "Acme", workspace: "acme", me: "UALICE" }, tracker: { workspace: "acme", prefixes: ["ENG"] }, providers: { slack: { accounts: { partners: { workspace: "acme-partners" } } } } });
-    const out = await script(r, `
+    const out = await script(
+      r,
+      `
       const codes = [];
       for (const [p, id] of [["slack", "partners"], ["linear", "default"]]) {
         const a = registry.accountOf(p, id);
         try { await a.provider.connect(registry.accountContext(a)); codes.push("connected"); } catch (e) { codes.push([e.code, e.fatal]); }
       }
       return codes;
-    `);
+    `,
+      // the default account's token in the environment is never a named account's
+      { STRATO_SLACK_TOKEN: "xoxp-acme-default" },
+    );
     expect(out).toEqual([
-      ["unsupported_account", true],
+      ["invalid_auth", true],
       ["unsupported", true],
     ]);
   });
