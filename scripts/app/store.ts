@@ -5,7 +5,7 @@
 import { appendFileSync, existsSync, linkSync, mkdirSync, readdirSync, readFileSync, renameSync, rmdirSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { t } from "../core/i18n.ts";
-import { newInstallSettings } from "../core/settings.ts";
+import { NEW_INSTALL_PROFILE } from "../core/settings.ts";
 import { findSujet, normalizeSujets, pickLetter, type StoredSujet, type Sujet, type Trigger } from "../core/sujet.ts";
 import { reportFile, reportPathAllowed } from "../core/text.ts";
 import { dayOfIso, F, fail, localDay, nowIso, readJson, STATE, writeJson } from "./env.ts";
@@ -29,10 +29,14 @@ export function createStateDir() {
   writeFileSync(join(STATE, ".gitignore"), "# Strato's state: Slack messages, reports, ids. Never committed.\n*\n");
 }
 
-/** Creates the state folder, and a complete config.json with default values if missing: that is the file to fill in. */
+/**
+ * Creates the state folder, and a minimal config.json if missing: shadow mode on, nothing else. Every other field
+ * keeps its default by being absent, so a later change of default reaches this installation, and the file the
+ * person opens holds only what they or the setup chose.
+ */
 export function ensureState() {
   createStateDir();
-  if (!existsSync(F.config)) writeJson(F.config, newInstallSettings());
+  if (!existsSync(F.config)) writeJson(F.config, NEW_INSTALL_PROFILE);
 }
 
 export function logEvent(e: Record<string, unknown>) {

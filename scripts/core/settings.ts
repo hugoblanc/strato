@@ -148,10 +148,6 @@ export const DEFAULT_SETTINGS: Settings = {
  */
 export const NEW_INSTALL_PROFILE = { workers: { shadow: true } } as const;
 
-export function newInstallSettings(): Settings {
-  return { ...DEFAULT_SETTINGS, workers: { ...DEFAULT_SETTINGS.workers, ...NEW_INSTALL_PROFILE.workers } };
-}
-
 type Raw = Record<string, unknown>;
 const isObject = (v: unknown): v is Raw => typeof v === "object" && v !== null && !Array.isArray(v);
 

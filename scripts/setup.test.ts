@@ -374,7 +374,8 @@ describe("setup --write and --live", () => {
     const r = rig();
     const fresh = join(r.dir, "fresh-state");
     await cli(r, ["doctor"], { STRATO_STATE: fresh });
-    expect(JSON.parse(readFileSync(join(fresh, "config.json"), "utf8")).workers.shadow).toBe(true);
+    // only what differs from the defaults: the rest stays absent, so later defaults reach it (O9)
+    expect(JSON.parse(readFileSync(join(fresh, "config.json"), "utf8"))).toEqual({ workers: { shadow: true } });
     await cli(r, ["doctor"]);
     expect(config(r).workers).toBeUndefined();
     expect(resolveSettings(config(r)).workers.shadow).toBe(false);
