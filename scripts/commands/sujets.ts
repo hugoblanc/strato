@@ -12,6 +12,7 @@ import { gateLine } from "../core/cards.ts";
 import { locale } from "../core/i18n.ts";
 import { sujetKey, ticketUrl } from "../core/keys.ts";
 import { missingSettings, settings } from "../core/settings.ts";
+import { nextLine, short } from "./setup.ts";
 import { applyAssignments, attachThread, findSujet, parseAssignments, type Sujet, sujetKeys, type Trigger } from "../core/sujet.ts";
 import { reportFile, sessionName, truncate } from "../core/text.ts";
 import { DEFAULT_POLICY_DIR, followUpMessage, POLICY_TEMPLATES, policySource, ticketPrompt, workerPrompt } from "../policy/prompts.ts";
@@ -27,7 +28,7 @@ export async function doctor() {
   const s = settings();
   const cfg = s.slack;
   const missing = missingSettings(s);
-  out(`profile  : ${F.config}${missing.length ? ` · to fill in: ${missing.join(", ")}` : ""}`);
+  out(`profile  : ${short(F.config)}${missing.length ? ` · to fill in: ${missing.join(", ")}` : ""}`);
   out(`owner    : ${s.owner.name} · workspace ${WORKSPACE}`);
   const slackOk = await connectSlack(cfg);
   if (!slackOk) out(`slack    : ${NO_TOKEN(cfg)}`);
@@ -41,7 +42,7 @@ export async function doctor() {
   out(`socket   : ${appToken() ? "app token found, listen can open the socket" : "no app token (SLACK_APP_TOKEN or slack.appTokenFile): only watch, by polling, works"}`);
   const rows = agentsBySession();
   out(`claude   : ${rows ? `${rows.size} active session(s)` : "claude agents --json does not answer"}`);
-  out(`state    : ${STATE} · ${loadSujets().length} topic(s)`);
+  out(`state    : ${short(STATE)} · ${loadSujets().length} topic(s)`);
   out(`triggers : mentions of ${cfg.me || "-"}, groups ${cfg.subteams.join(", ") || "-"}, DMs, channels ${cfg.watchChannels.join(", ") || "-"}, tracked threads`);
   out(`digest   : messages aimed at someone else, authors ${cfg.ignoreAuthors.join(", ") || "-"}`);
   out(`tickets  : ${s.tracker ? `Linear ${s.tracker.workspace}, prefixes ${s.tracker.prefixes.join(", ") || "none"}` : "no tracker: topics only come from Slack"}`);
@@ -52,7 +53,8 @@ export async function doctor() {
   out(`board    : http://127.0.0.1:${s.ui.port}/board${s.ui.iterm ? " · iTerm2 integration on" : ""}`);
   out(`locale   : ${locale()} (ui.locale: the language of the board and of the master's messages to ${s.owner.name})`);
   out(`notes    : ${existsSync(join(STATE, "local.md")) ? `${join(STATE, "local.md")}, to read at startup` : "none (no local.md)"}`);
-  out(`script   : ${SCRIPT}`);
+  out(`script   : ${short(SCRIPT)}`);
+  out(nextLine({ blocked: [...(rows ? [] : ["claude"]), ...(slackOk ? [] : ["slack"])], profileIncomplete: missing.length > 0 }));
   if (!slackOk) process.exit(78);
 }
 

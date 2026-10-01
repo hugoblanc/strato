@@ -7,7 +7,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { TEST_SETTINGS } from "./test-setup.ts";
 import { actionCard, type BoardLine } from "./board.ts";
-import { checkReport, mergeProfile, slackAppLink, parseRemote, profileDiff, profileErrors, SLACK_SCOPES, slackWorkspaceFromUrl, suggestedConfig, ticketPrefixes, topChannels } from "./core/setup.ts";
+import { checkReport, mergeProfile, nextStep, shortPath, slackAppLink, parseRemote, profileDiff, profileErrors, SLACK_SCOPES, slackWorkspaceFromUrl, suggestedConfig, ticketPrefixes, topChannels } from "./core/setup.ts";
 import { missingSettings, resolveSettings, useSettings } from "./core/settings.ts";
 import { workerPrompt } from "./policy/prompts.ts";
 import { CLI, cleanupRigs, cli, KEY, LINK, lines, postBoard, readSujets, type Rig, rig, run, startServe, sujet, writeSujets } from "./test-rig.ts";
@@ -122,11 +122,30 @@ describe("profile helpers", () => {
   test("check report: exit 1 only for a missing blocking prerequisite", () => {
     const ok = checkReport("/s/config.json", true, [], [{ name: "bun", status: "ok", detail: "1.2", blocking: true }, { name: "ttyd", status: "skip", detail: "optional", blocking: false }]);
     expect(ok.code).toBe(0);
-    expect(ok.lines.at(-1)).toBe("ready");
+    expect(ok.lines.at(-2)).toBe("ready");
+    expect(ok.lines.at(-1)).toBe('Next: claude -n strato "/strato"');
     const ko = checkReport("/s/config.json", false, ["slack.me (…)"], [{ name: "slack", status: "missing", detail: "no token", blocking: true }]);
     expect(ko.code).toBe(1);
     expect(ko.lines).toContain("MISS  slack     no token [blocking]");
     expect(ko.lines).toContain("  to fill in: slack.me (…)");
+    expect(ko.lines.at(-1)).toStartWith("Next: bun strato.ts setup --slack-app");
+  });
+
+  test("Next: one command, by priority (O25)", () => {
+    const cli = "bun ./strato.ts";
+    expect(nextStep({ blocked: ["slack", "claude"], profileIncomplete: true }, cli)).toContain("install or update Claude Code");
+    expect(nextStep({ blocked: ["bun"], profileIncomplete: false }, cli)).toContain("https://bun.sh");
+    expect(nextStep({ blocked: ["slack"], profileIncomplete: true }, cli)).toStartWith("bun ./strato.ts setup --slack-app");
+    expect(nextStep({ blocked: [], profileIncomplete: true }, cli)).toBe('claude -n strato "/strato setup"');
+    expect(nextStep({ blocked: [], profileIncomplete: false }, cli)).toBe('claude -n strato "/strato"');
+  });
+
+  test("paths as a person reads them: ./ under the current folder, ~ under home", () => {
+    expect(shortPath("/home/alice/acme/.strato/config.json", "/home/alice", "/home/alice/acme")).toBe("./.strato/config.json");
+    expect(shortPath("/home/alice/.config/strato", "/home/alice", "/tmp")).toBe("~/.config/strato");
+    expect(shortPath("/home/alice/acme", "/home/alice", "/home/alice/acme")).toBe(".");
+    expect(shortPath("/opt/strato", "/home/alice", "/")).toBe("/opt/strato");
+    expect(shortPath("/home/alicette/x", "/home/alice", "/tmp")).toBe("/home/alicette/x");
   });
 });
 
@@ -286,6 +305,7 @@ describe("doctor and the Slack token (O5)", () => {
     const res = await doctorWith(r, withSlack(r));
     expect(res.code).toBe(0);
     expect(res.out).toContain('slack    : Acme · user UALICE · to fix in config.json, slack.team is not set: "Acme", slack.me is empty: "UALICE"');
+    expect(res.out.trim().split("\n").at(-1)).toBe('Next: claude -n strato "/strato setup"');
   }, 20_000);
 
   test("no token at all: where to put one", async () => {
@@ -293,6 +313,7 @@ describe("doctor and the Slack token (O5)", () => {
     expect(res.code).toBe(78);
     expect(res.out).toContain("no Slack user token found (xoxp-…): set STRATO_SLACK_TOKEN");
     expect(res.out).toContain('see SETUP.md, "Connect Slack"');
+    expect(res.out.trim().split("\n").at(-1)).toMatch(/^Next: bun .*strato\.ts setup --slack-app/);
   }, 20_000);
 
   test("a token of another workspace: named, masked, with its workspace", async () => {

@@ -14,10 +14,10 @@
 import { existsSync, mkdirSync, readdirSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, join } from "node:path";
-import { CLAUDE_BIN, F, fail, flags, localDay, out, readJson, run, STATE, WORKSPACE, writeJson } from "../app/env.ts";
+import { CLAUDE_BIN, F, fail, flags, localDay, out, readJson, run, SCRIPT, STATE, WORKSPACE, writeJson } from "../app/env.ts";
 import { appToken, tokenCandidates } from "../app/slack.ts";
 import manifestYaml from "../../examples/slack-app-manifest.yaml" with { type: "text" };
-import { type CheckItem, checkReport, slackAppLink, SLACK_SCOPES, type Detected, displayNameOf, firstNameOf, linearWorkspaces, localeFromEnv, mergeProfile, parseRemote, profileDiff, profileErrors, type Remote, type SearchMatch, slackWorkspaceFromUrl, suggestedConfig, ticketPrefixes, topChannels } from "../core/setup.ts";
+import { type CheckItem, checkReport, nextStep, type Progress, shortPath, slackAppLink, SLACK_SCOPES, type Detected, displayNameOf, firstNameOf, linearWorkspaces, localeFromEnv, mergeProfile, parseRemote, profileDiff, profileErrors, type Remote, type SearchMatch, slackWorkspaceFromUrl, suggestedConfig, ticketPrefixes, topChannels } from "../core/setup.ts";
 import { missingSettings, NEW_INSTALL_PROFILE, resolveSettings, settings, useSettings } from "../core/settings.ts";
 
 export const SHADOW_REFUSAL = "shadow mode: nothing is posted (bun strato.ts setup --live turns it off)";
@@ -34,6 +34,15 @@ export function shadowNow(): boolean {
   if (on !== settings().workers.shadow) useSettings({ ...settings(), workers: { ...settings().workers, shadow: on } });
   return on;
 }
+
+/** A path as the person reads it: `./…` under the current folder, `~/…` under home. */
+export const short = (path: string) => shortPath(path, homedir(), process.cwd());
+
+/** How the person calls Strato from where they are: commands in hints are copied as is. */
+export const cliCommand = () => `bun ${short(SCRIPT)}`;
+
+/** The "Next:" line that ends `setup --check` and `doctor`. */
+export const nextLine = (p: Progress) => `Next: ${nextStep(p, cliCommand())}`;
 
 // ------------------------------------------------------------------ Slack, read only
 
@@ -95,7 +104,7 @@ async function check() {
   const probes = await probeTokens();
   const token = chosen(probes);
   if (!probes.length) {
-    items.push({ name: "slack", status: "missing", detail: `no user token (STRATO_SLACK_TOKEN, or SLACK_MCP_XOXP_TOKEN in ${WORKSPACE}/.claude/settings.local.json or ${WORKSPACE}/.mcp.json): see SETUP.md. No Slack app yet: setup --slack-app creates it in one click`, blocking: true });
+    items.push({ name: "slack", status: "missing", detail: `no user token (STRATO_SLACK_TOKEN, or SLACK_MCP_XOXP_TOKEN in ${short(join(WORKSPACE, ".claude/settings.local.json"))} or ${short(join(WORKSPACE, ".mcp.json"))}): see SETUP.md. No Slack app yet: setup --slack-app creates it in one click`, blocking: true });
   } else if (token) {
     const host = token.url ? (slackWorkspaceFromUrl(token.url) ?? "?") : "?";
     const meOff = s.slack.me && s.slack.me !== token.user;
@@ -130,7 +139,7 @@ async function check() {
   }
   items.push({ name: "shadow", status: "ok", detail: s.workers.shadow ? "on: sessions prepare, nothing is posted (setup --live turns it off)" : "off: the board can post and send a go", blocking: false });
 
-  const r = checkReport(F.config, existsSync(F.config), missingSettings(s), items);
+  const r = checkReport(short(F.config), existsSync(F.config), missingSettings(s), items, cliCommand());
   for (const line of r.lines) out(line);
   process.exit(r.code);
 }

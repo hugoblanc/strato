@@ -245,8 +245,39 @@ export interface CheckItem {
 
 const MARK: Record<CheckStatus, string> = { ok: "ok  ", missing: "MISS", warn: "warn", skip: "--  " };
 
+/**
+ * A path as a person reads it in a terminal: relative to the current folder when inside it, `~` for the home folder,
+ * else as is. Check lines repeat paths: the long absolute form buries what matters.
+ */
+export function shortPath(path: string, home: string, cwd: string): string {
+  const under = (p: string, dir: string) => dir && dir !== "/" && (p === dir || p.startsWith(`${dir}/`));
+  if (under(path, cwd)) return path === cwd ? "." : `./${path.slice(cwd.length + 1)}`;
+  if (under(path, home)) return `~${path.slice(home.length)}`;
+  return path;
+}
+
+/** Where a setup stands, as the "Next:" line needs it. */
+export interface Progress {
+  /** Names of the blocking prerequisites that are missing (bun, claude, slack). */
+  blocked: string[];
+  /** The profile still lacks a field Strato needs. */
+  profileIncomplete: boolean;
+}
+
+/**
+ * The one command to run next, by priority: a missing tool, then the Slack app and token, then the interview, then
+ * the daily start. `cli` is how the reader calls Strato ("bun ./.claude/skills/strato/scripts/strato.ts").
+ */
+export function nextStep(p: Progress, cli: string): string {
+  if (p.blocked.includes("bun")) return "install Bun 1.1 or later: https://bun.sh";
+  if (p.blocked.includes("claude")) return "install or update Claude Code (background sessions needed): https://claude.com/claude-code";
+  if (p.blocked.includes("slack")) return `${cli} setup --slack-app, then store the User OAuth Token (xoxp-…) as SETUP.md "Connect Slack" says`;
+  if (p.profileIncomplete) return 'claude -n strato "/strato setup"';
+  return 'claude -n strato "/strato"';
+}
+
 /** The lines of `setup --check` and its exit code: 1 when a blocking prerequisite is missing, else 0. */
-export function checkReport(configPath: string, configExists: boolean, missing: string[], items: CheckItem[]): { lines: string[]; code: number } {
+export function checkReport(configPath: string, configExists: boolean, missing: string[], items: CheckItem[], cli = "bun strato.ts"): { lines: string[]; code: number } {
   const lines = [
     `profile  ${configExists ? configPath : `${configPath} (not created yet)`}`,
     ...(missing.length ? missing.map((m) => `  to fill in: ${m}`) : ["  complete"]),
@@ -255,5 +286,6 @@ export function checkReport(configPath: string, configExists: boolean, missing: 
   ];
   const blocked = items.filter((i) => i.blocking && i.status === "missing");
   lines.push("", blocked.length ? `not ready: ${blocked.map((i) => i.name).join(", ")} missing` : missing.length ? "prerequisites ready, profile incomplete: run the setup interview (/strato setup)" : "ready");
+  lines.push(`Next: ${nextStep({ blocked: blocked.map((i) => i.name), profileIncomplete: missing.length > 0 }, cli)}`);
   return { lines, code: blocked.length ? 1 : 0 };
 }
