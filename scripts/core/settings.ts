@@ -28,6 +28,8 @@ export interface SlackSettings {
   appId: string;
   /** `KEY=value` file to read `SLACK_APP_TOKEN` from when the environment does not provide it. `~` accepted. */
   appTokenFile: string;
+  /** `KEY=value` file holding `SLACK_USER_TOKEN`, the user token (xoxp-), tried first. Written by `setup --token`. `~` accepted. */
+  userTokenFile: string;
   /** Interval of `watch` (fallback polling), in seconds. */
   pollInterval: number;
 }
@@ -130,6 +132,7 @@ export const DEFAULT_SETTINGS: Settings = {
     teammates: [],
     appId: "",
     appTokenFile: "",
+    userTokenFile: "",
     pollInterval: 60,
   },
   tracker: null,

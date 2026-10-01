@@ -31,7 +31,7 @@ Type the command in full every time (`$STRATO doctor` is `strato doctor`, or `bu
 | Command | Role |
 | --- | --- |
 | `$STRATO doctor` | The loaded profile, what is missing, the Slack token, the socket, `claude agents`, the state, the policy, the locale |
-| `$STRATO setup --check \| --detect \| --write <file.json> [--force] \| --live \| --slack-app` | The guided setup (below, "Setup"): prerequisites, what can be guessed, writing the profile, leaving shadow mode |
+| `$STRATO setup --check \| --detect \| --write <file.json> [--force] \| --live \| --slack-app \| --token \| --app-token` | The guided setup (below, "Setup"): prerequisites, what can be guessed, writing the profile, leaving shadow mode |
 | `$STRATO demo [--port 4394] [--locale en\|fr] \| --clean` | A board of fictional Acme topics in a throwaway folder, no Slack, no session: to show what Strato does before any setup |
 | `$STRATO listen` | Socket Mode listener, to run through `Monitor`: one line per event to handle, received by WebSocket. The normal mode |
 | `$STRATO watch` | The same by polling every `slack.pollInterval` seconds. Fallback when the socket does not open |
@@ -79,7 +79,7 @@ The state folder holds:
 | --- | --- |
 | `owner.name` | The first name of the person served, read in prompts, cards and the board |
 | `workspace` | The work sessions' folder (cwd, CLAUDE.md, `.mcp.json`) |
-| `slack` | `team` (name returned by `auth.test`), `workspace` (subdomain), `me`, `subteams`, `teamAlias` (the team group as written, "@support"), `watchChannels`, `ignoreChannels`, `ignoreAuthors`, `teammates`, `appId`, `appTokenFile`, `pollInterval` |
+| `slack` | `team` (name returned by `auth.test`), `workspace` (subdomain), `me`, `subteams`, `teamAlias` (the team group as written, "@support"), `watchChannels`, `ignoreChannels`, `ignoreAuthors`, `teammates`, `appId`, `appTokenFile`, `userTokenFile` (written by `setup --token`), `pollInterval` |
 | `tracker` | Linear: `workspace` and ticket `prefixes`. `null`: no tickets |
 | `forge` | GitLab: `host`, `repos` (short name -> project), `aliases`, `iidRanges` and `defaultRepo` for a bare "!N", `integrationBranch` and `releaseBranch`. `null`: no Delivery line |
 | `workers` | `skipPermissions` (false by default), `allow`, the permissions added to the sessions (read-only database, tracker), and `shadow` (true in a profile Strato creates, false when the key is absent from an older one): sessions prepare and post nothing, the board's Send and Go are off, the server refuses them; `setup --live` turns it off |
@@ -117,7 +117,7 @@ The goal is the profile of `examples/profile/` (read both files once before star
 
 `$STRATO setup --check`.
 A `MISS … [blocking]` line comes first: Bun or Claude Code missing, or no Slack user token.
-For the token, walk the owner through `SETUP.md` "Connect Slack" (the app manifest is `examples/slack-app-manifest.yaml`) and wait until `setup --check` shows `ok  slack`: without a token, `--detect` finds nothing from Slack.
+For the token, walk the owner through `SETUP.md` "Connect Slack": `setup --slack-app` opens the app creation with the manifest filled in, then the owner runs `bun $S setup --token` **in their own terminal** and pastes the token there, so it never enters this transcript. Never ask for the token in the chat. Wait until `setup --check` shows `ok  slack`: without a token, `--detect` finds nothing from Slack.
 Optional lines (`socket`, `glab`, `ttyd`, `iTerm2`) are mentioned once, in one sentence, never blocking.
 A `scopes` warning is worth fixing now if it lists `search:read`, a `*:history` scope or `chat:write`.
 

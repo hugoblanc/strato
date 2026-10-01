@@ -3,14 +3,14 @@
  * and shadow mode (board, server, prompts). Slack is faked by a preload: no network, nothing posted.
  */
 import { afterEach, describe, expect, test } from "bun:test";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { TEST_SETTINGS } from "./test-setup.ts";
 import { actionCard, type BoardLine } from "./board.ts";
-import { checkReport, mergeProfile, tokenKindProblem, nextStep, shortPath, slackAppLink, parseRemote, profileDiff, profileErrors, SLACK_SCOPES, slackWorkspaceFromUrl, suggestedConfig, ticketPrefixes, topChannels } from "./core/setup.ts";
+import { checkReport, mergeProfile, setEnvLine, tokenKindProblem, nextStep, shortPath, slackAppLink, parseRemote, profileDiff, profileErrors, SLACK_SCOPES, slackWorkspaceFromUrl, suggestedConfig, ticketPrefixes, topChannels } from "./core/setup.ts";
 import { missingSettings, resolveSettings, useSettings } from "./core/settings.ts";
 import { workerPrompt } from "./policy/prompts.ts";
-import { CLI, cleanupRigs, cli, KEY, LINK, lines, postBoard, readSujets, type Rig, rig, run, startServe, sujet, writeSujets } from "./test-rig.ts";
+import { CLI, cleanupRigs, cli, KEY, LINK, SCRIPTS, lines, postBoard, readSujets, type Rig, rig, run, startServe, sujet, writeSujets } from "./test-rig.ts";
 
 afterEach(() => {
   cleanupRigs();
@@ -76,7 +76,7 @@ describe("profile helpers", () => {
 
   test("validation: typos, wrong types and bad enums are named; the legacy flat format passes", () => {
     expect(profileErrors({ owner: { name: "Alice" }, slack: { watchChannel: ["C1"], subteams: "S1" }, ui: { locale: "de" }, workers: { shadow: "yes" } })).toEqual([
-      "slack.watchChannel: unknown field (known: team, workspace, me, subteams, teamAlias, watchChannels, ignoreChannels, ignoreAuthors, teammates, appId, appTokenFile, pollInterval)",
+      "slack.watchChannel: unknown field (known: team, workspace, me, subteams, teamAlias, watchChannels, ignoreChannels, ignoreAuthors, teammates, appId, appTokenFile, userTokenFile, pollInterval)",
       "slack.subteams: expected array, got string",
       'ui.locale: "de" is not one of en, fr',
       "workers.shadow: expected boolean, got string",
@@ -128,14 +128,14 @@ describe("profile helpers", () => {
     expect(ko.code).toBe(1);
     expect(ko.lines).toContain("MISS  slack     no token [blocking]");
     expect(ko.lines).toContain("  to fill in: slack.me (…)");
-    expect(ko.lines.at(-1)).toStartWith("Next: bun strato.ts setup --slack-app");
+    expect(ko.lines.at(-1)).toBe("Next: bun strato.ts setup --token (no Slack app yet: bun strato.ts setup --slack-app first)");
   });
 
   test("Next: one command, by priority (O25)", () => {
     const cli = "bun ./strato.ts";
     expect(nextStep({ blocked: ["slack", "claude"], profileIncomplete: true }, cli)).toContain("install or update Claude Code");
     expect(nextStep({ blocked: ["bun"], profileIncomplete: false }, cli)).toContain("https://bun.sh");
-    expect(nextStep({ blocked: ["slack"], profileIncomplete: true }, cli)).toStartWith("bun ./strato.ts setup --slack-app");
+    expect(nextStep({ blocked: ["slack"], profileIncomplete: true }, cli)).toStartWith("bun ./strato.ts setup --token");
     expect(nextStep({ blocked: [], profileIncomplete: true }, cli)).toBe('claude -n strato "/strato setup"');
     expect(nextStep({ blocked: [], profileIncomplete: false }, cli)).toBe('claude -n strato "/strato"');
   });
@@ -232,7 +232,7 @@ describe("setup --check", () => {
     expect(tokenKindProblem("xoxb-1")).toContain("Bot User OAuth Token");
     expect(tokenKindProblem("xapp-1")).toContain("app-level token for Socket Mode");
     expect(tokenKindProblem("abc")).toContain("OAuth & Permissions > User OAuth Token");
-    expect((await cli(rig(), ["setup", "--check"])).out).toContain("no user token. Copy your Slack app > OAuth & Permissions > User OAuth Token (xoxp-…) into STRATO_SLACK_TOKEN");
+    expect((await cli(rig(), ["setup", "--check"])).out).toContain("no user token. Copy your Slack app > OAuth & Permissions > User OAuth Token (xoxp-…), then setup --token stores it");
     const r = rig();
     const res = await setupWith(r, ["--check"], withSlack(r, { STRATO_SLACK_TOKEN: "xoxb-acme-fake-0000" }));
     expect(res.code).toBe(1);
@@ -323,9 +323,9 @@ describe("doctor and the Slack token (O5)", () => {
   test("no token at all: where to put one", async () => {
     const res = await cli(rig(), ["doctor"]);
     expect(res.code).toBe(78);
-    expect(res.out).toContain("no Slack user token found: copy your Slack app > OAuth & Permissions > User OAuth Token (xoxp-…) into STRATO_SLACK_TOKEN");
+    expect(res.out).toContain("no Slack user token found: copy your Slack app > OAuth & Permissions > User OAuth Token (xoxp-…), then run setup --token; or set STRATO_SLACK_TOKEN");
     expect(res.out).toContain('see SETUP.md, "Connect Slack"');
-    expect(res.out.trim().split("\n").at(-1)).toMatch(/^Next: bun .*strato\.ts setup --slack-app/);
+    expect(res.out.trim().split("\n").at(-1)).toMatch(/^Next: bun .*strato\.ts setup --token/);
   }, 20_000);
 
   test("a token of another workspace: named, masked, with its workspace", async () => {
@@ -334,6 +334,60 @@ describe("doctor and the Slack token (O5)", () => {
     const res = await doctorWith(r, withSlack(r));
     expect(res.code).toBe(78);
     expect(res.out).toContain('1 Slack token(s) found, none usable for workspace "Globex" (slack.team): xoxp-…0000: workspace "Acme"');
+  }, 20_000);
+});
+
+describe("setup --token and --app-token (O6)", () => {
+  /** The command with the token on stdin, as a pipe: what a paste in a terminal gives, without the prompt. */
+  async function withStdin(r: Rig, args: string[], stdin: string, slack: { preload: string; env: Record<string, string> }) {
+    const p = Bun.spawn([process.execPath, "--preload", slack.preload, CLI, "setup", ...args], { cwd: SCRIPTS, env: { ...r.env, ...slack.env, STRATO_SLACK_TOKEN: "" }, stdin: new Blob([stdin]), stdout: "pipe", stderr: "pipe" });
+    const [out, err, code] = await Promise.all([new Response(p.stdout).text(), new Response(p.stderr).text(), p.exited]);
+    return { out, err, code };
+  }
+
+  test("env lines: replaced in place, else appended, the rest kept", () => {
+    expect(setEnvLine("", "A", "1")).toBe("A=1\n");
+    expect(setEnvLine("# c\nB=2", "A", "1")).toBe("# c\nB=2\nA=1\n");
+    expect(setEnvLine("export A=0\nB=2\n", "A", "1")).toBe("A=1\nB=2\n");
+  });
+
+  test("a user token: checked, stored 600 in ~/.config/strato, profile pointed at it, then found by doctor", async () => {
+    const r = rig();
+    writeConfig(r, { owner: { name: "Alice" } });
+    const res = await withStdin(r, ["--token"], "xoxp-acme-fake-0000\n", withSlack(r));
+    expect(res.code).toBe(0);
+    expect(res.out).toContain("token xoxp-…0000 of workspace Acme (you are UALICE) stored in ~/.config/strato/acme.env (600)");
+    expect(res.out + res.err).not.toContain("xoxp-acme-fake-0000");
+    const file = join(r.dir, "home", ".config", "strato", "acme.env");
+    expect(readFileSync(file, "utf8")).toBe("SLACK_USER_TOKEN=xoxp-acme-fake-0000\n");
+    expect(statSync(file).mode & 0o777).toBe(0o600);
+    expect(config(r).slack).toEqual({ userTokenFile: "~/.config/strato/acme.env", team: "Acme", workspace: "acme", me: "UALICE" });
+    const doctor = await run(r, ["--preload", withSlack(r).preload, CLI, "doctor"], { ...withSlack(r).env, STRATO_SLACK_TOKEN: "" });
+    expect(doctor.code).toBe(0);
+    expect(doctor.out).toContain("slack    : Acme · user UALICE");
+  }, 20_000);
+
+  test("refused: a bot token, a token given as an argument, a token of another workspace", async () => {
+    const r = rig();
+    const bot = await withStdin(r, ["--token"], "xoxb-acme-fake-0000\n", withSlack(r));
+    expect(bot.code).toBe(1);
+    expect(bot.err).toContain("Bot User OAuth Token");
+    expect((await cli(r, ["setup", "--token", "xoxp-in-history"])).err).toContain("not as an argument");
+    writeConfig(r, { slack: { team: "Globex" } });
+    const other = await withStdin(r, ["--token"], "xoxp-acme-fake-0000\n", withSlack(r));
+    expect(other.code).toBe(1);
+    expect(other.err).toContain('belongs to workspace "Acme", the profile says "Globex"');
+    expect(existsSync(join(r.dir, "home", ".config", "strato"))).toBe(false);
+  }, 20_000);
+
+  test("an app token goes into the same file, next to the user token", async () => {
+    const r = rig();
+    await withStdin(r, ["--token"], "xoxp-acme-fake-0000\n", withSlack(r));
+    const res = await withStdin(r, ["--app-token"], "xapp-1-acme-fake-1111\n", withSlack(r));
+    expect(res.code).toBe(0);
+    expect(readFileSync(join(r.dir, "home", ".config", "strato", "acme.env"), "utf8")).toBe("SLACK_USER_TOKEN=xoxp-acme-fake-0000\nSLACK_APP_TOKEN=xapp-1-acme-fake-1111\n");
+    expect(config(r).slack.appTokenFile).toBe("~/.config/strato/acme.env");
+    expect((await withStdin(r, ["--app-token"], "xoxp-oops\n", withSlack(r))).err).toContain("starts with xapp-");
   }, 20_000);
 });
 

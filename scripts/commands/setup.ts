@@ -7,18 +7,20 @@
  *   setup --write <file.json> [--force]   merges the file into config.json (creates the state folder), shows the diff
  *   setup --live                     turns shadow mode off (workers.shadow = false)
  *   setup --slack-app [--print]      opens Slack's app creation with Strato's manifest filled in (--print: link only)
+ *   setup --token | --app-token      reads a Slack token on stdin (typed without echo in a terminal), checks it, stores it
+ *                                    in ~/.config/strato/<workspace>.env (600) and points the profile at that file
  *
  * Slack is only read (auth.test, users.info, usergroups.list, search.messages). Every probe tolerates a missing scope,
  * a missing token and a missing network: `--detect` then returns what it could find, and says why the rest is missing.
  */
-import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { basename, join } from "node:path";
-import { CLAUDE_BIN, F, fail, flags, localDay, out, readJson, run, SCRIPT, STATE, WORKSPACE, writeJson } from "../app/env.ts";
+import { basename, dirname, join } from "node:path";
+import { CLAUDE_BIN, expandHome, F, fail, flags, localDay, out, readJson, run, SCRIPT, STATE, WORKSPACE, writeJson } from "../app/env.ts";
 import { appToken, tokenCandidates } from "../app/slack.ts";
 import { createStateDir } from "../app/store.ts";
 import manifestYaml from "../../examples/slack-app-manifest.yaml" with { type: "text" };
-import { type CheckItem, checkReport, tokenKindProblem, USER_TOKEN_WHERE, nextStep, type Progress, shortPath, slackAppLink, SLACK_SCOPES, type Detected, displayNameOf, firstNameOf, linearWorkspaces, localeFromEnv, mergeProfile, parseRemote, profileDiff, profileErrors, type Remote, type SearchMatch, slackWorkspaceFromUrl, suggestedConfig, ticketPrefixes, topChannels } from "../core/setup.ts";
+import { type CheckItem, checkReport, setEnvLine, tokenKindProblem, USER_TOKEN_WHERE, nextStep, type Progress, shortPath, slackAppLink, SLACK_SCOPES, type Detected, displayNameOf, firstNameOf, linearWorkspaces, localeFromEnv, mergeProfile, parseRemote, profileDiff, profileErrors, type Remote, type SearchMatch, slackWorkspaceFromUrl, suggestedConfig, ticketPrefixes, topChannels } from "../core/setup.ts";
 import { missingSettings, NEW_INSTALL_PROFILE, resolveSettings, settings, useSettings } from "../core/settings.ts";
 
 export const SHADOW_REFUSAL = "shadow mode: nothing is posted (bun strato.ts setup --live turns it off)";
@@ -105,7 +107,7 @@ async function check() {
   const probes = await probeTokens();
   const token = chosen(probes);
   if (!probes.length) {
-    items.push({ name: "slack", status: "missing", detail: `no user token. Copy ${USER_TOKEN_WHERE} into STRATO_SLACK_TOKEN, or SLACK_MCP_XOXP_TOKEN in ${short(join(WORKSPACE, ".claude/settings.local.json"))} or ${short(join(WORKSPACE, ".mcp.json"))} (SETUP.md "Connect Slack"). No Slack app yet: setup --slack-app creates it in one click`, blocking: true });
+    items.push({ name: "slack", status: "missing", detail: `no user token. Copy ${USER_TOKEN_WHERE}, then setup --token stores it (or STRATO_SLACK_TOKEN, SLACK_MCP_XOXP_TOKEN in ${short(join(WORKSPACE, ".claude/settings.local.json"))} or ${short(join(WORKSPACE, ".mcp.json"))}: SETUP.md "Connect Slack"). No Slack app yet: setup --slack-app creates it in one click`, blocking: true });
   } else if (token && tokenKindProblem(token.token)) {
     items.push({ name: "slack", status: "missing", detail: `${mask(token.token)}: ${tokenKindProblem(token.token)}`, blocking: true });
   } else if (token) {
@@ -307,9 +309,87 @@ async function slackApp(print: boolean) {
   await run([opener, link], 10_000).catch(() => null);
 }
 
+// ------------------------------------------------------------------ --token, --app-token
+
+/**
+ * A secret read from stdin, never from the command line (it would stay in the shell history). In a terminal the
+ * prompt is shown and the typing is not echoed; from a pipe the first line is read.
+ */
+async function readSecret(prompt: string): Promise<string> {
+  const tty = process.stdin.isTTY;
+  if (tty) {
+    process.stderr.write(prompt);
+    Bun.spawnSync(["stty", "-echo"], { stdin: "inherit" });
+  }
+  try {
+    for await (const line of console) return line.trim();
+    return "";
+  } finally {
+    if (tty) {
+      Bun.spawnSync(["stty", "echo"], { stdin: "inherit" });
+      process.stderr.write("\n");
+    }
+  }
+}
+
+/** Writes `KEY=value` into the token file: folder 700, file 600, the other lines kept. */
+function storeSecret(file: string, key: string, value: string) {
+  const path = expandHome(file);
+  mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
+  const before = existsSync(path) ? readFileSync(path, "utf8") : "";
+  writeFileSync(path, setEnvLine(before, key, value), { mode: 0o600 });
+  chmodSync(path, 0o600);
+}
+
+/** The token file of this installation: the one the profile names, else one per Slack workspace under ~/.config/strato. */
+const tokenFileFor = (workspace: string) => settings().slack.userTokenFile || settings().slack.appTokenFile || `~/.config/strato/${workspace}.env`;
+
+async function storeUserToken(value: string) {
+  if (value !== "-" && value !== "true") fail("give the token on stdin, not as an argument (it would stay in your shell history): setup --token, then paste it", 64);
+  const token = await readSecret("Paste your User OAuth Token (xoxp-…), it will not be shown: ");
+  if (!token) fail("no token read on stdin");
+  const kind = tokenKindProblem(token);
+  if (kind) fail(`${mask(token)}: ${kind}`);
+  let probe: { body: { team: string; url?: string; user_id: string }; scopes: string[] | null };
+  try {
+    probe = await slackRead(token, "auth.test");
+  } catch (e) {
+    return fail(e instanceof SlackAnswer ? `Slack refuses ${mask(token)}: ${e.message}${e.message === "invalid_auth" ? " (copied whole? revoked?)" : ""}` : `Slack unreachable, nothing stored: ${(e as Error).message}`);
+  }
+  const workspace = (probe.body.url ? slackWorkspaceFromUrl(probe.body.url) : null) ?? probe.body.team.toLowerCase().replace(/[^a-z0-9-]+/g, "-");
+  if (settings().slack.team && settings().slack.team !== probe.body.team) fail(`${mask(token)} belongs to workspace "${probe.body.team}", the profile says "${settings().slack.team}": nothing stored`);
+  const file = tokenFileFor(workspace);
+  storeSecret(file, "SLACK_USER_TOKEN", token);
+  out(`token ${mask(token)} of workspace ${probe.body.team} (you are ${probe.body.user_id}) stored in ${short(expandHome(file))} (600)`);
+  const lacking = probe.scopes ? SLACK_SCOPES.filter((x) => !probe.scopes?.includes(x.scope)) : [];
+  if (lacking.length) out(`warn: the token lacks ${lacking.map((x) => `${x.scope} (${x.why})`).join(", ")}: add them in OAuth & Permissions, then reinstall the app`);
+  writeProfile({ slack: { userTokenFile: file, team: probe.body.team, workspace, me: probe.body.user_id } }, false, "--token");
+}
+
+async function storeAppToken(value: string) {
+  if (value !== "-" && value !== "true") fail("give the token on stdin, not as an argument (it would stay in your shell history): setup --app-token, then paste it", 64);
+  const workspace = settings().slack.workspace;
+  if (!workspace) fail("slack.workspace is not set yet: store the user token first (setup --token)");
+  const token = await readSecret("Paste your App-Level Token (xapp-…), it will not be shown: ");
+  if (!token.startsWith("xapp-")) fail(`${token ? mask(token) : "nothing read"}: an App-Level Token starts with xapp- (Basic Information > App-Level Tokens, scope connections:write)`);
+  try {
+    const res = await fetch("https://slack.com/api/apps.connections.open", { method: "POST", headers: { Authorization: `Bearer ${token}` }, signal: AbortSignal.timeout(10_000) });
+    const body = (await res.json()) as { ok?: boolean; error?: string };
+    if (!body.ok) fail(`Slack refuses ${mask(token)}: ${body.error ?? "unknown"}${body.error === "missing_scope" ? " (the token needs connections:write)" : ""}`);
+  } catch (e) {
+    fail(`Slack unreachable, nothing stored: ${(e as Error).message}`);
+  }
+  const file = tokenFileFor(workspace);
+  storeSecret(file, "SLACK_APP_TOKEN", token);
+  out(`app token ${mask(token)} stored in ${short(expandHome(file))} (600): \`listen\` can open the socket`);
+  writeProfile({ slack: { appTokenFile: file } }, false, "--app-token");
+}
+
 export async function setup(args: string[]) {
   const { opts } = flags(args);
   if (opts["slack-app"]) return slackApp(opts.print === "true");
+  if (opts.token) return storeUserToken(opts.token);
+  if (opts["app-token"]) return storeAppToken(opts["app-token"]);
   if (opts.check) return check();
   if (opts.detect) return detect();
   if (opts.live) return writeProfile({ workers: { shadow: false } }, false, "--live");
@@ -322,5 +402,5 @@ export async function setup(args: string[]) {
     }
     return writeProfile(incoming, opts.force === "true", opts.write);
   }
-  fail("usage: setup --check | --detect | --write <profile.json> [--force] | --live | --slack-app [--print]", 64);
+  fail("usage: setup --check | --detect | --write <profile.json> [--force] | --live | --slack-app [--print] | --token | --app-token", 64);
 }

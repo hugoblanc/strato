@@ -230,6 +230,14 @@ export function tokenKindProblem(token: string): string | null {
   return `not a Slack user token: copy ${USER_TOKEN_WHERE}`;
 }
 
+/** `KEY=value` set in an env file's text: the line replaced where it is, else appended; every other line kept. */
+export function setEnvLine(content: string, key: string, value: string): string {
+  const line = `${key}=${value}`;
+  const re = new RegExp(`^\\s*(?:export\\s+)?${key}=.*$`, "m");
+  if (re.test(content)) return content.replace(re, line);
+  return `${content}${content && !content.endsWith("\n") ? "\n" : ""}${line}\n`;
+}
+
 // ------------------------------------------------------------------ check
 
 /** User-token scopes the code calls, and what breaks without them. */
@@ -287,7 +295,7 @@ export interface Progress {
 export function nextStep(p: Progress, cli: string): string {
   if (p.blocked.includes("bun")) return "install Bun 1.1 or later: https://bun.sh";
   if (p.blocked.includes("claude")) return "install or update Claude Code (background sessions needed): https://claude.com/claude-code";
-  if (p.blocked.includes("slack")) return `${cli} setup --slack-app, then store the User OAuth Token (xoxp-…) as SETUP.md "Connect Slack" says`;
+  if (p.blocked.includes("slack")) return `${cli} setup --token (no Slack app yet: ${cli} setup --slack-app first)`;
   if (p.profileIncomplete) return 'claude -n strato "/strato setup"';
   return 'claude -n strato "/strato"';
 }

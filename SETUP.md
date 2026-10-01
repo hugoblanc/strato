@@ -90,8 +90,18 @@ The app's pages show several tokens and secrets. Strato needs one, and a second 
 The manifest asks for the scopes the code actually calls: `search:read`; `channels:history`, `groups:history`, `im:history`, `mpim:history`; `channels:read`, `groups:read`, `im:read`, `mpim:read`; `users:read`, `usergroups:read`; `chat:write` and `reactions:write` for the board's Send button and check mark.
 `setup --check` lists any scope your token lacks, and what stops working without it.
 
-Put the user token where Strato looks for it, first match wins:
+Store it with one command, in your own terminal (not in a Claude session, so the token never enters a transcript):
 
+```bash
+bun .claude/skills/strato/scripts/strato.ts setup --token
+```
+
+Paste the token when asked; it is not shown.
+The command refuses a bot (`xoxb-`) or app-level (`xapp-`) token, checks the token with Slack, lists any missing scope, writes it to `~/.config/strato/<workspace>.env` (readable by you only) and fills `slack.userTokenFile`, `slack.team`, `slack.workspace` and `slack.me` in your profile.
+
+Strato looks for the user token in this order, first match wins:
+
+- the file named by `slack.userTokenFile` (`SLACK_USER_TOKEN=…`), what `setup --token` writes;
 - `STRATO_SLACK_TOKEN` in the environment;
 - `SLACK_MCP_XOXP_TOKEN` under `env` in `<project>/.claude/settings.local.json` (the same token can serve a Slack MCP server for the sessions);
 - `SLACK_MCP_XOXP_TOKEN` in the `slack` server of `<project>/.mcp.json`;
@@ -117,6 +127,7 @@ The manifest already enables Socket Mode and subscribes to `message.channels`, `
    ```
 
 3. Point `slack.appTokenFile` at that file (the interview asks), or export `SLACK_APP_TOKEN`.
+   Shortcut for steps 2 and 3: `strato.ts setup --app-token`, then paste the token; it goes into the same file as the user token.
 4. Note the app ID (`A…`, on **Basic Information**) for `slack.appId`: the board links to the app's Event Subscriptions page when Slack stops delivering events.
 
 The master then runs `strato.ts listen`; it falls back to `watch` if the socket does not open.

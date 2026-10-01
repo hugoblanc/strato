@@ -43,14 +43,27 @@ export class SlackError extends Error {
   }
 }
 
+/** The value of `KEY=value` (or `export KEY=value`, quotes allowed) in a small env file, or null. */
+export function envFileValue(file: string, key: string): string | null {
+  try {
+    const m = readFileSync(expandHome(file), "utf8").match(new RegExp(`^\\s*(?:export\\s+)?${key}=(.+)$`, "m"));
+    return m ? m[1].trim().replace(/^["']|["']$/g, "") : null;
+  } catch {
+    return null;
+  }
+}
+
 /** Every user token found on the machine for this workspace folder, in the order they are tried. */
 export function tokenCandidates(): string[] {
-  const settings = readJson<{ env?: Record<string, string> }>(join(WORKSPACE, ".claude/settings.local.json"), {});
+  const file = settings().slack.userTokenFile;
+  const fromFile = file ? envFileValue(file, "SLACK_USER_TOKEN") : null;
+  const local = readJson<{ env?: Record<string, string> }>(join(WORKSPACE, ".claude/settings.local.json"), {});
   const mcp = readJson<{ mcpServers?: { slack?: { env?: Record<string, string> } } }>(join(WORKSPACE, ".mcp.json"), {});
   const all = [
+    fromFile,
     process.env.STRATO_SLACK_TOKEN,
     process.env.AIGUILLEUR_SLACK_TOKEN,
-    settings.env?.SLACK_MCP_XOXP_TOKEN,
+    local.env?.SLACK_MCP_XOXP_TOKEN,
     mcp.mcpServers?.slack?.env?.SLACK_MCP_XOXP_TOKEN,
     process.env.SLACK_MCP_XOXP_TOKEN,
   ];
@@ -88,7 +101,7 @@ const maskToken = (t: string) => `${t.slice(0, 5)}…${t.slice(-4)}`;
 export const NO_TOKEN = (cfg: SlackSettings) => {
   const found = tokenCandidates();
   if (!found.length) {
-    return `no Slack user token found: copy ${USER_TOKEN_WHERE} into STRATO_SLACK_TOKEN, or SLACK_MCP_XOXP_TOKEN in ${WORKSPACE}/.claude/settings.local.json ("env") or ${WORKSPACE}/.mcp.json (the "slack" server); see SETUP.md, "Connect Slack"`;
+    return `no Slack user token found: copy ${USER_TOKEN_WHERE}, then run setup --token; or set STRATO_SLACK_TOKEN, or SLACK_MCP_XOXP_TOKEN in ${WORKSPACE}/.claude/settings.local.json ("env") or ${WORKSPACE}/.mcp.json (the "slack" server); see SETUP.md, "Connect Slack"`;
   }
   const seen = found.map((t) => {
     const p = probed.find((x) => x.token === t);
@@ -217,15 +230,8 @@ export async function triage(m: SlackMatch, cfg: Config, tracked: Set<string>, p
 /** The Socket Mode app token (xapp-): the environment first, then the profile's `slack.appTokenFile`. */
 export function appToken(): string | null {
   if (process.env.SLACK_APP_TOKEN) return process.env.SLACK_APP_TOKEN;
-  try {
-    const file = settings().slack.appTokenFile;
-    if (!file) return null;
-    const raw = readFileSync(expandHome(file), "utf8");
-    const m = raw.match(/^\s*(?:export\s+)?SLACK_APP_TOKEN=(.+)$/m);
-    return m ? m[1].trim().replace(/^["']|["']$/g, "") : null;
-  } catch {
-    return null;
-  }
+  const file = settings().slack.appTokenFile;
+  return file ? envFileValue(file, "SLACK_APP_TOKEN") : null;
 }
 
 /** Full channel objects, cached: `classify` needs is_im/is_mpim, the socket only gives the id. */
