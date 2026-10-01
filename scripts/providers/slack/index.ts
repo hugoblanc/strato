@@ -5,7 +5,7 @@
  * names of users.json; a named account reads its tokens from its own secret file and goes through the fetch its
  * account context limits to Slack's API host. Writes (`act`, `undo`) join it in the act stage.
  */
-import { appToken, connectSlack, defaultSlack, NO_TOKEN, REPLIES_MAX, SlackClient, connexionSocket, SlackError } from "../../app/slack.ts";
+import { appToken, connectSlack, connexionSocket, defaultSlack, NO_TOKEN, REPLIES_MAX, SlackClient, SlackError } from "../../app/slack.ts";
 import { bestText, channelLabel, conversationKind, nextSyncCursor, permalinkFor, slackItem, type SlackMatch } from "../../chat/slack-model.ts";
 import { linkOfNative } from "../../core/links.ts";
 import { settings } from "../../core/settings.ts";

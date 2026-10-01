@@ -8,17 +8,17 @@
  * folder) and its loop in commands/watch.ts, with the lines older versions printed; every other account keeps its
  * state in its own folder, `<state>/providers/<provider>-<account>/`: `seen.json` and `ingest.json` (its cursor).
  */
+import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { type Config, slackItem, type SlackMatch } from "../chat/slack-model.ts";
 import { eventLine } from "../core/cards.ts";
-import { conversationRef, formatKey } from "../core/keys.ts";
+import { conversationRef, formatKey, threadOfKey } from "../core/keys.ts";
 import { checkedLink, providerLabel } from "../core/links.ts";
 import { applyAssignments, draftMatches, findSujet, type Sujet, sujetKeys, trackedKeys, type Trigger } from "../core/sujet.ts";
 import { closeTask, openTasks, taskDraftText } from "../core/tasks.ts";
 import { t } from "../core/i18n.ts";
 import { oneLine, truncate, untrusted } from "../core/text.ts";
 import { classifyItem, editAlreadyRaised, effectiveIdentity, isSilent, itemEventType, type Kind, triageRules, type TriageRules, withoutAuthors } from "../core/triage.ts";
-import { threadOfKey } from "../core/keys.ts";
 import { effectiveCapabilities, providerError } from "../providers/api.ts";
 import { type AccountEntry, accountContext, accountDir, accountOf, accounts, keyFor, nativeOfKey } from "../providers/registry.ts";
 import type { Account, AccountContext, Identity, IngestCursor, Item, PollResult, Provider } from "../providers/sdk.ts";
@@ -26,7 +26,6 @@ import { slackProvider } from "../providers/slack/index.ts";
 import { F, nowIso, out, readJson, writeJson } from "./env.ts";
 import { REPLIES_MAX } from "./slack.ts";
 import { keepMessage, loadSujets, logEvent, updateSujet } from "./store.ts";
-import { mkdirSync } from "node:fs";
 
 // ------------------------------------------------------------------ seen
 
