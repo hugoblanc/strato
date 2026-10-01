@@ -43,6 +43,11 @@ export interface ProviderDescriptor {
   mcp?: { server: string; readTools: string[]; writeTools: string[] };
   /** Undo window of an action, in ms; absent: no undo. */
   undoMs?: number;
+  /**
+   * The marker that tells everyone a thread is settled, if the tool has one: the board's check mark puts it on the
+   * thread's first item (Slack: the ✅ reaction).
+   */
+  done?: { kind: "react"; emoji: string };
 }
 
 export interface AudienceSpec {
@@ -390,15 +395,35 @@ export interface Provider {
   context?(ctx: AccountContext, thread: string, opts: { since?: number; max: number }): Promise<ContextResult>;
   act?(ctx: AccountContext, input: ActInput): Promise<ActResult>;
   undo?(ctx: AccountContext, token: string): Promise<ActResult>;
-  /** Pure. A legacy free-text destination (`draftTo`) to a target on this account, or why it cannot be resolved. */
-  parseTarget?(text: string, topic: { thread: string; conversation: { id: string; label: string } }, account: Account): Target | { error: Text };
-  /** Pure. The tool's markup to plain text and to safe HTML for the board. Default: the text as is, HTML-escaped. */
-  render?: { plain(text: string): string; html(text: string): string };
+  /**
+   * Pure. A destination to a target on this account: a legacy free-text `draftTo`, or a native id as is (the native
+   * part of a task's typed `to` key). When it cannot be resolved, why, and the words the board shows for it.
+   */
+  parseTarget?(text: string, topic: { thread: string; conversation: { id: string; label: string } }, account: Account): Target | { error: Text; label?: string };
+  /**
+   * Pure. The tool's markup to plain text and to safe HTML for the board. Default: the text as is, HTML-escaped.
+   * `names` are the display names the board knows, by the tool's ids, for the mentions in the text.
+   */
+  render?: { plain(text: string): string; html(text: string, names?: RenderNames): string };
+  /** Pure. What a native thread id says by itself: its conversation's id and, when the id carries it, its time (Unix ms). */
+  threadInfo?(native: string): { conversation: string; at?: number } | null;
   /** Detection and checks for setup and doctor. */
   setup?: SetupModule;
   /** Built-in providers only: a pure link function where a pattern cannot say it. */
   deepLink?(url: string, account: Account, identity: Identity): string | null;
 }
+
+/** Display names the board knows, by the tool's own ids: people, and conversations (`#support`). */
+export interface RenderNames {
+  people?: Record<string, string>;
+  conversations?: Record<string, string>;
+}
+
+/**
+ * The pure parts of a provider, installed by the core at startup with the descriptors: the board, the panel and the
+ * gate resolve targets, render text and build deep links with them, without loading any network code.
+ */
+export type ProviderPure = Pick<Provider, "descriptor" | "parseTarget" | "render" | "threadInfo" | "deepLink">;
 
 // ------------------------------------------------------------------ what Strato gives a provider
 

@@ -8,7 +8,7 @@ import { join } from "node:path";
 import { effectiveCapabilities, PROVIDER_API, providerError } from "./providers/api.ts";
 import { BUILTIN_DESCRIPTORS } from "./providers/builtin.ts";
 import type { ProviderDescriptor } from "./providers/sdk.ts";
-import { SLACK_DESCRIPTOR, slackDeepLink, slackParseTarget, slackRender } from "./providers/slack/model.ts";
+import { SLACK_DESCRIPTOR, slackDeepLink, slackParseTarget, slackRender, slackThreadInfo } from "./providers/slack/model.ts";
 
 describe("the shared rules of providers", () => {
   test("an account's capabilities are the descriptor's minus its auth method's limits, push requiring poll", () => {
@@ -44,16 +44,30 @@ describe("the shared rules of providers", () => {
 describe("the Slack provider's pure adapters", () => {
   const topic = { thread: "C0ACME0001:1759219200.000100", conversation: { id: "C0ACME0001", label: "#acme-support" } };
 
-  test("a free-text destination becomes a target with today's rules", () => {
+  test("a free-text destination becomes a target with today's rules, labelled with the board's words", () => {
     expect(slackParseTarget("#acme-support, https://acme.slack.com/archives/C0ACME0001/p1759219260000200?thread_ts=1759219200.000100", topic)).toEqual({ scope: "thread", native: "C0ACME0001:1759219200.000100", label: "#acme-support" });
-    expect(slackParseTarget("#announcements (C0ACMEANN01), new message", topic)).toEqual({ scope: "conversation", native: "C0ACMEANN01", label: "C0ACMEANN01" });
+    expect(slackParseTarget("#announcements (C0ACMEANN01), new message", topic)).toEqual({ scope: "conversation", native: "C0ACMEANN01", label: "#announcements, new message" });
     expect(slackParseTarget("", topic)).toEqual({ scope: "thread", native: "C0ACME0001:1759219200.000100", label: "#acme-support" });
     expect(slackParseTarget("", { ...topic, thread: "linear:ENG-12" })).toHaveProperty("error");
+    // a destination that cannot be posted to keeps its words, for the board
+    expect(slackParseTarget("#acme-sales", topic)).toMatchObject({ label: "#acme-sales" });
+    expect(slackParseTarget("#acme-sales", topic)).toHaveProperty("error");
   });
 
-  test("mrkdwn to plain text and to safe HTML", () => {
+  test("mrkdwn to plain text, and drafts to safe HTML as the board showed them", () => {
     expect(slackRender.plain("hi <@U0BOB0001>\n<https://x.example|the doc>")).toBe("hi @U0BOB0001 | the doc");
-    expect(slackRender.html("<script>&lt;b&gt;")).toBe("&lt;script&gt;&lt;b&gt;");
+    // a draft is shown as it will go out: an entity typed in it stays visible as typed
+    expect(slackRender.html("<script>&lt;b&gt;")).toBe("&lt;script&gt;&amp;lt;b&amp;gt;");
+    const html = slackRender.html("<@U0BOB0001> in <#C0ACMEOPS01> <!here>", { people: { U0BOB0001: "Bob" }, conversations: { C0ACMEOPS01: "#acme-ops" } });
+    expect(html).toContain("@Bob");
+    expect(html).toContain("#acme-ops");
+    expect(html).toContain("@here");
+  });
+
+  test("a thread id says its channel and its time", () => {
+    expect(slackThreadInfo("C0ACME0001:1759219200.000100")).toEqual({ conversation: "C0ACME0001", at: 1759219200000 });
+    expect(slackThreadInfo("CX:x")).toEqual({ conversation: "CX" });
+    expect(slackThreadInfo("C0ACME0001")).toBeNull();
   });
 
   test("the slack:// link needs the team id", () => {

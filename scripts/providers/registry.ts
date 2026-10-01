@@ -14,7 +14,7 @@ import { locale } from "../core/i18n.ts";
 import { type ResolvedAccount, resolveAccounts, type Settings, settings } from "../core/settings.ts";
 import { setEnvLine } from "../core/setup.ts";
 import { apiSupported } from "./api.ts";
-import { BUILTIN_DESCRIPTORS } from "./builtin.ts";
+import { BUILTIN_PURE } from "./builtin.ts";
 import { linearProvider } from "./linear/index.ts";
 import type { Account, AccountContext, Identity, Provider, ProviderDescriptor } from "./sdk.ts";
 import { slackProvider } from "./slack/index.ts";
@@ -32,7 +32,7 @@ const added: Record<string, Provider> = {};
 export function addProvider(p: Provider): void {
   if (BUILTIN[p.descriptor.id]) throw new Error(`${p.descriptor.id} is a built-in provider`);
   added[p.descriptor.id] = p;
-  useProviders([...BUILTIN_DESCRIPTORS, ...Object.values(added).map((x) => x.descriptor)]);
+  useProviders([...BUILTIN_PURE, ...Object.values(added)]);
 }
 
 const providerById = (id: string): Provider | null => BUILTIN[id] ?? added[id] ?? null;

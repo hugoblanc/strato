@@ -16,12 +16,15 @@ import { connectSlack, hasSlackToken, NO_TOKEN, slack, SlackError, slackPost, th
 import { ensureState, loadSujets, logEvent, reportOf, saveUpload, updateSujet, withLock } from "../app/store.ts";
 import { type BoardEvent, boardPage, type BoardSession, boardView, buildBoard, draftConflict, type LiveState, type VersionState, versionControl } from "../board.ts";
 import { applyUpdate, checkUpdates, localVersion } from "../app/update.ts";
-import { DRAFT_MAX, draftDestination, permalinkFor, slackAppLink, type SocketHealth } from "../chat/slack-model.ts";
+import { DRAFT_MAX, draftDestination, permalinkFor, type SocketHealth } from "../chat/slack-model.ts";
 import { type AgentRow, claudeRefs, parsePs } from "../claude/model.ts";
 import { type ActivityStep, type AgentNode, agentTree } from "../claude/transcript.ts";
 import { type ThreadDump } from "../core/cards.ts";
 import { permalinkOfKey, threadOfKey } from "../core/keys.ts";
-import { hostOwner } from "../core/links.ts";
+import { hostOwner, pureOf } from "../core/links.ts";
+import { deepLinkOf } from "../core/targets.ts";
+import { accountContext, accountOf } from "../providers/registry.ts";
+import type { Identity } from "../providers/sdk.ts";
 import { type MasterRequest, pendingRevue, REVUE_WINDOWS } from "../core/master.ts";
 import { settings } from "../core/settings.ts";
 import { applyAssignments, checkable, findSujet, postOnlyAction, searchSujets, type Snooze, type Sujet, sujetKeys } from "../core/sujet.ts";
@@ -441,15 +444,32 @@ export async function serve(args: string[]) {
     out(`[strato] pending notes not reloaded: ${(e as Error).message}`);
   }
   let slackBase = "";
-  /** The Slack team id (T…), read once through auth.test: needed for slack:// links. "" if Slack does not answer. */
-  let teamId = "";
-  async function slackTeamId(): Promise<string> {
-    if (teamId) return teamId;
+  /**
+   * Who the person is on each account, read once through the provider's `connect`: a deep link needs it (Slack's
+   * slack:// links need the team id). Null when the tool does not answer: the link then opens over https.
+   */
+  const identities = new Map<string, Identity>();
+  async function identityOf(owner: { provider: string; account: string }): Promise<Identity | null> {
+    const id = `${owner.provider}@${owner.account}`;
+    const hit = identities.get(id);
+    if (hit) return hit;
+    const entry = accountOf(owner.provider, owner.account);
+    if (!entry?.provider) return null;
     try {
-      if (!hasSlackToken()) await connectSlack(cfg);
-      if (hasSlackToken()) teamId = String((await slack("auth.test")).team_id ?? "");
-    } catch {}
-    return teamId;
+      const identity = await entry.provider.connect(accountContext(entry));
+      identities.set(id, identity);
+      return identity;
+    } catch {
+      return null;
+    }
+  }
+  /** The app link of an https link, through the provider that owns its host; Slack's only when `ui.slackApp` asks for it. */
+  async function appLinkOf(url: URL): Promise<string | null> {
+    const owner = hostOwner(url.hostname);
+    if (!owner || !pureOf(owner.provider)?.deepLink) return null;
+    if (owner.provider === "slack" && !settings().ui.slackApp) return null;
+    const identity = await identityOf(owner);
+    return identity ? deepLinkOf(url.href, owner, identity) : null;
   }
   async function postDraft(s: Sujet, taskId: string, edited: string | null): Promise<{ ok: true; at: string; permalink: string; undoMs: number } | { ok: false; error: string; status: number }> {
     if (s.status === "closed") return { ok: false, error: t("board.api.topicClosed", { letter: s.letter }), status: 409 };
@@ -1078,8 +1098,9 @@ export async function serve(args: string[]) {
         } catch {}
         if (!target || target.protocol !== "https:" || !openable(target.hostname))
           return Response.json({ error: t("board.api.linkRefused") }, { status: 400 });
-        // a Slack link opens in the app, on the message, without a redirecting tab; falls back to https without a known team
-        const app = settings().ui.slackApp && hostOwner(target.hostname)?.provider === "slack" ? slackAppLink(target.href, await slackTeamId()) : null;
+        // a link opens in its tool's app when the provider builds one (Slack: on the message, without a redirecting tab);
+        // https otherwise, and when the tool does not say who the person is
+        const app = await appLinkOf(target);
         Bun.spawn(["open", app ?? target.href], { stdin: "ignore", stdout: "ignore", stderr: "ignore" });
         return Response.json({ ok: true });
       }

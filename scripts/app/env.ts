@@ -18,7 +18,7 @@ import { envValue, findStateRoot, resolveStateDir } from "../core/paths.ts";
 import { resolveSettings, useSettings } from "../core/settings.ts";
 import { useProviders } from "../core/links.ts";
 import { parseDuration } from "../core/text.ts";
-import { BUILTIN_DESCRIPTORS } from "../providers/builtin.ts";
+import { BUILTIN_PURE } from "../providers/builtin.ts";
 import { usePolicyDirs } from "../policy/prompts.ts";
 import { COMPILED, entryOf } from "./self.ts";
 import { statSync } from "node:fs";
@@ -147,7 +147,7 @@ const loaded = resolveSettings(readJson<unknown>(F.config, {}));
 /** The working directory of topic sessions (cwd, CLAUDE.md, .mcp.json). */
 export const WORKSPACE = envValue(process.env, "WORKSPACE") ? derivedWorkspace() : expandHome(loaded.workspace) || derivedWorkspace();
 useSettings({ ...loaded, workspace: WORKSPACE });
-useProviders([...BUILTIN_DESCRIPTORS]);
+useProviders([...BUILTIN_PURE]);
 usePolicyDirs([F.policy]);
 
 export const out = (line: string) => process.stdout.write(`${line}\n`);

@@ -6,18 +6,36 @@
  * The descriptors are installed at startup with `useProviders`, the way `useSettings` installs the profile (app/env.ts,
  * and test-setup.ts for the tests), so this module stays pure. Native ids only: core/keys.ts turns them into keys.
  */
-import type { LinkSpec, ProviderDescriptor, Text } from "../providers/sdk.ts";
+import type { Account, LinkSpec, ProviderDescriptor, ProviderPure, Text } from "../providers/sdk.ts";
 import { locale, type MessageKey, t } from "./i18n.ts";
 import { resolveAccounts, type Settings, settings } from "./settings.ts";
 
 let installed: ProviderDescriptor[] = [];
 let generation = 0;
+/** The pure parts of the installed providers, by id: targets, rendering and deep links (providers/sdk.ts `ProviderPure`). */
+const pures = new Map<string, ProviderPure>();
 
-/** Installs the descriptors of the providers Strato knows: the built-in ones, and later the trusted external ones. */
-export function useProviders(list: ProviderDescriptor[]): void {
-  installed = [...list];
+/**
+ * Installs the providers Strato knows, the built-in ones and later the trusted external ones: their descriptors, and
+ * their pure parts when given. A bare descriptor keeps the pure parts installed before with the same descriptor, so a
+ * caller that only lists descriptors (a test adding a fake tool) does not take Slack's rendering away.
+ */
+export function useProviders(list: (ProviderDescriptor | ProviderPure)[]): void {
+  const parts = list.map((x): ProviderPure => ("descriptor" in x ? pureParts(x) : pures.get(x.id)?.descriptor === x ? (pures.get(x.id) as ProviderPure) : { descriptor: x }));
+  installed = parts.map((p) => p.descriptor);
+  pures.clear();
+  for (const p of parts) pures.set(p.descriptor.id, p);
   generation++;
 }
+
+/** Only the pure members of what is given: a whole provider passed here never makes its other methods reachable. */
+function pureParts(p: ProviderPure): ProviderPure {
+  const { descriptor, parseTarget, render, threadInfo, deepLink } = p;
+  return { descriptor, ...(parseTarget ? { parseTarget } : {}), ...(render ? { render } : {}), ...(threadInfo ? { threadInfo } : {}), ...(deepLink ? { deepLink } : {}) };
+}
+
+/** The pure parts of an installed provider, or null. */
+export const pureOf = (id: string): ProviderPure | null => pures.get(id) ?? null;
 
 /** The installed descriptors, in installation order. */
 export const providerDescriptors = (): ProviderDescriptor[] => installed;
@@ -41,6 +59,8 @@ export function providerLabel(id: string): string {
 interface LinkAccount {
   provider: string;
   account: string;
+  /** The account as resolved from the profile: what a provider's pure functions receive. */
+  resolved: Account;
   settings: Record<string, unknown>;
   spec: LinkSpec;
   hosts: string[];
@@ -63,6 +83,7 @@ function linkAccounts(): LinkAccount[] {
     accounts.push({
       provider: account.provider,
       account: account.id,
+      resolved: account,
       settings: account.settings,
       spec: d.links,
       hosts: d.hosts,
@@ -75,6 +96,9 @@ function linkAccounts(): LinkAccount[] {
 
 /** The profile has this account, and its provider is installed. */
 export const hasAccount = (provider: string, account: string): boolean => linkAccounts().some((a) => a.provider === provider && a.account === account);
+
+/** A configured account whose provider is installed, as the profile resolves it, or null. */
+export const linkAccount = (provider: string, account: string): Account | null => linkAccounts().find((a) => a.provider === provider && a.account === account)?.resolved ?? null;
 
 // ------------------------------------------------------------------ the evaluator
 

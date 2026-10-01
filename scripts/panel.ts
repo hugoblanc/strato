@@ -5,7 +5,7 @@
  * External links therefore go through POST /api/open, which opens them in the browser.
  * Every visible word goes through core/i18n.ts (keys `panel.*`).
  */
-import { locale, openTasks, parseSteps, permalinkOfKey, providerKeyLabel, repoLabel, settings, sujetKeys, sujetsByKey, t, taskDraftText, threadOfKey, ticketIdOfKey, ticketUrl, type SessionContext, type Sujet, type ThreadDump } from "./lib.ts";
+import { locale, openTasks, parseSteps, permalinkOfKey, providerKeyLabel, repoLabel, settings, sujetKeys, sujetsByKey, t, taskDraftText, threadInfoOfKey, ticketIdOfKey, isResolved, resolveTarget, targetLink, type Task, ticketUrl, type SessionContext, type Sujet, type ThreadDump } from "./lib.ts";
 
 export function escapeHtml(s: string): string {
   return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;");
@@ -167,10 +167,10 @@ function statusText(s: Sujet): string {
 function keyLabel(key: string, s: Sujet, ctx: PanelContext): string {
   const ticket = ticketIdOfKey(key);
   if (ticket) return ticket;
-  const thread = threadOfKey(key);
+  const thread = threadInfoOfKey(key);
   if (!thread) return providerKeyLabel(key);
-  const when = Number(thread.ts) ? ` · ${ctx.timeOf(new Date(Number(thread.ts) * 1000).toISOString())}` : "";
-  return `Slack ${key === s.key ? s.channel : thread.channel}${when}`;
+  const when = thread.at ? ` · ${ctx.timeOf(new Date(thread.at).toISOString())}` : "";
+  return `${thread.tool} ${key === s.key ? s.channel : thread.conversation}${when}`;
 }
 
 function topBar(): string {
@@ -179,10 +179,19 @@ function topBar(): string {
 
 /** Label of a thread cited by a session: the channel's name when known, else its id, then the time of the root message. */
 function threadLabel(key: string, channel: string | undefined, ctx: PanelContext): string {
-  const thread = threadOfKey(key);
+  const thread = threadInfoOfKey(key);
   if (!thread) return providerKeyLabel(key);
-  const when = Number(thread.ts) ? ` · ${ctx.timeOf(new Date(Number(thread.ts) * 1000).toISOString())}` : "";
-  return `Slack ${channel ?? thread.channel}${when}`;
+  const when = thread.at ? ` · ${ctx.timeOf(new Date(thread.at).toISOString())}` : "";
+  return `${thread.tool} ${channel ?? thread.conversation}${when}`;
+}
+
+/** Where a draft goes, for the card: the session's words, or the typed target as its tool names it, with its link. */
+function destinationText(s: Sujet, x: Task): string | undefined {
+  if (x.draftTo?.trim() || !x.to) return x.draftTo;
+  const r = resolveTarget(s, x);
+  if (!isResolved(r)) return x.to;
+  const url = targetLink(r);
+  return url ? `${r.target.label}, ${url}` : r.target.label;
 }
 
 function messageItem(m: ThreadDump["messages"][number]): string {
@@ -235,7 +244,7 @@ ${field(t("board.card.proposal"), s.proposal || s.next)}
 ${openTasks(s).map((x) => field(t("panel.task", { id: escapeHtml(x.id) }), [x.ask, x.proposal, x.action ? t("panel.task.onGo", { action: x.action }) : ""].filter(Boolean).join("\n"))).join("")}
 ${s.steps ? field(t("board.card.plan"), parseSteps(s.steps).map((x) => `${x.state === "done" ? "✓" : x.state === "now" ? "◉" : "○"} ${x.text}`).join("\n")) : ""}
 ${s.blocker ? field(t("board.card.blocker"), s.blocker) : ""}
-${openTasks(s).filter((x) => taskDraftText(x)).map((x) => field(t("panel.draft", { id: escapeHtml(x.id) }), taskDraftText(x)) + field(t("panel.draftTo"), x.draftTo)).join("")}
+${openTasks(s).filter((x) => taskDraftText(x)).map((x) => field(t("panel.draft", { id: escapeHtml(x.id) }), taskDraftText(x)) + field(t("panel.draftTo"), destinationText(s, x))).join("")}
 ${field(t("board.card.unverified"), s.unverified)}
 ${field(t("board.card.summary"), s.summary)}
 </dl></section>

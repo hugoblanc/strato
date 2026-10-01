@@ -7,9 +7,10 @@
  * Every visible word goes through core/i18n.ts: t() on the server, tr() in the page's script.
  */
 import { faviconHref, stratoMark } from "./core/brand.ts";
-import { isItemEvent, postOnlyAction, truncate, t, clientMessages, locale, type MessageKey, type ActivityStep, type AgentNode, agentCounts, type Due, type MasterRequest, type MrStage, MR_STAGE_ORDER, parseDue, REVUE_STALE_MS, REVUE_WINDOWS, DRAFT_MAX, draftDestination, draftText, isSnoozed, type Snooze, parseSteps, permalinkOfKey, linkOfNative, providerKeyLabel, threadOfKey, repoLabel, type SessionContext, settings, shellQuote, ticketIdOfKey, ticketUrl, type SocketHealth, socketDeaf, type Sujet, sujetKeys, takenBy, freshness, gateSince, checkable, openTasks, tasksOf, taskDraftText, taskReady, sendsUnseenMessage, type Task, type TaskKind } from "./lib.ts";
+import { isItemEvent, postOnlyAction, truncate, t, clientMessages, locale, type MessageKey, type ActivityStep, type AgentNode, agentCounts, type Due, type MasterRequest, type MrStage, MR_STAGE_ORDER, parseDue, REVUE_STALE_MS, REVUE_WINDOWS, draftText, isSnoozed, type Snooze, parseSteps, permalinkOfKey, providerKeyLabel, providerLabel, repoLabel, isResolved, maxTextOf, providerOfKey, renderHtml, resolveTarget, type ResolvedTarget, targetLink, threadInfoOfKey, type UnresolvedTarget, type SessionContext, settings, shellQuote, ticketIdOfKey, ticketUrl, type SocketHealth, socketDeaf, type Sujet, sujetKeys, takenBy, freshness, gateSince, checkable, openTasks, tasksOf, taskDraftText, taskReady, sendsUnseenMessage, type Task, type TaskKind } from "./lib.ts";
 import { type StaleSignal, staleSignals } from "./core/refresh.ts";
 import { escapeHtml, textToHtml } from "./panel.ts";
+import { slackEventsPage } from "./providers/slack/model.ts";
 import type { LocalVersion, UpdateCheck, UpdateResult } from "./app/update.ts";
 
 /** A line of events.ndjson: a routed Slack message, or a session transition. */
@@ -446,35 +447,31 @@ const nowOf = (ctx: BoardContext) => ctx.now ?? Date.now();
 /** An instant shown relative, in tabular figures, with the absolute date on hover. */
 const when = (iso: string, ctx: BoardContext) => `<time datetime="${escapeHtml(iso)}" title="${escapeHtml(ctx.timeOf(iso))}" class="tabular-nums">${escapeHtml(ago(iso, nowOf(ctx)))}</time>`;
 
-/** People's names by Slack id (users.json), to show the mentions of a draft. */
+/** People's names by their tool's id (users.json for Slack), to show the mentions of a draft. */
 const USER_NAMES = new Map<string, string>();
 
-/**
- * A draft as Slack will show it: "<@U012AB3CD>" becomes "@Ann", "<https://…|Staff access>" becomes a link
- * "Staff access". Display only: the posted and copied text keeps the Slack format.
- */
-export function slackToHtml(text: string): string {
-  return escapeHtml(text)
-    .replace(/&lt;@([UW][A-Z0-9]+)(?:\|([^&]+))?&gt;/g, (_m, id: string, label?: string) => `<span class="font-medium text-link">@${escapeHtml(USER_NAMES.get(id) ?? label ?? id)}</span>`)
-    .replace(/&lt;#([CG][A-Z0-9]+)(?:\|([^&]*))?&gt;/g, (_m, id: string, label?: string) => `<span class="font-medium text-link">#${escapeHtml(label || CHANNEL_NAMES.get(id)?.replace(/^#/, "") || id)}</span>`)
-    .replace(/&lt;!subteam\^[A-Z0-9]+(?:\|([^&]+))?&gt;/g, (_m, label?: string) => `<span class="font-medium text-link">${escapeHtml(label ?? t("board.draft.group"))}</span>`)
-    .replace(/&lt;!(here|channel|everyone)&gt;/g, "<span class=\"font-medium text-link\">@$1</span>")
-    .replace(/&lt;(https?:\/\/(?:[^|&\s]|&amp;)+)\|([^&]+)&gt;/g, (_m, url: string, label: string) => `<a href="${url}" target="_blank" rel="noopener" class="text-link underline underline-offset-2">${label}</a>`)
-    .replace(/&lt;(https?:\/\/(?:[^&\s]|&amp;)+)&gt;/g, (_m, url: string) => `<a href="${url}" target="_blank" rel="noopener" class="text-link underline underline-offset-2">${url}</a>`);
-}
-
-/** Readable channel names ("#requests", "DM"), learnt from the topics and the logged messages. */
+/** Readable conversation names ("#requests", "DM") by their tool's id, learnt from the topics and the logged messages. */
 const CHANNEL_NAMES = new Map<string, string>();
 function learnChannels(sujets: Sujet[], events: BoardEvent[]): void {
-  for (const s of sujets) {
-    const id = threadOfKey(s.key)?.channel;
-    if (id && s.channel && /^[CGD][A-Z0-9]{8,}$/.test(id)) CHANNEL_NAMES.set(id, s.channel);
-  }
-  for (const e of events) {
-    const id = e.key ? threadOfKey(e.key)?.channel : undefined;
-    if (id && e.channel && /^[CGD][A-Z0-9]{8,}$/.test(id)) CHANNEL_NAMES.set(id, e.channel);
-  }
+  const learn = (key: string | undefined, name: string | undefined) => {
+    const id = key ? threadInfoOfKey(key)?.conversation : undefined;
+    if (id && name) CHANNEL_NAMES.set(id, name);
+  };
+  for (const s of sujets) learn(s.key, s.channel);
+  for (const e of events) learn(e.key, e.channel);
 }
+
+/** The names the board knows, for the mentions of a draft. */
+const renderNames = () => ({ people: Object.fromEntries(USER_NAMES), conversations: Object.fromEntries(CHANNEL_NAMES) });
+
+/**
+ * A draft as its tool will show it, through the provider's rendering ("<@U012AB3CD>" becomes "@Ann" for Slack).
+ * Display only: the posted and copied text keeps the tool's format.
+ */
+export const draftHtml = (provider: string | null, text: string): string => renderHtml(provider, text, renderNames());
+
+/** A Slack draft as Slack will show it: `draftHtml` for Slack, kept for its callers. */
+export const slackToHtml = (text: string): string => draftHtml("slack", text);
 
 /**
  * A thread attached to the topic: the original thread keeps the channel's name; the others show channel and date of
@@ -484,21 +481,21 @@ function keyLink(key: string, s: Sujet): string {
   const ticket = ticketIdOfKey(key);
   if (ticket) return ticketLink(ticket);
   const url = permalinkOfKey(key);
-  const thread = threadOfKey(key);
+  const thread = threadInfoOfKey(key);
   if (!thread) {
     const label = key === s.key ? s.channel : providerKeyLabel(key);
     return url ? link(url, label) : escapeHtml(label);
   }
-  const { channel: id, ts } = thread;
-  const when = ts ? new Date(Number(ts) * 1000) : null;
+  const id = thread.conversation;
+  const when = thread.at !== undefined ? new Date(thread.at) : null;
   const date = when && !Number.isNaN(when.getTime()) ? ` ${String(when.getDate()).padStart(2, "0")}/${String(when.getMonth() + 1).padStart(2, "0")} ${String(when.getHours()).padStart(2, "0")}:${String(when.getMinutes()).padStart(2, "0")}` : "";
   const twin =
     when &&
     sujetKeys(s).some((k) => {
-      const other = k !== key ? threadOfKey(k) : null;
-      return other !== null && other.channel === id && Math.floor(Number(other.ts) / 60) === Math.floor(Number(ts) / 60);
+      const other = k !== key ? threadInfoOfKey(k) : null;
+      return other !== null && other.provider === thread.provider && other.account === thread.account && other.conversation === id && Math.floor((other.at ?? Number.NaN) / 60_000) === Math.floor(when.getTime() / 60_000);
     });
-  const label = key === s.key ? s.channel : `${CHANNEL_NAMES.get(id) ?? `Slack ${id}`}${date}${twin && when ? `:${String(when.getSeconds()).padStart(2, "0")}` : ""}`;
+  const label = key === s.key ? s.channel : `${CHANNEL_NAMES.get(id) ?? `${thread.tool} ${id}`}${date}${twin && when ? `:${String(when.getSeconds()).padStart(2, "0")}` : ""}`;
   return url ? link(url, label) : escapeHtml(label);
 }
 
@@ -729,21 +726,16 @@ export function draftMissing(s: Sujet): string {
   return "";
 }
 
-/** Where the draft goes, in a few words: the channel named in draftTo, else the topic's channel. */
-function draftToLabel(s: Pick<Sujet, "draftTo" | "channel">): string {
-  const to = (s.draftTo ?? "").replace(/https?:\/\/\S+/g, "").replace(/\s*\([CGD][A-Z0-9]{8,}\)/g, "").replace(/[,;]\s*$/, "").trim();
-  return clip(to.replace(/^vers\s+/i, "") || s.channel || "?", 44);
-}
-
 /**
- * The draft's destination, as a link to the exact place where Send will post: the thread, or the channel for a separate
- * message. The person served no longer has to ask the session for the thread's exact link before a post.
+ * The draft's destination, as a link to the exact place where Send will post: the thread, or the conversation for a
+ * separate message, as the provider resolved it. The person served no longer has to ask the session for the thread's
+ * exact link before a post. Its words are the provider's (Slack: the channel named in draftTo, else the topic's).
  */
-function draftToLink(s: Pick<Sujet, "key" | "draftTo" | "channel">): string {
-  const label = `→ ${escapeHtml(draftToLabel(s))}`;
-  const dest = draftDestination(s);
-  const href = "error" in dest ? null : dest.ts ? permalinkOfKey(`${dest.channel}:${dest.ts}`) : linkOfNative("slack", "default", dest.channel);
-  const title = escapeHtml(href ? t(dest && !("error" in dest) && dest.ts ? "board.draft.dest.thread" : "board.draft.dest.channel", { url: href }) : (s.draftTo ?? ""));
+function draftToLink(x: Pick<Task, "draftTo" | "to">, dest: ResolvedTarget | UnresolvedTarget): string {
+  const label = `→ ${escapeHtml(clip((isResolved(dest) ? dest.target.label : dest.label) || "?", 44))}`;
+  const href = isResolved(dest) ? targetLink(dest) : null;
+  const scope = isResolved(dest) ? dest.target.scope : null;
+  const title = escapeHtml(href ? t(scope === "conversation" ? "board.draft.dest.channel" : "board.draft.dest.thread", { url: href }) : (x.to || x.draftTo || ""));
   return href
     ? `<a href="${escapeHtml(href)}" target="_blank" rel="noopener" data-draft-dest class="min-w-0 truncate text-link hover:underline underline-offset-2" title="${title}">${label}</a>`
     : `<span class="min-w-0 truncate text-muted" title="${title}">${label}</span>`;
@@ -773,16 +765,17 @@ function taskBox(s: Sujet, x: Task, hint: boolean): string {
   const ops = taskOps(s.key, x);
   const shadow = settings().workers.shadow;
   if (text) {
-    const target = { key: s.key, channel: s.channel, draftTo: x.draftTo };
-    const dest = draftDestination(target);
-    const why = "error" in dest ? dest.error : text.length > DRAFT_MAX ? t("board.draft.tooLong", { n: text.length }) : "";
+    const dest = resolveTarget(s, x);
+    const tool = dest.provider;
+    const max = tool ? maxTextOf(tool) : null;
+    const why = !isResolved(dest) ? dest.error : max !== null && text.length > max ? t("board.draft.tooLong", { tool: providerLabel(dest.provider), n: text.length }) : "";
     const legacy = !x.draft?.trim();
     // the action does more than post (merge then post…): Go to the session, which runs everything in order
     const viaSession = !postOnlyAction(x);
     const postButtons = `<div class="mt-2.5 flex flex-wrap items-center gap-1.5">${shadow ? shadowButton() : `<button type="button" data-post class="${BTN_PRIMARY}"${why ? ` disabled title="${escapeHtml(why)}"` : ` title="${escapeHtml(t("board.draft.send.tip"))}"`}><span data-label>${t("board.draft.send")}</span>${keyHint}</button>`}<button type="button" data-edit class="${BTN}">${t("board.draft.edit")}</button><button type="button" data-copy class="${BTN}">${t("board.draft.copy")}</button>${ops}</div>`;
     return `<form class="max-w-[78ch] cursor-auto rounded-lg border border-accent/40 bg-accent-soft/30 px-4 py-3" data-draft data-key="${key}" data-task="${id}" data-draft-to="${escapeHtml(x.draftTo ?? "")}" data-postable="${why || viaSession || shadow ? "0" : "1"}">
-<div class="flex items-center gap-2 text-[12.5px]"><span class="font-semibold text-accent-ink">${t("board.draft.label")}</span>${draftToLink(target)}<span class="ml-auto shrink-0 text-[11.5px] tabular-nums text-muted">${t("board.draft.chars", { n: text.length })}</span></div>
-<div class="mt-1.5 max-h-80 overflow-y-auto whitespace-pre-wrap text-[13.5px] leading-relaxed text-ink" data-draft-text>${slackToHtml(text)}</div>
+<div class="flex items-center gap-2 text-[12.5px]"><span class="font-semibold text-accent-ink">${t("board.draft.label")}</span>${draftToLink(x, dest)}<span class="ml-auto shrink-0 text-[11.5px] tabular-nums text-muted">${t("board.draft.chars", { n: text.length })}</span></div>
+<div class="mt-1.5 max-h-80 overflow-y-auto whitespace-pre-wrap text-[13.5px] leading-relaxed text-ink" data-draft-text>${draftHtml(tool ?? providerOfKey(s.key), text)}</div>
 <textarea name="draft" rows="${Math.min(14, Math.max(4, text.split("\n").length + Math.ceil(text.length / 90)))}" hidden data-draft-edit class="mt-1.5 w-full resize-y rounded-md border border-line bg-bg px-2.5 py-2 text-[13.5px] leading-relaxed focus:border-accent focus:outline-none focus:ring-2 focus:ring-accent/20">${escapeHtml(text)}</textarea>
 ${legacy ? `<p class="mt-1 text-[11.5px] text-muted">${t("board.draft.legacy")}</p>` : ""}
 ${viaSession ? `<div class="mt-2.5 flex flex-wrap items-center gap-2">${shadow ? shadowButton() : `<button type="button" data-go="${key}" data-task="${id}" class="${BTN_PRIMARY}" title="${escapeHtml(t("board.draft.viaSession.tip"))}">${t("board.draft.viaSession")}${keyHint}</button>`}<span class="min-w-0 truncate text-[12.5px] text-muted" data-go-status>${escapeHtml(truncate(x.action ?? "", 140))}</span>${ops}</div>` : postButtons}
@@ -1014,7 +1007,10 @@ export function sessionLine(x: BoardSession, ctx: BoardContext): string {
   if (x.startedAt) sub.push(t("board.since", { time: when(x.startedAt, ctx) }));
   if (c?.lastAgent?.at) sub.push(t("board.session.lastTurn", { when: when(c.lastAgent.at, ctx) }));
   const cites: string[] = [];
-  for (const th of c?.slackThreads ?? []) cites.push(link(th.url, `Slack ${threadOfKey(th.key)?.channel ?? th.key}`));
+  for (const th of c?.slackThreads ?? []) {
+    const info = threadInfoOfKey(th.key);
+    cites.push(link(th.url, info ? `${info.tool} ${info.conversation}` : providerKeyLabel(th.key)));
+  }
   for (const id of c?.linearIssues ?? []) cites.push(ticketLink(id));
   if (x.remote) cites.push(link(remoteUrlOf(x.remote), "claude.ai"));
   const state = c?.master ? badge("master", "accent") : badge(t(x.status === "busy" ? "board.session.status.busy" : x.status === "waiting" ? "board.session.status.waiting" : "board.session.status.idle"), x.status === "busy" ? "clear" : x.status === "waiting" ? "warn" : "muted", x.status === "busy");
@@ -1263,7 +1259,7 @@ ${demandesStatus(m, vctx)}
 ${syncData(m)}
 ${process.env.STRATO_DEMO === "1" ? `<p data-demo class="rounded-lg border border-accent/40 bg-accent-soft/30 px-3.5 py-2 text-[13.5px] text-ink">${t("board.demo.banner", { command: `<code class="font-mono text-[12.5px]">${escapeHtml('claude -n strato "/strato setup"')}</code>` })}</p>` : ""}
 ${m.listener.alive ? "" : `<p class="flex items-center gap-2 rounded-lg border border-warn/40 bg-warn-soft/40 px-3.5 py-2 text-[13.5px] text-warn"><span class="lamp lamp-red lit" aria-hidden="true"></span>${t(m.listener.lastTick ? "board.listener.downSince" : "board.listener.down", { time: m.listener.lastTick ? escapeHtml(ctx.timeOf(m.listener.lastTick)) : "", command: `<code class="font-mono text-[12.5px]">${escapeHtml(masterCommand())}</code>` })}</p>`}
-${m.listener.deaf ? `<p class="flex items-center gap-2 rounded-lg border border-warn/40 bg-warn-soft/40 px-3.5 py-2 text-[13.5px] text-warn"><span class="lamp lamp-red lit" aria-hidden="true"></span><span>${t(m.listener.lastEventAt ? "board.listener.deafSince" : "board.listener.deaf", { time: m.listener.lastEventAt ? escapeHtml(ctx.timeOf(m.listener.lastEventAt)) : "" })} ${m.listener.appId ? `<a class="underline underline-offset-2" href="https://api.slack.com/apps/${escapeHtml(m.listener.appId)}/event-subscriptions" target="_blank" rel="noopener">${t("board.listener.reenable")}</a>` : t("board.listener.reenableHere")}.</span></p>` : ""}
+${m.listener.deaf ? `<p class="flex items-center gap-2 rounded-lg border border-warn/40 bg-warn-soft/40 px-3.5 py-2 text-[13.5px] text-warn"><span class="lamp lamp-red lit" aria-hidden="true"></span><span>${t(m.listener.lastEventAt ? "board.listener.deafSince" : "board.listener.deaf", { time: m.listener.lastEventAt ? escapeHtml(ctx.timeOf(m.listener.lastEventAt)) : "" })} ${m.listener.appId ? `<a class="underline underline-offset-2" href="${escapeHtml(slackEventsPage(m.listener.appId))}" target="_blank" rel="noopener">${t("board.listener.reenable")}</a>` : t("board.listener.reenableHere")}.</span></p>` : ""}
 </header>`;
   const sessions =
     m.sessions.length || m.otherSessions

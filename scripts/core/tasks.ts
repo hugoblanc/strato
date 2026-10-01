@@ -12,6 +12,7 @@
  * Pure module: no I/O. It imports only types from sujet.ts, which imports it.
  */
 import { t } from "./i18n.ts";
+import { parseKey } from "./keys.ts";
 import type { Sujet } from "./sujet.ts";
 import { truncate } from "./text.ts";
 
@@ -33,6 +34,11 @@ export interface Task {
   draft?: string;
   /** Where the draft goes: channel and thread link, or a channel id and "new message". */
   draftTo?: string;
+  /**
+   * Where the draft goes, typed: the key of a thread (a reply) or of a conversation (a separate message), on any
+   * connected tool. It wins over `draftTo`, which then only describes it.
+   */
+  to?: string;
   createdAt: string;
   updatedAt: string;
   status: TaskStatus;
@@ -43,7 +49,7 @@ export interface Task {
 }
 
 /** The fields a session writes on a task. */
-export const TASK_FIELDS = ["kind", "ask", "proposal", "action", "draft", "draftTo"] as const;
+export const TASK_FIELDS = ["kind", "ask", "proposal", "action", "draft", "draftTo", "to"] as const;
 type TaskField = (typeof TASK_FIELDS)[number];
 
 /** What the task functions read and write on a topic. */
@@ -195,10 +201,11 @@ function parseFields(kv: Record<string, string>): Partial<Record<TaskField, stri
 }
 
 /** A task that cannot be shown or carried out as written: the reason, or null. */
-function invalid(x: Pick<Task, "kind" | "ask" | "draft" | "draftTo" | "action">): string | null {
+function invalid(x: Pick<Task, "kind" | "ask" | "draft" | "draftTo" | "to" | "action">): string | null {
   if (!x.ask) return "ask is required: what is asked, one sentence";
   if (x.kind === "draft" && !x.draft) return "kind=draft requires draft: the text as it will go out";
-  if (x.draft && !x.draftTo) return "draft requires draftTo: the channel and the thread link, or the channel id and \"new message\"";
+  if (x.draft && !x.draftTo && !x.to) return "draft requires draftTo: the channel and the thread link, or the channel id and \"new message\" (or to=<key>)";
+  if (x.to && !parseKey(x.to)) return `to=${x.to} is not a key: the key of a thread or of a conversation, such as C0123456789:1759219200.000100`;
   if (x.kind === "action" && !x.action) return "kind=action requires action: the exact action that goes out on go";
   return null;
 }
@@ -239,6 +246,7 @@ export function addTask<S extends TaskHost>(s: S, kv: Record<string, string>, no
     action: f.action ?? "",
     draft: f.draft ?? "",
     draftTo: f.draftTo ?? "",
+    ...(f.to ? { to: f.to } : {}),
     createdAt: now,
     updatedAt: now,
     status: "open",

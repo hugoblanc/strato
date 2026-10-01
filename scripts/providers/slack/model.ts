@@ -3,8 +3,9 @@
  * the adapters of chat/slack-model.ts to the provider interface. chat/slack-model.ts stays where it is, with its tests.
  */
 import { DRAFT_MAX, draftDestination, humanize, slackAppLink } from "../../chat/slack-model.ts";
+import { t } from "../../core/i18n.ts";
 import { PROVIDER_API } from "../api.ts";
-import type { Account, Identity, LinkSpec, ProviderDescriptor, Target, Text } from "../sdk.ts";
+import type { Account, Identity, LinkSpec, ProviderDescriptor, ProviderPure, RenderNames, Target, Text } from "../sdk.ts";
 
 const key = (k: string): Text => ({ key: `provider.slack.${k}` });
 
@@ -91,29 +92,70 @@ export const SLACK_DESCRIPTOR: ProviderDescriptor = {
   maxText: DRAFT_MAX,
   mcp: { server: "slack", readTools: ["conversations_replies", "conversations_history", "conversations_search_messages"], writeTools: ["conversations_add_message"] },
   undoMs: 30_000,
+  done: { kind: "react", emoji: "white_check_mark" },
 };
 
-const escapeHtml = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+const escapeHtml = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;");
 
-/** mrkdwn to plain text, mentions left as ids: the network side (app/slack.ts `readable`) knows people's names. */
+/**
+ * A draft as Slack will show it, for the board: "<@U012AB3CD>" becomes "@Ann", "<#C…|support>" becomes "#support",
+ * "<https://…|Staff access>" becomes a link "Staff access". Display only: the posted and copied text keeps the Slack
+ * format. `names` gives people's and channels' names by Slack id.
+ */
+export function slackHtml(text: string, names: RenderNames = {}): string {
+  const people = names.people ?? {};
+  const channels = names.conversations ?? {};
+  return escapeHtml(text)
+    .replace(/&lt;@([UW][A-Z0-9]+)(?:\|([^&]+))?&gt;/g, (_m, id: string, label?: string) => `<span class="font-medium text-link">@${escapeHtml(people[id] ?? label ?? id)}</span>`)
+    .replace(/&lt;#([CG][A-Z0-9]+)(?:\|([^&]*))?&gt;/g, (_m, id: string, label?: string) => `<span class="font-medium text-link">#${escapeHtml(label || channels[id]?.replace(/^#/, "") || id)}</span>`)
+    .replace(/&lt;!subteam\^[A-Z0-9]+(?:\|([^&]+))?&gt;/g, (_m, label?: string) => `<span class="font-medium text-link">${escapeHtml(label ?? t("board.draft.group"))}</span>`)
+    .replace(/&lt;!(here|channel|everyone)&gt;/g, "<span class=\"font-medium text-link\">@$1</span>")
+    .replace(/&lt;(https?:\/\/(?:[^|&\s]|&amp;)+)\|([^&]+)&gt;/g, (_m, url: string, label: string) => `<a href="${url}" target="_blank" rel="noopener" class="text-link underline underline-offset-2">${label}</a>`)
+    .replace(/&lt;(https?:\/\/(?:[^&\s]|&amp;)+)&gt;/g, (_m, url: string) => `<a href="${url}" target="_blank" rel="noopener" class="text-link underline underline-offset-2">${url}</a>`);
+}
+
+/** mrkdwn to plain text, mentions left as ids (the network side, app/slack.ts `readable`, knows people's names); to the board's HTML with `slackHtml`. */
 export const slackRender = {
   plain: (text: string) => humanize(text, (uid) => uid),
-  html: (text: string) => escapeHtml(humanize(text, (uid) => uid, true)),
+  html: slackHtml,
 };
 
 /**
- * A topic's free-text destination (`draftTo`) to a target, with today's rules (`draftDestination`): the thread linked
- * in it, a channel id for a separate message, else the topic's own thread.
+ * The words the board shows for a free-text destination: the text without its links and channel ids ("#support"),
+ * else the topic's conversation.
  */
-export function slackParseTarget(text: string, topic: { thread: string; conversation: { id: string; label: string } }): Target | { error: Text } {
+export function slackTargetWords(text: string, conversation: string): string {
+  const to = text.replace(/https?:\/\/\S+/g, "").replace(/\s*\([CGD][A-Z0-9]{8,}\)/g, "").replace(/[,;]\s*$/, "").trim();
+  return to.replace(/^vers\s+/i, "") || conversation;
+}
+
+/**
+ * A free-text destination (`draftTo`) to a target, with today's rules (`draftDestination`): the thread linked in it, a
+ * channel id for a separate message, else the topic's own thread. The label is what the board shows next to the draft,
+ * also when the destination cannot be posted to.
+ */
+export function slackParseTarget(text: string, topic: { thread: string; conversation: { id: string; label: string } }): Target | { error: Text; label: string } {
+  const label = slackTargetWords(text, topic.conversation.label);
   const dest = draftDestination({ key: topic.thread, draftTo: text, channel: topic.conversation.label });
-  if ("error" in dest) return { error: { en: dest.error } };
-  return dest.ts
-    ? { scope: "thread", native: `${dest.channel}:${dest.ts}`, label: dest.channel === topic.conversation.id ? topic.conversation.label : dest.channel }
-    : { scope: "conversation", native: dest.channel, label: dest.channel };
+  if ("error" in dest) return { error: { en: dest.error }, label };
+  return dest.ts ? { scope: "thread", native: `${dest.channel}:${dest.ts}`, label } : { scope: "conversation", native: dest.channel, label };
+}
+
+/** What a Slack thread id says: its channel, and the time of its first message. */
+export function slackThreadInfo(native: string): { conversation: string; at?: number } | null {
+  const [channel, ts] = native.split(":");
+  if (!channel || !ts) return null;
+  const at = Math.floor(Number(ts) * 1000);
+  return { conversation: channel, ...(Number.isFinite(at) && at > 0 ? { at } : {}) };
 }
 
 /** The `slack://` link of a Slack link, on the account's team: opens the message in the app. */
 export function slackDeepLink(url: string, _account: Account, identity: Identity): string | null {
   return identity.tenant ? slackAppLink(url, identity.tenant) : null;
 }
+
+/** The page of the Slack app's event subscriptions, where a listener that hears nothing is turned back on. */
+export const slackEventsPage = (appId: string) => `https://api.slack.com/apps/${appId}/event-subscriptions`;
+
+/** The Slack provider's pure parts, installed at startup (providers/builtin.ts). */
+export const SLACK_PURE: ProviderPure = { descriptor: SLACK_DESCRIPTOR, parseTarget: slackParseTarget, render: slackRender, threadInfo: slackThreadInfo, deepLink: slackDeepLink };

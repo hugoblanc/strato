@@ -12,7 +12,7 @@ import { settings } from "../../core/settings.ts";
 import { truncate } from "../../core/text.ts";
 import { defineProvider } from "../api.ts";
 import type { AccountContext, ContextResult, Identity, IngestCursor, Item, PollResult, ProviderError } from "../sdk.ts";
-import { SLACK_DESCRIPTOR, slackDeepLink, slackParseTarget, slackRender } from "./model.ts";
+import { SLACK_DESCRIPTOR, slackDeepLink, slackParseTarget, slackRender, slackThreadInfo } from "./model.ts";
 
 /** A Slack failure as a provider error: Slack's own code, fatal when the token must be set up again. */
 export function slackProviderError(e: unknown): ProviderError {
@@ -225,5 +225,6 @@ export const slackProvider = defineProvider({
 
   parseTarget: (text, topic) => slackParseTarget(text, topic),
   render: slackRender,
+  threadInfo: slackThreadInfo,
   deepLink: slackDeepLink,
 });

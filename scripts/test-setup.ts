@@ -16,7 +16,7 @@
  */
 import { useProviders } from "./core/links.ts";
 import { resolveSettings, useSettings } from "./core/settings.ts";
-import { BUILTIN_DESCRIPTORS } from "./providers/builtin.ts";
+import { BUILTIN_PURE } from "./providers/builtin.ts";
 
 export const TEST_SETTINGS = resolveSettings({
   owner: { name: "Alice" },
@@ -36,4 +36,4 @@ export const TEST_SETTINGS = resolveSettings({
 });
 
 useSettings(TEST_SETTINGS);
-useProviders([...BUILTIN_DESCRIPTORS]);
+useProviders([...BUILTIN_PURE]);
