@@ -6,7 +6,8 @@ import { spawn } from "node:child_process";
 import { existsSync, mkdirSync, openSync, readdirSync, readFileSync, watch as fsWatch } from "node:fs";
 import { join } from "node:path";
 import { agentsBySessionAsync, CLAUDE_DIR, declaredAttention, findTranscript, type PanelSession, pathWithClaude, pidAlive, sessionAgents, transcriptContext } from "../app/claude.ts";
-import { CLAUDE_BIN, dayTime, F, fail, flags, mtimeOf, nowIso, out, readJson, run, SCRIPT, STATE, WORKSPACE, writeJson } from "../app/env.ts";
+import { CLAUDE_BIN, dayTime, F, fail, flags, mtimeOf, nowIso, out, readJson, run, STATE, WORKSPACE, writeJson } from "../app/env.ts";
+import { selfArgv, selfCommand } from "../app/self.ts";
 import { deliverToSujet } from "../app/deliver.ts";
 import { deliveryTracker } from "../app/gitlab.ts";
 import { pickCards, refreshCards } from "../commands/refresh.ts";
@@ -306,7 +307,7 @@ export async function serve(args: string[]) {
         "-t", `theme=${theme}`,
         "-t", "disableLeaveAlert=true",
         "-t", `titleFixed=${s.letter} · ${s.title}`,
-        process.execPath, SCRIPT, "term", s.key,
+        ...selfArgv(), "term", s.key,
       ],
       { cwd: WORKSPACE, stdin: "ignore", stdout: "ignore", stderr: "pipe", env: { ...process.env, PATH: pathWithClaude(), TERM: "xterm-256color", LANG: process.env.LANG ?? "en_US.UTF-8" } },
     );
@@ -530,7 +531,7 @@ export async function serve(args: string[]) {
   /** The message a go on a task carries to the session: the task, its exact action, and how to close it. */
   function taskGoMessage(s: Sujet, x: Task, text: string): string {
     const what = x.action?.trim() || (taskDraftText(x) ? `post the draft of task ${x.id} in ${x.draftTo || "its destination"}` : x.ask);
-    return `${text} on task ${x.id}: ${what.replace(/\\n/g, " ")}\nCarry it out, then mark it done: bun ${SCRIPT} task ${s.key} done ${x.id}`;
+    return `${text} on task ${x.id}: ${what.replace(/\\n/g, " ")}\nCarry it out, then mark it done: ${selfCommand()} task ${s.key} done ${x.id}`;
   }
   /**
    * Done or Drop on a task, from the board: the task closes under the lock, then the session is told, so it does not
@@ -734,7 +735,8 @@ export async function serve(args: string[]) {
     await withLock(() => writeJson(F.master, [...readJson<MasterRequest[]>(F.master, []), req].slice(-30))).catch(() => {});
     logEvent({ type: "board-update", ok: true, from: req.from, to: req.to });
     const log = openSync(join(STATE, "serve.log"), "a");
-    const child = spawn(process.execPath, [SCRIPT, "serve", "--port", String(port), "--wait-port"], { detached: true, stdio: ["ignore", log, log], env: process.env });
+    const [selfBin, ...selfArgs] = selfArgv();
+    const child = spawn(selfBin, [...selfArgs, "serve", "--port", String(port), "--wait-port"], { detached: true, stdio: ["ignore", log, log], env: process.env });
     child.unref();
     out(`[strato] updated ${req.from} -> ${req.to}, the board restarts on the new code`);
     setTimeout(() => process.exit(0), 300);
@@ -797,7 +799,7 @@ export async function serve(args: string[]) {
       if (!s.sessionId) return Response.json({ error: t("board.api.noSession", { letter: s.letter }) }, { status: 409 });
       if (route === "POST /api/dive") {
         // the iTerm2 tab opens beside: the dive command does everything, it is not awaited
-        Bun.spawn([process.execPath, SCRIPT, "dive", s.key], { cwd: WORKSPACE, stdin: "ignore", stdout: "ignore", stderr: "ignore", env: { ...process.env, PATH: pathWithClaude() } });
+        Bun.spawn([...selfArgv(), "dive", s.key], { cwd: WORKSPACE, stdin: "ignore", stdout: "ignore", stderr: "ignore", env: { ...process.env, PATH: pathWithClaude() } });
         return Response.json({ ok: true, note: t("board.api.diveOpened", { letter: s.letter }) });
       }
       try {

@@ -1,5 +1,6 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { COMPILED, commandForEntry } from "../app/self.ts";
 import { locale } from "../core/i18n.ts";
 import { ownerForms, settings } from "../core/settings.ts";
 import { untrusted } from "../core/text.ts";
@@ -23,7 +24,19 @@ import type { Task } from "../core/tasks.ts";
  * the English defaults do not use them, they are still provided for French profiles that do.
  */
 
-export const DEFAULT_POLICY_DIR = join(import.meta.dir, "defaults");
+/** The shipped defaults: a folder in a development clone; inside a binary, a label (the texts are embedded below). */
+export const DEFAULT_POLICY_DIR = COMPILED ? "built into the strato binary" : join(import.meta.dir, "defaults");
+
+import agentsRuleMd from "./defaults/agents-rule.md" with { type: "text" };
+import cardStyleMd from "./defaults/card-style.md" with { type: "text" };
+import executionRuleMd from "./defaults/execution-rule.md" with { type: "text" };
+import followUpAutreMd from "./defaults/follow-up-autre.md" with { type: "text" };
+import followUpCoequipierMd from "./defaults/follow-up-coequipier.md" with { type: "text" };
+import followUpFinMd from "./defaults/follow-up-fin.md" with { type: "text" };
+import followUpMoiMd from "./defaults/follow-up-moi.md" with { type: "text" };
+import refreshMd from "./defaults/refresh.md" with { type: "text" };
+import ticketMd from "./defaults/ticket.md" with { type: "text" };
+import workerMd from "./defaults/worker.md" with { type: "text" };
 
 /**
  * The known templates, one `<name>.md` file each. The French suffixes (moi = me, coequipier = teammate,
@@ -44,6 +57,33 @@ export const POLICY_TEMPLATES = [
 ] as const;
 export type PolicyTemplate = (typeof POLICY_TEMPLATES)[number];
 
+/**
+ * The default templates, embedded at build time: a compiled binary has no `policy/defaults/` folder next to its code.
+ * A development clone keeps reading the files from disk, so a template edited there applies without a rebuild.
+ */
+export const EMBEDDED_DEFAULTS: Record<PolicyTemplate, string> = {
+  worker: workerMd,
+  ticket: ticketMd,
+  "card-style": cardStyleMd,
+  "execution-rule": executionRuleMd,
+  "agents-rule": agentsRuleMd,
+  "follow-up-moi": followUpMoiMd,
+  "follow-up-coequipier": followUpCoequipierMd,
+  "follow-up-autre": followUpAutreMd,
+  "follow-up-fin": followUpFinMd,
+  refresh: refreshMd,
+};
+
+/** A template file of one folder, or null; the defaults folder is the embedded copy inside a binary. */
+function readTemplate(dir: string, name: PolicyTemplate): string | null {
+  if (dir === DEFAULT_POLICY_DIR && COMPILED) return EMBEDDED_DEFAULTS[name];
+  try {
+    return readFileSync(join(dir, `${name}.md`), "utf8");
+  } catch {
+    return null;
+  }
+}
+
 let policyDirs: string[] = [DEFAULT_POLICY_DIR];
 
 /** Policy folders of the installation, from highest to lowest priority; the defaults always come last. */
@@ -53,21 +93,15 @@ export function usePolicyDirs(dirs: string[]): void {
 
 /** The folder a template comes from, for `doctor`. */
 export function policySource(name: PolicyTemplate): string | null {
-  for (const dir of policyDirs) {
-    try {
-      readFileSync(join(dir, `${name}.md`));
-      return dir;
-    } catch {}
-  }
+  for (const dir of policyDirs) if (readTemplate(dir, name) !== null) return dir;
   return null;
 }
 
 function loadTemplate(name: PolicyTemplate): string {
   for (const dir of policyDirs) {
-    try {
-      // a file ends with a line break, the text it carries does not
-      return readFileSync(join(dir, `${name}.md`), "utf8").replace(/\n$/, "");
-    } catch {}
+    const text = readTemplate(dir, name);
+    // a file ends with a line break, the text it carries does not
+    if (text !== null) return text.replace(/\n$/, "");
   }
   throw new Error(`policy template not found: ${name}.md (${policyDirs.join(", ")})`);
 }
@@ -113,8 +147,19 @@ export function baseVars(): Record<string, string> {
   };
 }
 
+/**
+ * `script` is the entry point (app/self.ts): `scripts/strato.ts` in development, the binary when compiled. Templates,
+ * the defaults and those of existing profiles alike, spell Strato's command `bun {{script}}`: that form is read as
+ * `{{command}}`, the right command line for either mode (`bun /…/strato.ts` or `/…/bin/strato`).
+ */
 export function policyText(name: PolicyTemplate, vars: Record<string, string> = {}): string {
-  return renderTemplate(loadTemplate(name), { ...baseVars(), ...vars }, `${name}.md`);
+  let text = loadTemplate(name);
+  const all = { ...baseVars(), ...vars };
+  if ("script" in vars) {
+    text = text.replace(/bun \{\{script\}\}/g, "{{command}}");
+    all.command = commandForEntry(vars.script);
+  }
+  return renderTemplate(text, all, `${name}.md`);
 }
 
 export const cardStyle = () => policyText("card-style");
@@ -144,7 +189,7 @@ export function shadowRule(): string {
  */
 function cardCommand(script: string, key: string, statuses: string, kinds: string[], report: string): string {
   const owner = settings().owner.name;
-  const S = `bun ${script}`;
+  const S = commandForEntry(script);
   const add: Record<string, string> = {
     draft: `${S} task ${key} add kind=draft ask="<what is asked, one sentence>" proposal="<what you propose, one sentence>" draft="<the exact text as it will go out>" draftTo="<channel and thread link, or channel id and new message>" action="post the draft in <draftTo>"`,
     action: `${S} task ${key} add kind=action ask="<what is asked, one sentence>" proposal="<what you propose, one sentence>" action="<the exact action that goes out on go>"`,
@@ -216,7 +261,7 @@ export function followUpMessage(kind: "suite" | "moi", t: Trigger, script: strin
 export function refreshMessage(reasons: string[], script: string, key: string, tasks: Pick<Task, "id" | "kind" | "ask">[] = []): string {
   const vars = { reasons: reasons.join("; ") || "refresh requested", script, key };
   const open = tasks.length
-    ? `Open tasks: ${tasks.map((x) => `${x.id} (${x.kind}) « ${untrusted(x.ask)} »`).join("; ")}. Each one still waiting stays; each one settled is closed (bun ${script} task ${key} done <id> or drop <id>).`
+    ? `Open tasks: ${tasks.map((x) => `${x.id} (${x.kind}) « ${untrusted(x.ask)} »`).join("; ")}. Each one still waiting stays; each one settled is closed (${commandForEntry(script)} task ${key} done <id> or drop <id>).`
     : "No open task.";
   return `${policyText("refresh", vars)}\n${open}\n${policyText("follow-up-fin", vars)}\n${untrustedRule()}${shadowRule()}`;
 }

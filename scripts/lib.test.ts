@@ -581,7 +581,10 @@ describe("prompts", () => {
   test("relaunches say who wrote and ask for the updated card", () => {
     expect(followUpMessage("suite", t, "/s", "CX:1")).toContain("New message from Peter");
     expect(followUpMessage("moi", t, "/s", "CX:1")).toContain("Alice wrote");
-    expect(followUpMessage("suite", t, "/s", "CX:1")).toContain("bun /s set CX:1");
+    expect(followUpMessage("suite", t, "/s/strato.ts", "CX:1")).toContain("bun /s/strato.ts set CX:1");
+    // compiled: the entry point is the binary, run as is; the templates' `bun {{script}}` follows
+    expect(followUpMessage("suite", t, "/opt/bin/strato", "CX:1")).toContain("(/opt/bin/strato set CX:1");
+    expect(followUpMessage("suite", t, "/opt/bin/strato", "CX:1")).not.toContain("bun /opt/bin/strato");
     expect(followUpMessage("suite", { ...t, from: "Dave" }, "/s", "CX:1", ["Dave"])).toContain('summary="taken by Dave"');
   });
 

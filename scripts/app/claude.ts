@@ -8,7 +8,8 @@ import { join } from "node:path";
 import { type AgentRow, liveAgentRows } from "../claude/model.ts";
 import { type AgentMeta, type AgentNode, agentTail, emptyTranscript, foldTranscript, sessionContext, type SessionContext, type TranscriptState } from "../claude/transcript.ts";
 import { settings } from "../core/settings.ts";
-import { CLAUDE_BIN, F, fail, HOME, LEGACY_SCRIPT, mtimeOf, readJson, SCRIPT, STATE, WORKSPACE } from "./env.ts";
+import { CLAUDE_BIN, F, fail, HOME, LEGACY_SCRIPT, mtimeOf, readJson, STATE, WORKSPACE } from "./env.ts";
+import { selfCommand } from "./self.ts";
 import { loadSujets, logEvent } from "./store.ts";
 
 /**
@@ -29,7 +30,7 @@ export function workerSettings(): string {
     hooks: Object.fromEntries(
       ["Stop", "StopFailure", "PermissionRequest", "Notification", "SessionEnd", "UserPromptSubmit"].map((e) => [
         e,
-        [{ matcher: "*", hooks: [{ type: "command", command: `bun ${SCRIPT} hook` }] }],
+        [{ matcher: "*", hooks: [{ type: "command", command: `${selfCommand()} hook` }] }],
       ]),
     ),
     permissions: {
@@ -43,9 +44,9 @@ export function workerSettings(): string {
         "Bash(git status *)",
         "Bash(git fetch *)",
         "Bash(git branch *)",
-        `Bash(bun ${SCRIPT} *)`,
-        // a session resumed after the rename may still follow a prompt that names the legacy alias
-        `Bash(bun ${LEGACY_SCRIPT} *)`,
+        `Bash(${selfCommand()} *)`,
+        // a session resumed after the rename may still follow a prompt that names the legacy alias (development clone)
+        ...(LEGACY_SCRIPT ? [`Bash(bun ${LEGACY_SCRIPT} *)`] : []),
         // Edit covers Write; an absolute path is written with // (a single / anchors on the settings file's folder)
         `Edit(/${F.reports}/**)`,
         // the session reads its threads itself: Slack reads always allowed

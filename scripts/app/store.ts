@@ -8,7 +8,8 @@ import { t } from "../core/i18n.ts";
 import { DEFAULT_SETTINGS } from "../core/settings.ts";
 import { findSujet, normalizeSujets, pickLetter, type StoredSujet, type Sujet, type Trigger } from "../core/sujet.ts";
 import { reportFile, reportPathAllowed } from "../core/text.ts";
-import { dayOfIso, F, fail, localDay, nowIso, readJson, SCRIPT, STATE, writeJson } from "./env.ts";
+import { dayOfIso, F, fail, localDay, nowIso, readJson, STATE, writeJson } from "./env.ts";
+import { selfCommand } from "./self.ts";
 
 export interface Counters {
   /** Local day -> index of the next letter. Only the current day is kept. */
@@ -140,7 +141,7 @@ export async function mutateSujets(fn: (list: Sujet[]) => Sujet[]) {
 
 export function requireSujet(ref: string | undefined): Sujet {
   const s = findSujet(loadSujets(), ref);
-  if (!s) fail(`topic not found: ${ref ?? "(none)"} · bun ${SCRIPT} list --all`);
+  if (!s) fail(`topic not found: ${ref ?? "(none)"} · ${selfCommand()} list --all`);
   return s;
 }
 

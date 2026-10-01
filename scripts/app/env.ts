@@ -2,8 +2,10 @@
  * The startup shared by every command: where the script is, where the state is, which profile is loaded.
  * Importing this module installs the profile (`useSettings`) and the policy folders (`usePolicyDirs`) for all others.
  *
- * - Workspace: `STRATO_WORKSPACE` (legacy `AIGUILLEUR_WORKSPACE`), else `workspace` from config.json, else what
- *   precedes `/.claude/` in the skill path (a project skill lives in `<project>/.claude/skills/<name>/`), else the cwd.
+ * - Workspace: `STRATO_WORKSPACE` (legacy `AIGUILLEUR_WORKSPACE`), else `workspace` from config.json, else (development
+ *   clone only) what precedes `/.claude/` in the skill path (a project skill lives in `<project>/.claude/skills/<name>/`),
+ *   else the nearest folder above the cwd holding a `.strato` or `.aiguilleur` state folder, else the cwd.
+ *   A compiled binary has no skill path: it relies on the environment, the state folder found from the cwd, or the cwd.
  * - State: `STRATO_STATE` (legacy `AIGUILLEUR_STATE`), else `<workspace>/.strato`, or `<workspace>/.aiguilleur` when
  *   only that one exists (core/paths.ts).
  */
@@ -15,12 +17,19 @@ import { envValue, findStateRoot, resolveStateDir } from "../core/paths.ts";
 import { resolveSettings, useSettings } from "../core/settings.ts";
 import { parseDuration } from "../core/text.ts";
 import { usePolicyDirs } from "../policy/prompts.ts";
+import { COMPILED, entryOf } from "./self.ts";
 import { statSync } from "node:fs";
 
-/** The entry point: sessions, hooks and ttyd all call it. */
-export const SCRIPT = join(import.meta.dir, "..", "strato.ts");
-/** The pre-rename entry point, a one-line alias of SCRIPT: hooks and prompts of older sessions still call it. */
-export const LEGACY_SCRIPT = join(import.meta.dir, "..", "aiguilleur.ts");
+/**
+ * The entry point: the binary when compiled, `scripts/strato.ts` in development. Sessions, hooks and ttyd all call it,
+ * always through app/self.ts (`selfCommand()`, `selfArgv()`), never as `bun ${SCRIPT}`.
+ */
+export const SCRIPT = entryOf();
+/**
+ * The pre-rename entry point, a one-line alias of `scripts/strato.ts`: hooks and prompts of older sessions still call
+ * it. Null in a binary, which has no such file.
+ */
+export const LEGACY_SCRIPT: string | null = COMPILED ? null : join(import.meta.dir, "..", "aiguilleur.ts");
 /** The claude binary, resolved once: the panel server does not necessarily have ~/.local/bin in its PATH. */
 export const CLAUDE_BIN = claudeBin();
 export const HOME = homedir();
@@ -87,15 +96,16 @@ export function writeJson(path: string, value: unknown) {
 
 
 /**
- * The workspace without config.json: the environment, else the project that contains the skill, else the nearest
- * folder above the cwd that holds a state folder, else the cwd. The skill path only helps when the skill is a real
- * folder of the project: Bun resolves symbolic links, so a skill linked from a shared clone reports the clone's path.
- * Walking up from the cwd (like git looks for .git) then finds the project from any of its subfolders and worktrees.
+ * The workspace without config.json: the environment, else the project that contains the skill (development clone),
+ * else the nearest folder above the cwd that holds a state folder, else the cwd. The skill path only helps when the
+ * skill is a real folder of the project: Bun resolves symbolic links, so a skill linked from a shared clone reports
+ * the clone's path; a binary has no skill path at all. Walking up from the cwd (like git looks for .git) then finds
+ * the project from any of its subfolders and worktrees.
  */
 function derivedWorkspace(): string {
   const fromEnv = envValue(process.env, "WORKSPACE");
   if (fromEnv) return expandHome(fromEnv);
-  const i = SCRIPT.indexOf("/.claude/");
+  const i = COMPILED ? -1 : SCRIPT.indexOf("/.claude/");
   if (i > 0) return SCRIPT.slice(0, i);
   return findStateRoot(process.cwd()) ?? process.cwd();
 }
