@@ -1,6 +1,7 @@
 import { normalizeDue } from "./due.ts";
 import { isTicketKey, sujetKey } from "./keys.ts";
 import { applySetToTasks, legacyTasks, syncTaskStatus, type Task } from "./tasks.ts";
+import { isItemEvent } from "./triage.ts";
 import { truncate } from "./text.ts";
 
 /**
@@ -229,7 +230,7 @@ export function takenBy(
   let taken: { from: string; at: string } | null = null;
   let ownerAfter = "";
   for (const e of events) {
-    if (e.type !== "slack" || !e.key || !keys.has(e.key) || e.at <= s.createdAt) continue;
+    if (!isItemEvent(e) || !e.key || !keys.has(e.key) || e.at <= s.createdAt) continue;
     if (e.kind === "moi") ownerAfter = e.at > ownerAfter ? e.at : ownerAfter;
     else if (TAKEN_KINDS.has(e.kind ?? "") && e.from && team.has(e.from.trim().toLowerCase()) && (!taken || e.at > taken.at)) taken = { from: e.from, at: e.at };
   }

@@ -10,6 +10,7 @@
 import { t } from "./i18n.ts";
 import type { RefreshSettings } from "./settings.ts";
 import { type Snooze, type Sujet, sujetKeys } from "./sujet.ts";
+import { isItemEvent } from "./triage.ts";
 import { openTasks, taskDraftText } from "./tasks.ts";
 import { untrusted } from "./text.ts";
 
@@ -36,11 +37,11 @@ function ageDays(from: number, now: number): number {
   return Math.floor((now - from) / DAY_MS);
 }
 
-/** The Slack messages of the topic's thread that arrived after its card, most recent last. */
+/** The messages of the topic's threads (Slack or another tool) that arrived after its card, most recent last. */
 function messagesAfterCard(s: Sujet, events: SweepEvent[]): SweepEvent[] {
   const keys = new Set(sujetKeys(s));
   const cardAt = Date.parse(s.updatedAt);
-  return events.filter((e) => e.type === "slack" && e.key && keys.has(e.key) && Date.parse(e.at) > cardAt).sort((a, b) => a.at.localeCompare(b.at));
+  return events.filter((e) => isItemEvent(e) && e.key && keys.has(e.key) && Date.parse(e.at) > cardAt).sort((a, b) => a.at.localeCompare(b.at));
 }
 
 /**

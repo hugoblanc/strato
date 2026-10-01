@@ -7,7 +7,7 @@
  * Every visible word goes through core/i18n.ts: t() on the server, tr() in the page's script.
  */
 import { faviconHref, stratoMark } from "./core/brand.ts";
-import { postOnlyAction, truncate, t, clientMessages, locale, type MessageKey, type ActivityStep, type AgentNode, agentCounts, type Due, type MasterRequest, type MrStage, MR_STAGE_ORDER, parseDue, REVUE_STALE_MS, REVUE_WINDOWS, DRAFT_MAX, draftDestination, draftText, isSnoozed, type Snooze, parseSteps, permalinkOfKey, linkOfNative, providerKeyLabel, threadOfKey, repoLabel, type SessionContext, settings, shellQuote, ticketIdOfKey, ticketUrl, type SocketHealth, socketDeaf, type Sujet, sujetKeys, takenBy, freshness, gateSince, checkable, openTasks, tasksOf, taskDraftText, taskReady, sendsUnseenMessage, type Task, type TaskKind } from "./lib.ts";
+import { isItemEvent, postOnlyAction, truncate, t, clientMessages, locale, type MessageKey, type ActivityStep, type AgentNode, agentCounts, type Due, type MasterRequest, type MrStage, MR_STAGE_ORDER, parseDue, REVUE_STALE_MS, REVUE_WINDOWS, DRAFT_MAX, draftDestination, draftText, isSnoozed, type Snooze, parseSteps, permalinkOfKey, linkOfNative, providerKeyLabel, threadOfKey, repoLabel, type SessionContext, settings, shellQuote, ticketIdOfKey, ticketUrl, type SocketHealth, socketDeaf, type Sujet, sujetKeys, takenBy, freshness, gateSince, checkable, openTasks, tasksOf, taskDraftText, taskReady, sendsUnseenMessage, type Task, type TaskKind } from "./lib.ts";
 import { type StaleSignal, staleSignals } from "./core/refresh.ts";
 import { escapeHtml, textToHtml } from "./panel.ts";
 import type { LocalVersion, UpdateCheck, UpdateResult } from "./app/update.ts";
@@ -235,12 +235,12 @@ export function attentionLabel(a: string): string {
 
 const localDate = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 
-/** The last Slack message seen in one of the topic's threads, or null if Strato logged none. */
+/** The last message seen in one of the topic's threads (Slack or another tool), or null if Strato logged none. */
 export function lastMessageOf(s: Sujet, events: BoardEvent[]): LastMessage | null {
   const keys = new Set(sujetKeys(s));
   let last: BoardEvent | null = null;
   for (const e of events) {
-    if (e.type !== "slack" || !e.key || !keys.has(e.key) || !e.kind) continue;
+    if (!isItemEvent(e) || !e.key || !keys.has(e.key) || !e.kind) continue;
     if (!last || e.at > last.at) last = e;
   }
   return last ? { kind: last.kind ?? "", from: last.from ?? "?", at: last.at, channel: last.channel, permalink: last.permalink } : null;

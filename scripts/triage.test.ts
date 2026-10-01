@@ -3,6 +3,9 @@
  * settings, and the Slack message as an item.
  */
 import { describe, expect, test } from "bun:test";
+import { lastMessageOf } from "./board.ts";
+import { staleSignals } from "./core/refresh.ts";
+import { type Sujet, takenBy } from "./core/sujet.ts";
 import { classify, type Config, slackItem } from "./chat/slack-model.ts";
 import { classifyItem, editAlreadyRaised, isItemEvent, itemEventType, NO_RULES, triageRules, withoutAuthors } from "./core/triage.ts";
 import type { Item } from "./providers/sdk.ts";
@@ -110,5 +113,42 @@ describe("message events in events.ndjson", () => {
     expect(isItemEvent({ type: "item" })).toBe(true);
     expect(isItemEvent({ type: "info" })).toBe(false);
     expect(isItemEvent({})).toBe(false);
+  });
+});
+
+describe("readers of message events", () => {
+  const sujet = (o: Partial<Sujet> = {}): Sujet => ({
+    key: "tickets:PLAT-12",
+    threads: ["tickets:PLAT-12", "C0ACME0001:1790000000.000100"],
+    letter: "A",
+    title: "Checkout fails",
+    channel: "Tickets PLAT",
+    permalink: "-",
+    asker: "Peter",
+    sessionId: "s",
+    shortId: "s1",
+    name: "n",
+    status: "waiting",
+    gate: "none",
+    waiting: "Bob",
+    next: "",
+    summary: "",
+    createdAt: "2026-09-21T08:00:00Z",
+    updatedAt: "2026-09-21T08:00:00Z",
+    history: [],
+    ...o,
+  });
+  const item = { at: "2026-09-21T10:00:00Z", type: "item", kind: "suite", key: "tickets:PLAT-12", from: "Bob", channel: "Tickets PLAT", permalink: "https://tickets.example/PLAT-12" };
+  const slack = { at: "2026-09-21T09:00:00Z", type: "slack", kind: "suite", key: "C0ACME0001:1790000000.000100", from: "Carol Smith", channel: "#acme-support", permalink: "-" };
+  const other = { at: "2026-09-21T11:00:00Z", type: "open", kind: "suite", key: "tickets:PLAT-12", from: "Mallory" };
+
+  test("the board's last message, the takeover and the card sweep read items and legacy Slack events alike", () => {
+    expect(lastMessageOf(sujet(), [slack, item, other])?.from).toBe("Bob");
+    expect(lastMessageOf(sujet(), [slack, other])?.from).toBe("Carol Smith");
+    expect(takenBy(sujet(), [slack], ["Carol Smith"])?.from).toBe("Carol Smith");
+    expect(takenBy(sujet(), [item, other], ["Bob", "Mallory"])?.from).toBe("Bob");
+    const now = Date.parse("2026-09-21T12:00:00Z");
+    expect(staleSignals(sujet(), [item], now, { staleDays: 3, graceMinutes: 20 }).map((x) => x.code)).toEqual(["fil"]);
+    expect(staleSignals(sujet(), [other], now, { staleDays: 3, graceMinutes: 20 })).toEqual([]);
   });
 });
