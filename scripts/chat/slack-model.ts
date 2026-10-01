@@ -1,6 +1,10 @@
 import { threadOfKey } from "../core/keys.ts";
 import type { SlackSettings } from "../core/settings.ts";
 import type { Sujet } from "../core/sujet.ts";
+import { authorIgnored, classifyItem, type Kind, NO_RULES } from "../core/triage.ts";
+import type { ConversationKind, Item } from "../providers/sdk.ts";
+
+export { isSilent, type Kind } from "../core/triage.ts";
 
 /**
  * The Slack side of Strato: triage of incoming messages, permalinks, readable text, destination of a draft.
@@ -77,13 +81,6 @@ export function socketDeaf(h: Partial<SocketHealth> | undefined, now: number): b
   if (now - h.missedAt > 2 * SOCKET_DEAF_AFTER_MS) return false;
   return (h.lastEventAt ?? 0) < h.missedAt - SOCKET_DEAF_AFTER_MS;
 }
-
-/**
- * suite/moi ("follow-up"/"me"): thread of a tracked topic. dm/mention/canal/fil ("channel"/"thread"): outside a
- * topic, raised to the master. tiers ("third party"): explicitly targets someone else. bot: an author from
- * `ignoreAuthors`. These last two go to the digest. Stored values: never rename them.
- */
-export type Kind = "suite" | "moi" | "dm" | "mention" | "canal" | "fil" | "tiers" | "bot";
 
 /** Slack link -> channel, message ts, parent thread ts if any. */
 export function parsePermalink(url: string): { channel: string; ts: string; threadTs: string | null } | null {
@@ -204,20 +201,43 @@ export function targetsSomeoneElse(text: string, cfg: Pick<Config, "me" | "subte
 }
 
 export function isIgnoredAuthor(author: string, cfg: Pick<Config, "ignoreAuthors">): boolean {
-  const a = author.trim().toLowerCase();
-  return (cfg.ignoreAuthors ?? []).some((x) => x.trim().toLowerCase() === a);
+  return authorIgnored(author, cfg.ignoreAuthors);
 }
 
-/** Labels that do not go to stdout: logged as `info` for the digest. */
-export function isSilent(kind: Kind | null): boolean {
-  return kind === "tiers" || kind === "bot";
+/** A DM, a group DM or a channel, as triage reads a conversation. */
+export const conversationKind = (c: SlackChannel): ConversationKind => (c.is_im ? "dm" : c.is_mpim ? "group" : "channel");
+
+/**
+ * A Slack message as a provider item. The costly part is left for when triage keeps it (`Provider.complete`): the
+ * author's name is their id until then, and the text is the raw mrkdwn. The facts triage reads (mentions, the person's
+ * own message, the conversation's kind) are all here, read with `cfg`; an edit carries the facts of its previous version.
+ */
+export function slackItem(m: SlackMatch, cfg: Pick<Config, "me" | "subteams">): Item {
+  const raw = mentionText(m);
+  const facts = (x: SlackMatch) => {
+    const text = mentionText(x);
+    return { mentionsMe: mentionsMe(text, cfg), targetsOther: targetsSomeoneElse(text, cfg) };
+  };
+  return {
+    thread: threadKey(m),
+    id: `${m.channel.id}:${m.ts}`,
+    event: "message",
+    author: { id: m.user ?? "", name: m.user || m.username || "bot", isMe: m.user === cfg.me, isBot: !m.user },
+    conversation: { id: m.channel.id, label: channelLabel(m.channel), kind: conversationKind(m.channel) },
+    text: bestText(m),
+    time: Math.round(Number(m.ts) * 1000),
+    link: m.permalink ?? "",
+    mentionsMe: mentionsMe(raw, cfg),
+    targetsOther: targetsSomeoneElse(raw, cfg),
+    ...(m.previous ? { edited: { before: facts(m.previous) } } : {}),
+  };
 }
 
 /**
- * Should this message be raised to the master, and under which label?
- * `tracked` = all the keys of known topics; `participated` = threads where the person served wrote recently
- * (an answer without a mention there is often the one they wait for). `author` = display name, for `ignoreAuthors`:
- * without it, the bot filter is not applied. null = ignored silently.
+ * Should this message be raised to the master, and under which label? The Slack form of `classifyItem`
+ * (core/triage.ts), kept with its signature. `tracked` = all the keys of known topics; `participated` = threads where
+ * the person served wrote recently. `author` = display name, for `ignoreAuthors`: without it, the bot filter is not
+ * applied. null = ignored silently.
  */
 export function classify(
   m: SlackMatch,
@@ -226,25 +246,9 @@ export function classify(
   participated: Set<string> = new Set(),
   author?: string,
 ): Kind | null {
-  const key = threadKey(m);
-  const own = m.user === cfg.me;
-  if (tracked.has(key)) return own ? "moi" : "suite";
-  if (own) return null;
-  if (cfg.ignoreChannels.includes(m.channel.id)) return null;
-  const kind = untrackedKind(m, cfg, participated);
-  if (kind && author !== undefined && isIgnoredAuthor(author, cfg)) return "bot";
-  return kind;
-}
-
-function untrackedKind(m: SlackMatch, cfg: Config, participated: Set<string>): Kind | null {
-  const raw = mentionText(m);
-  const elsewhere = targetsSomeoneElse(raw, cfg);
-  if (m.channel.is_im) return "dm";
-  if (m.channel.is_mpim) return elsewhere ? "tiers" : "dm";
-  if (mentionsMe(raw, cfg)) return "mention";
-  if (cfg.watchChannels.includes(m.channel.id)) return elsewhere ? "tiers" : "canal";
-  if (participated.has(threadKey(m))) return elsewhere ? "tiers" : "fil";
-  return null;
+  const item = slackItem(m, cfg);
+  const rules = { ...NO_RULES, watch: cfg.watchChannels, ignore: cfg.ignoreChannels, ignoreAuthors: author === undefined ? [] : cfg.ignoreAuthors };
+  return classifyItem({ ...item, author: { ...item.author, name: author ?? "" } }, threadKey(m), rules, tracked, participated);
 }
 
 /**

@@ -17,6 +17,7 @@ export * from "./core/sujet.ts";
 export * from "./core/tasks.ts";
 export * from "./core/due.ts";
 export * from "./core/cards.ts";
+export * from "./core/triage.ts";
 export * from "./core/master.ts";
 export * from "./core/version.ts";
 export * from "./chat/slack-model.ts";
