@@ -5,7 +5,7 @@
 import { appendFileSync, existsSync, linkSync, mkdirSync, readdirSync, readFileSync, renameSync, rmdirSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { t } from "../core/i18n.ts";
-import { DEFAULT_SETTINGS } from "../core/settings.ts";
+import { newInstallSettings } from "../core/settings.ts";
 import { findSujet, normalizeSujets, pickLetter, type StoredSujet, type Sujet, type Trigger } from "../core/sujet.ts";
 import { reportFile, reportPathAllowed } from "../core/text.ts";
 import { dayOfIso, F, fail, localDay, nowIso, readJson, STATE, writeJson } from "./env.ts";
@@ -21,7 +21,7 @@ export interface Counters {
 /** Creates the state folder, and a complete config.json with default values if missing: that is the file to fill in. */
 export function ensureState() {
   mkdirSync(STATE, { recursive: true });
-  if (!existsSync(F.config)) writeJson(F.config, DEFAULT_SETTINGS);
+  if (!existsSync(F.config)) writeJson(F.config, newInstallSettings());
 }
 
 export function logEvent(e: Record<string, unknown>) {

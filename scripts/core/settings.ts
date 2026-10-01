@@ -141,6 +141,17 @@ export const DEFAULT_SETTINGS: Settings = {
   ui: { iterm: false, port: 4343, slackApp: true, locale: "en" },
 };
 
+/**
+ * What a new installation's config.json starts from: the defaults, but in shadow mode. The resolved default stays
+ * `shadow: false`, so an existing profile without the key keeps behaving as before; only a profile created by Strato
+ * (first run, or `setup --write` with no config.json yet) starts by posting nothing until `setup --live`.
+ */
+export const NEW_INSTALL_PROFILE = { workers: { shadow: true } } as const;
+
+export function newInstallSettings(): Settings {
+  return { ...DEFAULT_SETTINGS, workers: { ...DEFAULT_SETTINGS.workers, ...NEW_INSTALL_PROFILE.workers } };
+}
+
 type Raw = Record<string, unknown>;
 const isObject = (v: unknown): v is Raw => typeof v === "object" && v !== null && !Array.isArray(v);
 

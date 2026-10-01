@@ -16,7 +16,7 @@ import { basename, join } from "node:path";
 import { CLAUDE_BIN, F, fail, flags, localDay, out, readJson, run, STATE, WORKSPACE, writeJson } from "../app/env.ts";
 import { appToken, tokenCandidates } from "../app/slack.ts";
 import { type CheckItem, checkReport, SLACK_SCOPES, type Detected, displayNameOf, firstNameOf, linearWorkspaces, localeFromEnv, mergeProfile, parseRemote, profileDiff, profileErrors, type Remote, type SearchMatch, slackWorkspaceFromUrl, suggestedConfig, ticketPrefixes, topChannels } from "../core/setup.ts";
-import { missingSettings, resolveSettings, settings, useSettings } from "../core/settings.ts";
+import { missingSettings, NEW_INSTALL_PROFILE, resolveSettings, settings, useSettings } from "../core/settings.ts";
 
 export const SHADOW_REFUSAL = "shadow mode: nothing is posted (bun strato.ts setup --live turns it off)";
 
@@ -269,7 +269,8 @@ function writeProfile(incoming: unknown, force: boolean, label: string) {
   mkdirSync(STATE, { recursive: true });
   const existed = existsSync(F.config);
   const before = existed ? readJson<unknown>(F.config, {}) : {};
-  const next = existed && !force ? mergeProfile(before, incoming) : incoming;
+  // a profile created here starts in shadow mode unless it says otherwise: the first day posts nothing
+  const next = existed ? (force ? incoming : mergeProfile(before, incoming)) : mergeProfile(NEW_INSTALL_PROFILE, incoming);
   const diff = profileDiff(before, next);
   writeJson(F.config, next);
   out(`${existed ? (force ? "replaced (--force)" : "merged into") : "created"} ${F.config}`);

@@ -81,7 +81,7 @@ The state folder holds:
 | `slack` | `team` (name returned by `auth.test`), `workspace` (subdomain), `me`, `subteams`, `teamAlias` (the team group as written, "@support"), `watchChannels`, `ignoreChannels`, `ignoreAuthors`, `teammates`, `appId`, `appTokenFile`, `pollInterval` |
 | `tracker` | Linear: `workspace` and ticket `prefixes`. `null`: no tickets |
 | `forge` | GitLab: `host`, `repos` (short name -> project), `aliases`, `iidRanges` and `defaultRepo` for a bare "!N", `integrationBranch` and `releaseBranch`. `null`: no Delivery line |
-| `workers` | `skipPermissions` (false by default), `allow`, the permissions added to the sessions (read-only database, tracker), and `shadow` (false by default): sessions prepare and post nothing, the board's Send and Go are off, the server refuses them; `setup --live` turns it off |
+| `workers` | `skipPermissions` (false by default), `allow`, the permissions added to the sessions (read-only database, tracker), and `shadow` (true in a profile Strato creates, false when the key is absent from an older one): sessions prepare and post nothing, the board's Send and Go are off, the server refuses them; `setup --live` turns it off |
 | `gc` | Session collector: `everyMinutes` (60), `idleHours` (12); 0 disables |
 | `refresh` | Sweep of aged cards: `auto` (true), `staleDays` (3), `graceMinutes` (20), `everyMinutes` (30), `maxParallel` (3) |
 | `policy` | Free template variables (`{{name}}`) |
@@ -157,7 +157,7 @@ Tell them the cost in one sentence: that template no longer follows upstream upd
 
 ### 4. Write the profile
 
-1. Merge `suggested` and the answers into one JSON object, with `"workers": { "shadow": true }` for the first day.
+1. Merge `suggested` and the answers into one JSON object. A profile created by Strato starts in shadow mode (`workers.shadow: true`) unless the object says otherwise: leave the key out.
    Write it to a temporary file outside the repository (`$TMPDIR/strato-profile.json`), then `$STRATO setup --write <that file>`.
    The command validates every field (an unknown field or a wrong type is refused, nothing written), merges into an existing `config.json` and prints the diff; `--force` replaces the file instead, only if the owner asks to start over.
    Show the diff lines and the "to fill in" line; settle anything left.

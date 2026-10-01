@@ -262,6 +262,33 @@ describe("setup --write and --live", () => {
     expect(res.out).toContain("shadow mode: on");
   }, 20_000);
 
+  test("a created profile starts in shadow mode unless it says otherwise (O1)", async () => {
+    const r = rig();
+    const file = join(r.dir, "profile.json");
+    writeFileSync(file, JSON.stringify({ owner: { name: "Alice" }, slack: { team: "Acme", workspace: "acme", me: "UALICE" } }));
+    const created = join(r.dir, "ws", ".strato", "config.json");
+    const res = await cli(r, ["setup", "--write", file], { STRATO_STATE: "", AIGUILLEUR_STATE: "" });
+    expect(res.code).toBe(0);
+    expect(JSON.parse(readFileSync(created, "utf8")).workers).toEqual({ shadow: true });
+    expect(res.out).toContain("+ workers.shadow: true");
+    expect(res.out).toContain("shadow mode: on");
+
+    const r2 = rig();
+    writeFileSync(file, JSON.stringify({ owner: { name: "Alice" }, workers: { shadow: false } }));
+    expect((await cli(r2, ["setup", "--write", file], { STRATO_STATE: "", AIGUILLEUR_STATE: "" })).code).toBe(0);
+    expect(JSON.parse(readFileSync(join(r2.dir, "ws", ".strato", "config.json"), "utf8")).workers).toEqual({ shadow: false });
+  }, 20_000);
+
+  test("the first run writes a profile in shadow mode; an existing one without the key stays live (O1)", async () => {
+    const r = rig();
+    const fresh = join(r.dir, "fresh-state");
+    await cli(r, ["doctor"], { STRATO_STATE: fresh });
+    expect(JSON.parse(readFileSync(join(fresh, "config.json"), "utf8")).workers.shadow).toBe(true);
+    await cli(r, ["doctor"]);
+    expect(config(r).workers).toBeUndefined();
+    expect(resolveSettings(config(r)).workers.shadow).toBe(false);
+  }, 20_000);
+
   test("an existing profile is merged, never overwritten without --force, and the diff is shown", async () => {
     const r = rig();
     const file = join(r.dir, "profile.json");
