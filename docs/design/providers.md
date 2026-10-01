@@ -548,9 +548,10 @@ export interface Provider {
   /**
    * Push: resolves when the connection ends, or soon after `ctx.signal` aborts it. `onItems` is called as items arrive,
    * with a cursor when the tool gives one, and with no item at all for a delivery that carried none (the connection is
-   * alive). `events.opened` says the connection is open; `refused` says why the tool refused to open it.
+   * alive). `events.opened` says the connection is open; `events.failed` says a delivery could not be read into an
+   * item (its link, and why), which the listener prints like a triage error; `refused` says why the tool refused to open it.
    */
-  subscribe?(ctx: AccountContext, onItems: (items: Item[], cursor?: IngestCursor) => void, events?: { opened(): void }): Promise<{ end: "clean" | "cut" | "fatal"; retryAfterMs?: number; refused?: string }>;
+  subscribe?(ctx: AccountContext, onItems: (items: Item[], cursor?: IngestCursor) => void, events?: { opened(): void; failed?(link: string, reason: string): void }): Promise<{ end: "clean" | "cut" | "fatal"; retryAfterMs?: number; refused?: string }>;
   /** The replies of one thread since `since` (Unix ms), oldest first, without the item that opened it: the catch-up of tracked threads. */
   replies?(ctx: AccountContext, thread: string, opts: { since: number; max: number }): Promise<Item[]>;
   /** Fills in what was too costly to read for every item (display names, readable text), only for the items triage keeps. */
@@ -1673,14 +1674,24 @@ Each stage is one or more commits that leave `bun run check` green and the guard
   - The provider interface gains two optional methods and two details of `subscribe` (section 4.10, and the exec table of 13.2):
     `replies`, because the catch-up of tracked threads needs the facts of each reply (who wrote it), which `context` does not carry;
     `complete`, because reading every author's name before triage would cost Slack one `users.info` per new author on every pass, which the two-step triage avoided;
-    `subscribe` reports an empty delivery (the socket's health counts every event), its opening (the "back" line) and why it was refused (the outage lines).
+    `subscribe` reports an empty delivery (the socket's health counts every event), its opening (the "back" line), a delivery it could not read (`events.failed`, printed on stdout as the `[strato] triage error <permalink>` line the Slack listener always printed, since the master's Monitor reads stdout) and why it was refused (the outage lines).
   - `app/slack.ts` holds one `SlackClient` per Slack account (token, HTTP, names and conversation caches); its top-level functions work on the default account's client with their signatures.
     A named Slack account reads its tokens from its secret file and goes through its account context's fetch; the environment variables of a `SecretSpec` are legacy sources of the default account only, or a named account would pick up the default account's token.
   - The Socket Mode connection (`connexionSocket`) moves from `commands/watch.ts` to `app/slack.ts`, re-exported, since the provider uses it.
   - A provider account's cursor is `ingest.json` in its folder, not `cursor.json`: the provider's own store may use that name.
   - The thread catch-up runs where it ran: in `listen` at startup, every 5 minutes and on wake, for every account with `replies`; `watch` keeps polling without it, as it did for Slack.
   - A push account whose connection ends `fatal` is polled instead, with one line, rather than stopped.
-  - The default Slack account is listened to when it is the only source (as before: no token stops the command), and next to other accounts when the `slack` section names the person or the workspace, or a token is found; a failure is then one line and the other accounts carry on.
+  - The default Slack account is listened to when it is the only source (as before: no token stops the command), and next to other accounts when the `slack` section names the person or the workspace, or a token is found.
+    Next to other accounts it gets the same failure handling as they do (`slackReady` in `commands/watch.ts`): the other loops and the timers start first, and Slack connects while they run.
+    A failure that may clear (network, rate limit, a workspace URL Slack did not give) is said once and retried with a growing delay, from 5 seconds up to 5 minutes, until Slack answers, with one line when it is back; one that will not clear (no usable token, no app token, a socket refused for good) is one line, "Slack: …, listening to this account stopped", and the others carry on.
+    Alone, it connects first and a failure stops the command after the same waits as before (5, 15, 30 and 60 seconds while Slack does not answer, then exit 78).
+    A line about the default Slack account names Slack once: Slack's own error text ("Slack: token_revoked") loses its prefix.
+  - The default Slack account's `connect` makes one round of auth.test over the tokens found (`probeSlack` in `app/slack.ts`), and the same answer gives the workspace's id and URL; a named account also reads them from its single auth.test.
+    The waits `connectSlack` made while Slack did not answer move to the caller, which knows whether Slack is alone; `connectSlack` keeps them for its other callers.
+  - A triage error holds the cursor back, as 4.8 says: `processItems` returns how many items failed, and `pollPass`, the push path and the default Slack account's passes (`syncedTo` in `listen` and `watch`) do not move their cursor past such an item; the next pass reads the same window again, and `seen` absorbs the items already handled.
+    An item whose triage fails on every pass keeps its account's cursor where it is, with one `triage error` line per pass, until the cause is fixed: the cursor never skips a request silently.
+  - The catch-up of tracked threads reads at most `THREAD_REPLIES_MAX` replies per thread, a constant of the engine; Slack's client keeps its own cap.
+  - Left for a later stage, because each one changes what the board or the golden replay reads: folding the default Slack account's loop (its resync and its poll loop in `commands/watch.ts`) into `runAccount`, with hooks for the socket's health and `tick.json`; `backlogItems`, which repeats part of `processItems` without writing anything; `conversationOfKey` in `core/keys.ts`, which reads Slack keys only; and the Slack forms `slackSource` and `processMatches` in `app/ingest.ts` (the second kept only for its tests).
   - `keepMessage` stores the item's key and conversation; `open --msg` opens on the key when the link was not kept, and the topic stores its conversation (`Sujet.conversation`), so the event line's nearby topics work for any tool.
   - Every provider string goes through `oneLine` (core/text.ts) before `untrusted()`; item links and the links quoted in prompts (`{{permalink}}`) go through `checkedLink` (core/links.ts): https, at most 2 KiB, no whitespace nor control character, no credentials, on the provider's hosts (any installed provider's for a prompt), else `-`.
     The link kept is the normalized one (`URL.href`) with every character a shell reads (`$`, backtick, quotes, backslash, `;`, `|`, `<`, `>`, parentheses, brackets, braces, `!`, `*`, `?` except the one that starts the query, `&` outside the query) percent-encoded: it travels to the master's line, the inbox and the prompts, and the master writes it on command lines (`attach <letter> "<link>"`).
