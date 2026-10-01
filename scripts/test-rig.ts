@@ -23,7 +23,7 @@ if [ "$1" = "agents" ]; then
 fi
 if [ "$1" = "--bg" ]; then
   shift
-  echo "$1" >> "$D/kinds.log"
+  printf "%s\\n" "$1" >> "$D/kinds.log"
   printf '%s\\n---\\n' "$*" >> "$D/spawns.log"
   sleep "\${FAKE_SPAWN_DELAY:-0}"
   n=$(wc -l < "$D/kinds.log" | tr -d ' ')
