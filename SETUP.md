@@ -65,7 +65,7 @@ cd <project>/.claude/skills/strato/scripts && bun install
 
 ## 3. Connect Slack
 
-Want to see the board first? `bun .claude/skills/strato/scripts/strato.ts demo` serves it with fictional topics, no token needed.
+Want to see the board first? `strato demo` serves it with fictional topics, no token needed.
 
 Strato reads and posts **as you**, with a user token.
 Both options below start from the same Slack app, created from [`examples/slack-app-manifest.yaml`](examples/slack-app-manifest.yaml):
@@ -93,7 +93,7 @@ The manifest asks for the scopes the code actually calls: `search:read`; `channe
 Store it with one command, in your own terminal (not in a Claude session, so the token never enters a transcript):
 
 ```bash
-bun .claude/skills/strato/scripts/strato.ts setup --token
+strato setup --token
 ```
 
 Paste the token when asked; it is not shown.
@@ -158,7 +158,7 @@ Finally it starts the board and the listener in **shadow mode**.
 Prefer doing it by hand? Copy [`examples/profile/`](examples/profile/), edit it, then:
 
 ```bash
-bun .claude/skills/strato/scripts/strato.ts setup --write my-profile.json
+strato setup --write my-profile.json
 cp my-local.md .strato/local.md
 ```
 
@@ -206,7 +206,7 @@ Read the cards for a day or two.
 When the drafts are ones you would send, go live:
 
 ```bash
-bun .claude/skills/strato/scripts/strato.ts setup --live
+strato setup --live
 ```
 
 The running board picks it up without a restart.

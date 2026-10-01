@@ -117,7 +117,7 @@ The goal is the profile of `examples/profile/` (read both files once before star
 
 `$STRATO setup --check`.
 A `MISS … [blocking]` line comes first: Bun or Claude Code missing, or no Slack user token.
-For the token, walk the owner through `SETUP.md` "Connect Slack": `setup --slack-app` opens the app creation with the manifest filled in, then the owner runs `bun $S setup --token` **in their own terminal** and pastes the token there, so it never enters this transcript. Never ask for the token in the chat. Wait until `setup --check` shows `ok  slack`: without a token, `--detect` finds nothing from Slack.
+For the token, walk the owner through `SETUP.md` "Connect Slack": `setup --slack-app` opens the app creation with the manifest filled in, then the owner runs `$STRATO setup --token` **in their own terminal** and pastes the token there, so it never enters this transcript. Never ask for the token in the chat. Wait until `setup --check` shows `ok  slack`: without a token, `--detect` finds nothing from Slack.
 Optional lines (`socket`, `glab`, `ttyd`, `iTerm2`) are mentioned once, in one sentence, never blocking.
 A `scopes` warning is worth fixing now if it lists `search:read`, a `*:history` scope or `chat:write`.
 
