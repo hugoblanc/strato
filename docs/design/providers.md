@@ -352,13 +352,19 @@ export interface Item {
   text: string;
   /** Unix ms. */
   time: number;
-  /** https link to the item, else to its thread. The core drops it unless it is https, on `hosts`, and without whitespace. */
+  /**
+   * https link to the item, else to its thread. The core drops it unless it is https, on `hosts`, without whitespace
+   * nor credentials, and percent-encodes what a shell would read in it.
+   */
   link: string;
   /** The person, or one of their groups, is mentioned; or the tool says the item targets them (assignment). */
   mentionsMe: boolean;
   /** At least one person is explicitly targeted, and not the person served. */
   targetsOther: boolean;
-  /** An edit: the facts of the version before it, so an edit is raised only when it adds a mention. */
+  /**
+   * An edit: the facts of the version before it, so an edit is raised only when it adds a mention. The core raises an
+   * edit of an item once, even when overlapping polls report it again.
+   */
   edited?: { before: Pick<Item, "mentionsMe" | "targetsOther"> };
   /** Why the tool notified the person, when it says so (Linear notifications). Informative, for the event line. */
   reason?: "assigned" | "mentioned" | "subscribed" | "watched";
@@ -1676,7 +1682,13 @@ Each stage is one or more commits that leave `bun run check` green and the guard
   - A push account whose connection ends `fatal` is polled instead, with one line, rather than stopped.
   - The default Slack account is listened to when it is the only source (as before: no token stops the command), and next to other accounts when the `slack` section names the person or the workspace, or a token is found; a failure is then one line and the other accounts carry on.
   - `keepMessage` stores the item's key and conversation; `open --msg` opens on the key when the link was not kept, and the topic stores its conversation (`Sujet.conversation`), so the event line's nearby topics work for any tool.
-  - Every provider string goes through `oneLine` (core/text.ts) before `untrusted()`; item links and the links quoted in prompts (`{{permalink}}`) go through `checkedLink` (core/links.ts): https, at most 2 KiB, no whitespace nor control character, on the provider's hosts (any installed provider's for a prompt), else `-`.
+  - Every provider string goes through `oneLine` (core/text.ts) before `untrusted()`; item links and the links quoted in prompts (`{{permalink}}`) go through `checkedLink` (core/links.ts): https, at most 2 KiB, no whitespace nor control character, no credentials, on the provider's hosts (any installed provider's for a prompt), else `-`.
+    The link kept is the normalized one (`URL.href`) with every character a shell reads (`$`, backtick, quotes, backslash, `;`, `|`, `<`, `>`, parentheses, brackets, braces, `!`, `*`, `?` except the one that starts the query, `&` outside the query) percent-encoded: it travels to the master's line, the inbox and the prompts, and the master writes it on command lines (`attach <letter> "<link>"`).
+    A Slack permalink comes back unchanged.
+  - `runAccount` never rejects: a `subscribe` that throws counts as a cut connection (retried with its delay, said once) or, when the error is fatal, as a tool that will not push (polled instead); an identity from `connect` is checked field by field (`checkedIdentity`), and one that is not an object is a retried provider error; anything else the loops do not expect ends that account with one line.
+    `watch` adds a last `.catch` on each account's loop, and a fatal Slack error next to other accounts is said like any other account's ("Slack: …, listening to this account stopped") instead of "polling stopped".
+  - An edit is remembered under its item's id plus `#edit`, next to the id itself, so a tool that reports the same edit on every overlapping poll raises it once.
+    The default Slack account keeps these marks in memory only: its `seen.json` keeps the shape older versions read, and Slack reports an edit once, from its socket.
   - Two behaviors change on failures only: a participation search that fails at startup leaves the participated threads empty instead of crashing the listener, and `backlog` reports a Slack failure on one line instead of a stack.
 
 ### act
