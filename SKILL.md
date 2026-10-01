@@ -31,7 +31,8 @@ Type the command in full every time (`$STRATO doctor` is `strato doctor`, or `bu
 | Command | Role |
 | --- | --- |
 | `$STRATO doctor` | The loaded profile, what is missing, the Slack token, the socket, `claude agents`, the state, the policy, the locale |
-| `$STRATO setup --check \| --detect \| --write <file.json> [--force] \| --live` | The guided setup (below, "Setup"): prerequisites, what can be guessed, writing the profile, leaving shadow mode |
+| `$STRATO setup --check \| --detect \| --write <file.json> [--force] \| --live \| --slack-app` | The guided setup (below, "Setup"): prerequisites, what can be guessed, writing the profile, leaving shadow mode |
+| `$STRATO demo [--port 4394] [--locale en\|fr] \| --clean` | A board of fictional Acme topics in a throwaway folder, no Slack, no session: to show what Strato does before any setup |
 | `$STRATO listen` | Socket Mode listener, to run through `Monitor`: one line per event to handle, received by WebSocket. The normal mode |
 | `$STRATO watch` | The same by polling every `slack.pollInterval` seconds. Fallback when the socket does not open |
 | `$STRATO backlog --since 12h` | Recent relevant messages, to catch up |

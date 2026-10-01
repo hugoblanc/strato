@@ -81,6 +81,9 @@ switch (cmd) {
   case "setup":
     await setup(rest);
     break;
+  case "demo":
+    await (await import("./commands/demo.ts")).demo(rest);
+    break;
   case "watch":
     await watch(rest[0]);
     break;

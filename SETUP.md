@@ -65,6 +65,8 @@ cd <project>/.claude/skills/strato/scripts && bun install
 
 ## 3. Connect Slack
 
+Want to see the board first? `bun .claude/skills/strato/scripts/strato.ts demo` serves it with fictional topics, no token needed.
+
 Strato reads and posts **as you**, with a user token.
 Both options below start from the same Slack app, created from [`examples/slack-app-manifest.yaml`](examples/slack-app-manifest.yaml):
 

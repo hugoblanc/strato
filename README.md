@@ -24,6 +24,17 @@ Nothing is posted on your behalf and nothing is written to production without yo
 - A Slack user token (`xoxp-…`) for your workspace, from a Slack app created with [`examples/slack-app-manifest.yaml`](examples/slack-app-manifest.yaml): [create it in one click](https://api.slack.com/apps?new_app=1&manifest_yaml=display_information%3A%0A%20%20name%3A%20Strato%0A%20%20description%3A%20Routes%20your%20Slack%20to%20Claude%20Code%20work%20sessions%20on%20your%20machine.%20Posts%20only%20on%20your%20click.%0A%20%20background_color%3A%20%22%231b1406%22%0Aoauth_config%3A%0A%20%20scopes%3A%0A%20%20%20%20user%3A%0A%20%20%20%20%20%20-%20search%3Aread%0A%20%20%20%20%20%20-%20channels%3Ahistory%0A%20%20%20%20%20%20-%20groups%3Ahistory%0A%20%20%20%20%20%20-%20im%3Ahistory%0A%20%20%20%20%20%20-%20mpim%3Ahistory%0A%20%20%20%20%20%20-%20channels%3Aread%0A%20%20%20%20%20%20-%20groups%3Aread%0A%20%20%20%20%20%20-%20im%3Aread%0A%20%20%20%20%20%20-%20mpim%3Aread%0A%20%20%20%20%20%20-%20users%3Aread%0A%20%20%20%20%20%20-%20usergroups%3Aread%0A%20%20%20%20%20%20-%20chat%3Awrite%0A%20%20%20%20%20%20-%20reactions%3Awrite%0Asettings%3A%0A%20%20event_subscriptions%3A%0A%20%20%20%20user_events%3A%0A%20%20%20%20%20%20-%20message.channels%0A%20%20%20%20%20%20-%20message.groups%0A%20%20%20%20%20%20-%20message.im%0A%20%20%20%20%20%20-%20message.mpim%0A%20%20interactivity%3A%0A%20%20%20%20is_enabled%3A%20false%0A%20%20org_deploy_enabled%3A%20false%0A%20%20socket_mode_enabled%3A%20true%0A%20%20token_rotation_enabled%3A%20false), manifest prefilled. Socket Mode and its app token (`xapp-…`) are optional: without them, Strato polls the search API.
 - Optional: `glab` and a `GITLAB_TOKEN` to follow merge requests, the Linear MCP for tickets, `ttyd` for the in-page terminal, iTerm2 for the sidebar panel.
 
+## Try it without Slack
+
+See the board before creating any Slack app: from a clone of this repository,
+
+```bash
+bun scripts/strato.ts demo
+```
+
+It opens `http://127.0.0.1:4394/board` with four fictional topics (Acme, Alice, Bob…): a draft ready to send, a decision, a session at work, a topic waiting on a teammate.
+Nothing is connected to Slack, no Claude session runs, and nothing can be posted; the demo lives in a temporary folder that `demo --clean` removes.
+
 ## Installation
 
 One line, on macOS or Linux:
