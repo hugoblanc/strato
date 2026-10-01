@@ -7,7 +7,7 @@
  * Every visible word goes through core/i18n.ts: t() on the server, tr() in the page's script.
  */
 import { faviconHref, stratoMark } from "./core/brand.ts";
-import { isItemEvent, postOnlyAction, truncate, t, clientMessages, locale, type MessageKey, type ActivityStep, type AgentNode, agentCounts, type Due, type MasterRequest, type MrStage, MR_STAGE_ORDER, parseDue, REVUE_STALE_MS, REVUE_WINDOWS, draftText, isSnoozed, type Snooze, parseSteps, permalinkOfKey, providerKeyLabel, providerLabel, repoLabel, isResolved, maxTextOf, providerOfKey, renderHtml, resolveTarget, type ResolvedTarget, targetLink, threadInfoOfKey, type UnresolvedTarget, type SessionContext, settings, shellQuote, ticketIdOfKey, ticketUrl, type SocketHealth, socketDeaf, type Sujet, sujetKeys, takenBy, freshness, gateSince, checkable, openTasks, tasksOf, taskDraftText, taskReady, sendsUnseenMessage, type Task, type TaskKind } from "./lib.ts";
+import { isItemEvent, postOnlyAction, truncate, t, clientMessages, locale, type MessageKey, type ActivityStep, type AgentNode, agentCounts, type Due, type MasterRequest, type MrStage, MR_STAGE_ORDER, parseDue, REVUE_STALE_MS, REVUE_WINDOWS, draftText, isSnoozed, type Snooze, parseSteps, permalinkOfKey, providerKeyLabel, providerLabel, repoLabel, isResolved, maxTextOf, planOfTask, planSha, providerOfKey, unknownOf, renderHtml, resolveTarget, type ResolvedTarget, targetLink, threadInfoOfKey, type UnresolvedTarget, type SessionContext, settings, shellQuote, ticketIdOfKey, ticketUrl, type SocketHealth, socketDeaf, type Sujet, sujetKeys, takenBy, freshness, gateSince, checkable, openTasks, tasksOf, taskDraftText, taskReady, sendsUnseenMessage, type Task, type TaskKind } from "./lib.ts";
 import { type StaleSignal, staleSignals } from "./core/refresh.ts";
 import { escapeHtml, textToHtml } from "./panel.ts";
 import { slackEventsPage } from "./providers/slack/model.ts";
@@ -773,13 +773,18 @@ function taskBox(s: Sujet, x: Task, hint: boolean): string {
     // the action does more than post (merge then post…): Go to the session, which runs everything in order
     const viaSession = !postOnlyAction(x);
     const postButtons = `<div class="mt-2.5 flex flex-wrap items-center gap-1.5">${shadow ? shadowButton() : `<button type="button" data-post class="${BTN_PRIMARY}"${why ? ` disabled title="${escapeHtml(why)}"` : ` title="${escapeHtml(t("board.draft.send.tip"))}"`}><span data-label>${t("board.draft.send")}</span>${keyHint}</button>`}<button type="button" data-edit class="${BTN}">${t("board.draft.edit")}</button><button type="button" data-copy class="${BTN}">${t("board.draft.copy")}</button>${ops}</div>`;
-    return `<form class="max-w-[78ch] cursor-auto rounded-lg border border-accent/40 bg-accent-soft/30 px-4 py-3" data-draft data-key="${key}" data-task="${id}" data-draft-to="${escapeHtml(x.draftTo ?? "")}" data-postable="${why || viaSession || shadow ? "0" : "1"}">
+    // the hash of the plan shown: Send sends it back, and the gate acts only if the task still hashes to it
+    const plan = planOfTask(s, x);
+    // the last send may have gone out (no answer, or a board that stopped mid-send): said before any new click
+    const maybe = unknownOf(x, Date.now());
+    const sha = "plan" in plan ? ` data-sha="${planSha(plan.plan)}"` : "";
+    return `<form class="max-w-[78ch] cursor-auto rounded-lg border border-accent/40 bg-accent-soft/30 px-4 py-3" data-draft data-key="${key}" data-task="${id}" data-draft-to="${escapeHtml(x.draftTo ?? "")}"${sha} data-postable="${why || viaSession || shadow ? "0" : "1"}">
 <div class="flex items-center gap-2 text-[12.5px]"><span class="font-semibold text-accent-ink">${t("board.draft.label")}</span>${draftToLink(x, dest)}<span class="ml-auto shrink-0 text-[11.5px] tabular-nums text-muted">${t("board.draft.chars", { n: text.length })}</span></div>
 <div class="mt-1.5 max-h-80 overflow-y-auto whitespace-pre-wrap text-[13.5px] leading-relaxed text-ink" data-draft-text>${draftHtml(tool ?? providerOfKey(s.key), text)}</div>
 <textarea name="draft" rows="${Math.min(14, Math.max(4, text.split("\n").length + Math.ceil(text.length / 90)))}" hidden data-draft-edit class="mt-1.5 w-full resize-y rounded-md border border-line bg-bg px-2.5 py-2 text-[13.5px] leading-relaxed focus:border-accent focus:outline-none focus:ring-2 focus:ring-accent/20">${escapeHtml(text)}</textarea>
 ${legacy ? `<p class="mt-1 text-[11.5px] text-muted">${t("board.draft.legacy")}</p>` : ""}
 ${viaSession ? `<div class="mt-2.5 flex flex-wrap items-center gap-2">${shadow ? shadowButton() : `<button type="button" data-go="${key}" data-task="${id}" class="${BTN_PRIMARY}" title="${escapeHtml(t("board.draft.viaSession.tip"))}">${t("board.draft.viaSession")}${keyHint}</button>`}<span class="min-w-0 truncate text-[12.5px] text-muted" data-go-status>${escapeHtml(truncate(x.action ?? "", 140))}</span>${ops}</div>` : postButtons}
-<p class="mt-1.5 text-[12.5px] leading-snug ${why ? "text-warn" : "text-muted"} empty:hidden" data-draft-status>${why ? escapeHtml(why) : ""}</p>
+<p class="mt-1.5 text-[12.5px] leading-snug ${why || maybe ? "text-warn" : "text-muted"} empty:hidden" data-draft-status>${why ? escapeHtml(why) : maybe ? escapeHtml(t("gate.mayHaveGone", { id: x.id, link: maybe.link ?? s.permalink })) : ""}</p>
 </form>`;
   }
   if (x.action?.trim() && sendsUnseenMessage(x)) {
@@ -1828,6 +1833,7 @@ const JS = `
   // the three maps are keyed by "<key>#<task>": two drafts of the same topic are edited and posted apart
   var editing = {};   // fid -> { text: text being edited, base: raw draft text when the edit started }
   var posting = {};   // fid -> "Sending…" during the call
+  var retrying = {};  // fid -> true when the last send may have gone out: Send becomes "Send again"
   var postNote = {};  // fid -> last feedback (text + permalink + undoable until)
   function draftForm(fid) { var f = null; app.querySelectorAll("form[data-draft]").forEach(function (x) { if (fidOf(x) === fid) f = x; }); return f; }
   function setEdit(f, on, value) {
@@ -1841,6 +1847,7 @@ const JS = `
   function paintPost(f, key) {
     var st = f.querySelector("[data-draft-status]"), p = f.querySelector("[data-post]");
     if (key in posting) { p.disabled = true; st.textContent = tr("board.js.sending"); return; }
+    if (key in retrying && !p.disabled) { var rl = p.querySelector("[data-label]") || p; rl.textContent = tr("board.js.post.again"); }
     var n = postNote[key];
     if (!n) return;
     st.innerHTML = "";
@@ -1889,7 +1896,8 @@ const JS = `
     // the person served decided on and its destination, and refuses (409, code draft-changed) if the card changed in
     // the meantime: posting the draft reread from disk could post a text a session rewrote after it was shown.
     var ta = f.querySelector("[data-draft-edit]"), ed = editing[key];
-    var body = { key: topic, taskId: task, text: ed ? ed.text : ta.defaultValue, draft: ed ? ed.base : ta.defaultValue, draftTo: f.getAttribute("data-draft-to") || "" };
+    // sha: the hash of the plan shown, which the gate checks; retry: the person was told the last send may have gone out
+    var body = { key: topic, taskId: task, text: ed ? ed.text : ta.defaultValue, draft: ed ? ed.base : ta.defaultValue, draftTo: f.getAttribute("data-draft-to") || "", sha: f.getAttribute("data-sha") || "", retry: key in retrying };
     posting[key] = true;
     paintPost(f, key);
     post("/api/post-draft", body)
@@ -1901,7 +1909,10 @@ const JS = `
           redraw(true);
           return;
         }
+        // the last send may have gone out: the person checks, then the same button sends again
+        if (!x.ok && x.d.code === "unknown") retrying[key] = true;
         if (!x.ok) { postNote[key] = { text: tr("board.js.post.failedNote", { error: x.error }) }; flash(tr("board.js.post.failed", { error: x.error })); return; }
+        delete retrying[key];
         delete editing[key];
         postNote[key] = { text: tr("board.js.post.done", { at: x.d.at }), url: x.d.permalink, undoUntil: Date.now() + x.d.undoMs };
         markSeen(topic);

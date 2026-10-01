@@ -38,18 +38,8 @@ export const SETUP_USAGE = [
 
 export const SHADOW_REFUSAL = "shadow mode: nothing is posted (`setup --live` turns it off)";
 
-/**
- * Shadow mode as config.json says now, not as it was when the process started: `setup --live` takes effect on a
- * running board without a restart. The loaded profile follows, so the board's rendering reads the same value.
- */
-export function shadowNow(): boolean {
-  let on = settings().workers.shadow;
-  try {
-    on = resolveSettings(readJson<unknown>(F.config, {})).workers.shadow === true;
-  } catch {}
-  if (on !== settings().workers.shadow) useSettings({ ...settings(), workers: { ...settings().workers, shadow: on } });
-  return on;
-}
+/** Shadow mode as config.json says now (app/env.ts), kept here for its callers. */
+export { shadowNow } from "../app/env.ts";
 
 /** A path as the person reads it: `./…` under the current folder, `~/…` under home. */
 export const short = (path: string) => shortPath(path, homedir(), process.cwd());

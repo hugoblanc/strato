@@ -14,6 +14,7 @@ export * from "./core/text.ts";
 export * from "./core/keys.ts";
 export * from "./core/links.ts";
 export * from "./core/targets.ts";
+export * from "./core/gate.ts";
 export * from "./core/sujet.ts";
 export * from "./core/tasks.ts";
 export * from "./core/due.ts";

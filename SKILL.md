@@ -238,7 +238,8 @@ A session's `busy` / `idle` / `waiting` status comes from `~/.claude/sessions/<p
 
 **What the board can do on behalf of the owner.** Every action below is a click by the owner on 127.0.0.1; the server checks the page's origin.
 
-- **Send** a draft: the server posts the text in the thread, on behalf of the owner (xoxp token, `chat:write`), without going through the session. Destination: the Slack link in `draftTo` for a reply in a thread; a channel ID with "new message" for a separate message; otherwise the topic's main thread. **Undo** for 30 s deletes the message; the session is told only after that window, with the link and the posted text.
+- **Send** a draft: the server posts the text in the thread, on behalf of the owner (xoxp token, `chat:write`), without going through the session. Destination: the key in `to` when the task has one; else the Slack link in `draftTo` for a reply in a thread; a channel ID with "new message" for a separate message; otherwise the topic's main thread. **Undo** for 30 s deletes the message; the session is told only after that window, with the link and the posted text.
+  Every write of the board goes through one gate: it acts only on the exact content the owner was shown (a draft changed since then is refused), never in shadow mode, and logs each attempt in `events.ndjson` (`act`, `act-refused`, `act-undo`). When Slack does not answer, the message may have gone out: the board says so, and Send becomes "Send again" once the owner checked the thread.
 - **Go**: sends "go" to the session, which carries out the card's action itself.
 - **Write to the session**: `POST /api/send`. A stopped session is resumed with the message (`claude --bg --resume`); a live one receives it through a throwaway `claude -p` restricted to the `SendMessage` tool. A message from the owner on the board is an instruction or a go, like what they would type in the session.
 - **✅ on the thread**: adds the `white_check_mark` reaction to the original message, on behalf of the owner, for a closed and settled topic.
@@ -290,6 +291,7 @@ The board shows one block per open task, with its own age, box and Done / Drop b
 | `action` | The exact action that goes out on go: "post the draft in <destination>", or ticket, or command |
 | `draft` | For a message: the text as it will go out, and nothing else |
 | `draftTo` | Where the draft goes: channel and thread link, or a channel id and "new message" |
+| `to` | Where the draft goes, typed: the key of a thread (a reply) or of a conversation such as `slack:C0123456789` (a separate message); it wins over `draftTo` |
 
 | Topic field | Content |
 | --- | --- |

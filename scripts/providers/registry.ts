@@ -3,6 +3,9 @@
  * gives each account (its secrets, a fetch limited to its API hosts, its own folder, the map of its long keys).
  * Loading external providers comes with the external stage: until then their accounts are listed, with the reason
  * they cannot run.
+ *
+ * Every provider it hands out is a view without `act` and `undo`: the writes are reachable through `actorOf` only,
+ * which app/act.ts alone imports, behind the gate (docs/design/providers.md, section 8.2; act.test.ts checks it).
  */
 import { chmodSync, closeSync, fsyncSync, mkdirSync, openSync, readFileSync, renameSync, writeSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
@@ -17,32 +20,60 @@ import { apiSupported } from "./api.ts";
 import { BUILTIN_PURE } from "./builtin.ts";
 import { linearProvider } from "./linear/index.ts";
 import type { Account, AccountContext, Identity, Provider, ProviderDescriptor } from "./sdk.ts";
+import { slackWrites } from "./slack/act.ts";
 import { slackProvider } from "./slack/index.ts";
 
-/** The built-in providers, by id. */
-export const BUILTIN: Readonly<Record<string, Provider>> = { slack: slackProvider, linear: linearProvider };
+/** A provider as the registry hands it out: everything but its writes. */
+export type ProviderView = Omit<Provider, "act" | "undo">;
 
-/** Providers added at runtime, by id: the external stage's loader adds the trusted ones here, tests add fakes. */
+/** A provider's writes: what app/act.ts calls, after the gate. */
+export type ProviderWrites = Pick<Provider, "act" | "undo">;
+
+/** A provider without its writes. */
+function viewOf(p: Provider): ProviderView {
+  const { act: _act, undo: _undo, ...view } = p;
+  return view;
+}
+
+/** The built-in providers, whole: never exported. */
+const BUILTIN_FULL: Readonly<Record<string, Provider>> = { slack: { ...slackProvider, ...slackWrites }, linear: linearProvider };
+
+/** The built-in providers, by id, without their writes. */
+export const BUILTIN: Readonly<Record<string, ProviderView>> = Object.fromEntries(Object.entries(BUILTIN_FULL).map(([id, p]) => [id, viewOf(p)]));
+
+/** Providers added at runtime, by id, whole: the external stage's loader adds the trusted ones here, tests add fakes. */
 const added: Record<string, Provider> = {};
+const addedViews: Record<string, ProviderView> = {};
 
 /**
- * Adds a provider that is not built in, and installs its descriptor for keys and links. A built-in id is refused:
- * a provider never replaces Slack or Linear.
+ * Adds a provider that is not built in, and installs its descriptor and pure parts for keys, links and targets. A
+ * built-in id is refused: a provider never replaces Slack or Linear.
  */
 export function addProvider(p: Provider): void {
   if (BUILTIN[p.descriptor.id]) throw new Error(`${p.descriptor.id} is a built-in provider`);
   added[p.descriptor.id] = p;
-  useProviders([...BUILTIN_PURE, ...Object.values(added)]);
+  addedViews[p.descriptor.id] = viewOf(p);
+  useProviders([...BUILTIN_PURE, ...Object.values(addedViews)]);
 }
 
-const providerById = (id: string): Provider | null => BUILTIN[id] ?? added[id] ?? null;
+const providerById = (id: string): ProviderView | null => BUILTIN[id] ?? addedViews[id] ?? null;
 
-const descriptors = (): Record<string, ProviderDescriptor> => Object.fromEntries([...Object.entries(BUILTIN), ...Object.entries(added)].map(([id, p]) => [id, p.descriptor]));
+const descriptors = (): Record<string, ProviderDescriptor> => Object.fromEntries([...Object.entries(BUILTIN), ...Object.entries(addedViews)].map(([id, p]) => [id, p.descriptor]));
 
 /** An account and the provider that serves it, or why none does. */
 export interface AccountEntry extends ResolvedAccount {
-  provider: Provider | null;
+  provider: ProviderView | null;
   problem: string | null;
+}
+
+/**
+ * The writes of the provider that serves an account, or null. Only app/act.ts imports this function: every write goes
+ * through the gate there (act.test.ts fails if anything else reaches it).
+ */
+export function actorOf(entry: AccountEntry): ProviderWrites | null {
+  if (!entry.provider) return null;
+  const full = BUILTIN_FULL[entry.account.provider] ?? added[entry.account.provider];
+  return full ? { act: full.act, undo: full.undo } : null;
 }
 
 /** Every account of the profile, each with its provider instance, in the order of `resolveAccounts`. */

@@ -616,6 +616,7 @@ const en = {
   "gate.refusedUndo": "{tool} refused the removal: {error}",
   "gate.noUndo": "{tool} cannot take this back",
   "gate.notDone": "{tool} has no marker for a settled thread",
+  "gate.noAudience": "{tool} needs to know who sees this {kind} (recipients, public or internal), shown to you before the Go",
   "board.js.post.again": "Send again",
   // providers: built-in tools, their auth methods, settings and words (labels shown on the board and by setup)
   "provider.slack.label": "Slack",
@@ -1252,6 +1253,7 @@ const fr: Record<MessageKey, string> = {
   "gate.refusedUndo": "{tool} a refusé le retrait : {error}",
   "gate.noUndo": "{tool} ne peut pas reprendre cela",
   "gate.notDone": "{tool} n'a pas de marque de fil réglé",
+  "gate.noAudience": "{tool} doit savoir qui voit ce {kind} (destinataires, public ou interne), montré avant le Go",
   "board.js.post.again": "Renvoyer",
   "provider.slack.label": "Slack",
   "provider.slack.auth.userToken": "Token utilisateur de ta propre app Slack",

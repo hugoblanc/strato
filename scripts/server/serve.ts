@@ -12,24 +12,26 @@ import { deliverToSujet } from "../app/deliver.ts";
 import { deliveryTracker } from "../app/gitlab.ts";
 import { pickCards, refreshCards } from "../commands/refresh.ts";
 import { SHADOW_REFUSAL, shadowNow } from "../commands/setup.ts";
-import { connectSlack, hasSlackToken, NO_TOKEN, slack, SlackError, slackPost, threadDump } from "../app/slack.ts";
+import { actDone, type ActOutcome, actOnTask, undoTask } from "../app/act.ts";
+import { connectSlack, hasSlackToken, NO_TOKEN, threadDump } from "../app/slack.ts";
 import { ensureState, loadSujets, logEvent, reportOf, saveUpload, updateSujet, withLock } from "../app/store.ts";
 import { type BoardEvent, boardPage, type BoardSession, boardView, buildBoard, draftConflict, type LiveState, type VersionState, versionControl } from "../board.ts";
 import { applyUpdate, checkUpdates, localVersion } from "../app/update.ts";
-import { DRAFT_MAX, draftDestination, permalinkFor, type SocketHealth } from "../chat/slack-model.ts";
+import { type SocketHealth } from "../chat/slack-model.ts";
 import { type AgentRow, claudeRefs, parsePs } from "../claude/model.ts";
 import { type ActivityStep, type AgentNode, agentTree } from "../claude/transcript.ts";
 import { type ThreadDump } from "../core/cards.ts";
-import { permalinkOfKey, threadOfKey } from "../core/keys.ts";
+import { planOfTask, planSha } from "../core/gate.ts";
+import { permalinkOfKey } from "../core/keys.ts";
 import { hostOwner, pureOf } from "../core/links.ts";
 import { deepLinkOf } from "../core/targets.ts";
 import { accountContext, accountOf } from "../providers/registry.ts";
 import type { Identity } from "../providers/sdk.ts";
 import { type MasterRequest, pendingRevue, REVUE_WINDOWS } from "../core/master.ts";
 import { settings } from "../core/settings.ts";
-import { applyAssignments, checkable, findSujet, postOnlyAction, searchSujets, type Snooze, type Sujet, sujetKeys } from "../core/sujet.ts";
+import { applyAssignments, checkable, findSujet, searchSujets, type Snooze, type Sujet, sujetKeys } from "../core/sujet.ts";
 import { t } from "../core/i18n.ts";
-import { closeTask, findTask, openTasks, reopenTask, sendsUnseenMessage, type Task, taskDraftText } from "../core/tasks.ts";
+import { closeTask, findTask, openTasks, sendsUnseenMessage, type Task, taskDraftText, tasksOf } from "../core/tasks.ts";
 import { panelPage, sessionView, sujetListView, sujetView } from "../panel.ts";
 import { cleanSessionName, itermTtyScript, sujetForFocus, ttyName } from "../terminal/iterm.ts";
 import { hostAllowed, ORIGINLESS_ROUTES, originAllowed, terminalBasePath } from "./guard.ts";
@@ -372,7 +374,7 @@ export async function serve(args: string[]) {
   }
   async function renderBoard(sujets: Sujet[]): Promise<string> {
     const { sessions, others, running, remote, since, lastAgent, trail, agents } = await boardSessions(sujets);
-    const model = buildBoard({ sujets, events: boardEvents(), live: liveStates(sujets), running, remote, since, lastAgent, trail, agents, teammates: cfg.teammates, sessions, otherSessions: others, now: new Date(), timeOf: dayTime, lastTick: lastTickIso(), socket: readJson<{ socket?: Partial<SocketHealth> }>(F.tick, {}).socket, slackAppId: cfg.appId, snoozed: new Map(Object.entries(readJson<Record<string, Snooze>>(F.snooze, {}))), revue: readJson<MasterRequest[]>(F.master, []).filter((r) => r.kind === "revue").at(-1) ?? null, demandes: readJson<MasterRequest[]>(F.master, []).filter((r) => r.kind === "demande"), users: readJson<Record<string, string>>(F.users, {}), deliveries: deliveries.of(sujets), heartbeat: readJson<{ beat?: number }>(F.tick, {}).beat, undo: undoByTopic() });
+    const model = buildBoard({ sujets, events: boardEvents(), live: liveStates(sujets), running, remote, since, lastAgent, trail, agents, teammates: cfg.teammates, sessions, otherSessions: others, now: new Date(), timeOf: dayTime, lastTick: lastTickIso(), socket: readJson<{ socket?: Partial<SocketHealth> }>(F.tick, {}).socket, slackAppId: cfg.appId, snoozed: new Map(Object.entries(readJson<Record<string, Snooze>>(F.snooze, {}))), revue: readJson<MasterRequest[]>(F.master, []).filter((r) => r.kind === "revue").at(-1) ?? null, demandes: readJson<MasterRequest[]>(F.master, []).filter((r) => r.kind === "demande"), users: readJson<Record<string, string>>(F.users, {}), deliveries: deliveries.of(sujets), heartbeat: readJson<{ beat?: number }>(F.tick, {}).beat, undo: undoByTopic(sujets) });
     return boardView(model, { timeOf: dayTime, readAt: dayTime(new Date().toISOString()) });
   }
   /** Board messages being delivered, "key\0text": a duplicate during delivery is refused. */
@@ -385,24 +387,23 @@ export async function serve(args: string[]) {
   }
 
   /**
-   * "Send" on a task's draft: the server posts the text in the thread, on behalf of the person served (xoxp user
-   * token), without going through the session. The click validates the exact text shown, or the edited version.
-   * The task becomes done at once (note: the permalink); the rest of the topic does not move, unless no open task is
-   * left: the topic then waits for the rest of the thread. The session is told only once the undo window has passed,
-   * so that an "Undo" does not send it off on a message that no longer exists.
+   * "Send" on a task's draft: the gate (app/act.ts) posts the text through the provider, on behalf of the person served,
+   * without going through the session. The click is the Go on the exact content shown: the page sends back the hash
+   * of the plan it showed (`data-sha`), or, from a page older than the hash, the draft and the destination it showed,
+   * which give the same hash when nothing changed. The task becomes done at once (note: the permalink); the rest of the
+   * topic does not move, unless no open task is left: the topic then waits for the rest of the thread. The session is
+   * told only once the undo window has passed, so that an "Undo" does not send it off on a message that no longer exists.
    */
   const UNDO_MS = 30_000;
-  /** What "Undo" puts back on the topic, besides reopening the task: the fields the post changed, and nothing else. */
-  type BeforePost = Pick<Sujet, "status" | "waiting" | "posted">;
-  /** Posts still undoable, by "<key>#<taskId>": two drafts of one topic are posted and undone apart. */
-  const justPosted = new Map<string, { key: string; taskId: string; channel: string; ts: string; before: BeforePost; until: number; timer: ReturnType<typeof setTimeout> }>();
-  /** Tasks whose draft is on its way to Slack, by "<key>#<taskId>": a second click during the three Slack calls is refused. */
-  const posting = new Set<string>();
-  const fidOf = (key: string, taskId: string) => `${key}#${taskId}`;
-  /** For the board: per topic, the latest post still undoable and its task. */
-  function undoByTopic(): Map<string, { until: number; taskId: string | null }> {
+  /** For the board: per topic, the latest write still undoable and its task, read from the tasks' sent records on disk. */
+  function undoByTopic(sujets: Sujet[]): Map<string, { until: number; taskId: string | null }> {
     const out = new Map<string, { until: number; taskId: string | null }>();
-    for (const p of justPosted.values()) if (!out.has(p.key) || (out.get(p.key)?.until ?? 0) < p.until) out.set(p.key, { until: p.until, taskId: p.taskId });
+    const now = Date.now();
+    for (const s of sujets)
+      for (const x of tasksOf(s)) {
+        const until = x.sent?.undo?.until;
+        if (until && until > now && (out.get(s.key)?.until ?? 0) < until) out.set(s.key, { until, taskId: x.id });
+      }
     return out;
   }
   /** The note to the session, one part per posted task: a second post within the window adds its part, an Undo removes it. */
@@ -431,19 +432,17 @@ export async function serve(args: string[]) {
       return rest;
     });
     if (early) return;
-    for (const [fid, p] of justPosted) if (p.key === key && p.until <= Date.now() + 500) justPosted.delete(fid);
     if (text === null) return;
     const r = await sendFromBoard(key, text).catch((e: Error) => ({ ok: false as const, error: e.message }));
     if (!r.ok) logEvent({ type: "board-post-notify-failed", key, error: r.error });
   }
   const scheduleNotice = (key: string, at: string) => setTimeout(() => void deliverNotice(key).catch(() => {}), Math.max(0, Date.parse(at) - Date.now()));
-  // the note of a post made just before a restart of serve is not lost: it is in the topic
+  // the note of a post made just before a restart of serve is not lost: it is in the topic, and so is the undo window
   try {
     for (const x of loadSujets()) if (x.notify) scheduleNotice(x.key, x.notify.at);
   } catch (e) {
     out(`[strato] pending notes not reloaded: ${(e as Error).message}`);
   }
-  let slackBase = "";
   /**
    * Who the person is on each account, read once through the provider's `connect`: a deep link needs it (Slack's
    * slack:// links need the team id). Null when the tool does not answer: the link then opens over https.
@@ -471,82 +470,68 @@ export async function serve(args: string[]) {
     const identity = await identityOf(owner);
     return identity ? deepLinkOf(url.href, owner, identity) : null;
   }
-  async function postDraft(s: Sujet, taskId: string, edited: string | null): Promise<{ ok: true; at: string; permalink: string; undoMs: number } | { ok: false; error: string; status: number }> {
-    if (s.status === "closed") return { ok: false, error: t("board.api.topicClosed", { letter: s.letter }), status: 409 };
-    const fid = fidOf(s.key, taskId);
-    if (justPosted.has(fid) || posting.has(fid)) return { ok: false, error: t("board.api.alreadyPosted"), status: 409 };
-    const task = findTask(s, taskId);
-    if (!task) return { ok: false, error: t("board.api.taskMissing", { id: taskId }), status: 404 };
-    if (task.status !== "open") return { ok: false, error: t("board.api.taskClosed", { id: taskId }), status: 409 };
-    const text = (edited ?? taskDraftText(task)).replace(/\r\n/g, "\n").trim();
-    if (!text) return { ok: false, error: t("board.api.draftEmpty"), status: 409 };
-    // the action does more than post: the session carries it out, in order (see postOnlyAction)
-    if (!postOnlyAction(task)) return { ok: false, error: t("board.api.notPostOnly"), status: 409 };
-    if (text.length > DRAFT_MAX) return { ok: false, error: t("board.api.draftTooLong", { n: text.length }), status: 413 };
-    const dest = draftDestination({ key: s.key, channel: s.channel, draftTo: task.draftTo });
-    if ("error" in dest) return { ok: false, error: dest.error, status: 409 };
-    posting.add(fid);
-    try {
-      if (!hasSlackToken() && !(await connectSlack(cfg))) return { ok: false, error: t("board.api.noSlackToken"), status: 503 };
-      if (!slackBase) slackBase = String((await slack("auth.test")).url ?? "").replace(/\/$/, "");
-      // the quoted link may point at a reply: go up to the thread's root, otherwise Slack refuses or posts beside it.
-      // Without ts, it is a standalone message in the channel.
-      let root: string | null = dest.ts;
-      if (dest.ts) {
-        try {
-          const r = await slack("conversations.replies", { channel: dest.channel, ts: dest.ts, limit: 1 });
-          root = r.messages?.[0]?.thread_ts ?? dest.ts;
-        } catch {}
-      }
-      const r = await slackPost("chat.postMessage", root ? { channel: dest.channel, thread_ts: root, text } : { channel: dest.channel, text });
-      const permalink = permalinkFor(slackBase, dest.channel, r.ts, root);
-      const at = nowIso();
-      const note = `I posted the draft of task ${taskId} myself from the board${edited !== null ? ", with my edits" : ""}: ${permalink}\nPosted text:\n${text}\nDo not post it again. Task ${taskId} is marked done: update the rest of the card and continue the plan.`;
-      // the note goes after the undo window; written in the topic, it survives a restart of serve
-      const notifyAt = new Date(Date.now() + UNDO_MS).toISOString();
-      let before: BeforePost = { status: s.status, waiting: s.waiting, posted: s.posted };
-      await updateSujet(s.key, (x) => {
-        before = { status: x.status, waiting: x.waiting, posted: x.posted };
-        const posted = `${at} ${permalink}`;
-        // the task may have been closed meanwhile (the session, another tab): the message is out, the note still goes
-        let next = findTask(x, taskId)?.status === "open" ? closeTask(x, taskId, "done", at, t("task.note.posted", { permalink })) : x;
-        next = applyAssignments(next, openTasks(next).length ? { posted } : { status: "waiting", waiting: t("task.waiting.restOfThread"), posted }, at);
-        return { ...next, notify: withNotice(x.notify, taskId, notifyAt, note) };
-      });
-      logEvent({ type: "board-post", key: s.key, task: taskId, permalink, edited: edited !== null });
-      justPosted.set(fid, { key: s.key, taskId, channel: dest.channel, ts: r.ts, before, until: Date.now() + UNDO_MS, timer: scheduleNotice(s.key, notifyAt) });
-      return { ok: true, at: dayTime(at).slice(6), permalink, undoMs: UNDO_MS };
-    } catch (e) {
-      return { ok: false, error: t("board.api.slackRefused", { error: (e as Error).message }), status: 502 };
-    } finally {
-      posting.delete(fid);
+  /** A refusal of the gate, or a provider's failure, as the board's answer. */
+  function actFailure(r: Exclude<ActOutcome, { ok: true }>): { ok: false; error: string; status: number; code?: string } {
+    if ("refused" in r) {
+      const code = r.refused.code;
+      const status = code === "missing" ? 404 : code === "tooLong" ? 413 : 409;
+      return { ok: false, error: r.refused.message, status, ...(code === "shadow" ? { code: "shadow" } : code === "sha" ? { code: "draft-changed" } : code === "unknown" ? { code: "unknown" } : {}) };
     }
+    if (r.failed.outcome === "unknown") return { ok: false, error: t("gate.unknownOutcome", { tool: r.tool, link: r.link ?? "-" }), status: 502, code: "unknown" };
+    if (r.failed.fatal) return { ok: false, error: r.failed.message, status: 503 };
+    return { ok: false, error: t("gate.refused", { tool: r.tool, error: r.failed.message }), status: 502 };
   }
-  /** "Undo" within 30 s: the message is removed from the thread, the task reopens, and the topic comes back as before. */
-  async function unpost(s: Sujet, taskId: string): Promise<{ ok: true } | { ok: false; error: string; status: number }> {
-    const fid = fidOf(s.key, taskId);
-    const p = justPosted.get(fid);
-    if (!p) return { ok: false, error: t("board.api.nothingToUndo"), status: 409 };
-    clearTimeout(p.timer);
-    justPosted.delete(fid);
-    try {
-      await slackPost("chat.delete", { channel: p.channel, ts: p.ts });
-    } catch (e) {
-      // the message stays in the thread: the session must still learn about it
-      void deliverNotice(s.key).catch(() => {});
-      return { ok: false, error: t("board.api.slackRefusedDelete", { error: (e as Error).message }), status: 502 };
-    }
+  async function postDraft(s: Sujet, taskId: string, edited: string | null, sha: string, retry: boolean): Promise<{ ok: true; at: string; permalink: string; undoMs: number } | { ok: false; error: string; status: number; code?: string }> {
     const at = nowIso();
-    // the task reopens and only the fields the post changed come back, on the current state: a write of the session meanwhile stays
-    await updateSujet(s.key, (x) => {
-      const { notify, ...rest } = x;
-      const byTask = { ...(notify?.byTask ?? {}) };
-      delete byTask[taskId];
-      const left = Object.keys(byTask).length ? { notify: { at: notify?.at ?? at, text: notifyText(byTask), byTask } } : {};
-      const back = { ...rest, waiting: p.before.waiting, posted: p.before.posted, ...left };
-      const reopened = findTask(back, taskId) ? reopenTask(back, taskId, at) : back;
-      return { ...reopened, updatedAt: at, history: [...reopened.history, { at, what: t("task.note.unposted", { id: taskId }) }] };
+    let notifyAt = at;
+    const r = await actOnTask({
+      key: s.key,
+      taskId,
+      sha,
+      by: "board",
+      edited,
+      retry,
+      after: (x, sent) => {
+        const permalink = sent.link;
+        const text = sent.plan.actions[0] && "text" in sent.plan.actions[0] ? sent.plan.actions[0].text : "";
+        const note = `I posted the draft of task ${taskId} myself from the board${edited !== null ? ", with my edits" : ""}: ${permalink}\nPosted text:\n${text}\nDo not post it again. Task ${taskId} is marked done: update the rest of the card and continue the plan.`;
+        // the note goes after the undo window; written in the topic, it survives a restart of serve
+        notifyAt = new Date(sent.undo?.until ?? Date.now() + UNDO_MS).toISOString();
+        const posted = `${at} ${permalink}`;
+        const next = applyAssignments(x, openTasks(x).length ? { posted } : { status: "waiting", waiting: t("task.waiting.restOfThread"), posted }, at);
+        return { ...next, notify: withNotice(x.notify, taskId, notifyAt, note) };
+      },
     });
+    if (!r.ok) return actFailure(r);
+    logEvent({ type: "board-post", key: s.key, task: taskId, permalink: r.sent.link, edited: edited !== null });
+    scheduleNotice(s.key, notifyAt);
+    return { ok: true, at: dayTime(at).slice(6), permalink: r.sent.link, undoMs: r.sent.undo ? Math.max(0, r.sent.undo.until - Date.now()) : 0 };
+  }
+  /** "Undo" within the window: the message is removed from the thread, the task reopens, and the topic comes back as before. */
+  async function unpost(s: Sujet, taskId: string): Promise<{ ok: true } | { ok: false; error: string; status: number; code?: string }> {
+    const at = nowIso();
+    const r = await undoTask({
+      key: s.key,
+      taskId,
+      by: "board",
+      after: (x) => {
+        // only the fields the post changed come back (app/act.ts), on the current state: a write of the session meanwhile stays
+        const { notify, ...rest } = x;
+        const byTask = { ...(notify?.byTask ?? {}) };
+        delete byTask[taskId];
+        const left = Object.keys(byTask).length ? { notify: { at: notify?.at ?? at, text: notifyText(byTask), byTask } } : {};
+        return { ...rest, ...left, updatedAt: at, history: [...rest.history, { at, what: t("task.note.unposted", { id: taskId }) }] };
+      },
+    });
+    if (!r.ok) {
+      if ("refused" in r && r.refused.code === "nothingToUndo") return { ok: false, error: r.refused.message, status: 409 };
+      // the message stays in the thread: the session must still learn about it
+      if ("failed" in r) {
+        void deliverNotice(s.key).catch(() => {});
+        return { ok: false, error: t("gate.refusedUndo", { tool: r.tool, error: r.failed.message }), status: 502 };
+      }
+      return actFailure(r);
+    }
     logEvent({ type: "board-unpost", key: s.key, task: taskId });
     return { ok: true };
   }
@@ -833,7 +818,7 @@ export async function serve(args: string[]) {
     }
     if (route === "POST /api/post-draft" || route === "POST /api/unpost" || route === "POST /api/snooze" || route === "POST /api/drop-draft" || route === "POST /api/task") {
       if (!localOrigin(req)) return Response.json({ error: t("board.api.originRefused") }, { status: 403 });
-      let body: { key?: unknown; taskId?: unknown; op?: unknown; text?: unknown; draft?: unknown; draftTo?: unknown; until?: unknown };
+      let body: { key?: unknown; taskId?: unknown; op?: unknown; text?: unknown; draft?: unknown; draftTo?: unknown; until?: unknown; sha?: unknown; retry?: unknown };
       try {
         body = (await req.json()) as typeof body;
       } catch {
@@ -870,20 +855,22 @@ export async function serve(args: string[]) {
         return r.ok ? Response.json(r) : Response.json({ error: r.error }, { status: r.status });
       }
       if (route === "POST /api/post-draft") {
-        if (shadow) return Response.json({ error: SHADOW_REFUSAL, code: "shadow" }, { status: 409 });
         // the server posts the text shown (or edited) on the board, and only if the task still carries the draft and the
         // destination that were read: otherwise 409, and the board asks to reread (see draftConflict)
         const conflict = draftConflict(s, body);
         if (conflict) return Response.json({ error: conflict, code: "draft-changed" }, { status: 409 });
         const task = findTask(s, taskId) as Task;
         const text = typeof body.text === "string" ? body.text : "";
-        const r = await postDraft(s, taskId, text.replace(/\r\n/g, "\n").trim() === taskDraftText(task) ? null : text);
+        // the hash of the plan the page showed; a page older than the hash showed the draft and destination it sent back
+        const shown = planOfTask(s, { ...task, draft: typeof body.draft === "string" ? body.draft : "", draftTo: typeof body.draftTo === "string" ? body.draftTo : "" });
+        const sha = typeof body.sha === "string" && body.sha ? body.sha : "plan" in shown ? planSha(shown.plan) : "";
+        const r = await postDraft(s, taskId, text.replace(/\r\n/g, "\n").trim() === taskDraftText(task) ? null : text, sha, body.retry === true);
         boardChanged();
-        return r.ok ? Response.json(r) : Response.json({ error: r.error }, { status: r.status });
+        return r.ok ? Response.json(r) : Response.json({ error: r.error, ...(r.code ? { code: r.code } : {}) }, { status: r.status });
       }
       const r = await unpost(s, taskId);
       boardChanged();
-      return r.ok ? Response.json(r) : Response.json({ error: r.error }, { status: r.status });
+      return r.ok ? Response.json(r) : Response.json({ error: r.error, ...(r.code ? { code: r.code } : {}) }, { status: r.status });
     }
     if (route === "POST /api/revue") {
       if (!localOrigin(req)) return Response.json({ error: t("board.api.originRefused") }, { status: 403 });
@@ -956,21 +943,15 @@ export async function serve(args: string[]) {
       }
       const s = typeof body.key === "string" ? findSujet(loadSujets(), body.key) : undefined;
       if (!s) return Response.json({ error: t("board.api.topicMissing") }, { status: 404 });
-      if (shadow) return Response.json({ error: SHADOW_REFUSAL, code: "shadow" }, { status: 409 });
       if (!checkable(s)) return Response.json({ error: t("board.api.notCheckable", { letter: s.letter }) }, { status: 409 });
-      const thread = threadOfKey(s.key);
-      if (!thread) return Response.json({ error: t("board.api.notCheckable", { letter: s.letter }) }, { status: 409 });
-      const { channel, ts } = thread;
-      if (!hasSlackToken()) await connectSlack(cfg);
-      if (!hasSlackToken()) return Response.json({ error: NO_TOKEN(cfg) }, { status: 503 });
-      try {
-        await slackPost("reactions.add", { channel, timestamp: ts, name: "white_check_mark" });
-      } catch (e) {
-        // already added by hand in Slack: that is the intended result
-        if (!(e instanceof SlackError && e.code === "already_reacted")) return Response.json({ error: t("board.api.slackRefused", { error: (e as Error).message }) }, { status: 502 });
-      }
+      // the click is the Go on the tool's marker of a settled thread (Slack: ✅), through the gate
       const at = nowIso();
-      await updateSujet(s.key, (x) => ({ ...x, checked: at }));
+      const r = await actDone({ key: s.key, by: "board", after: (x) => ({ ...x, checked: at }) });
+      if (!r.ok) {
+        if ("refused" in r && (r.refused.code === "capability" || r.refused.code === "target")) return Response.json({ error: t("board.api.notCheckable", { letter: s.letter }) }, { status: 409 });
+        const f = actFailure(r);
+        return Response.json({ error: f.error, ...(f.code ? { code: f.code } : {}) }, { status: f.status });
+      }
       logEvent({ type: "board-check", key: s.key });
       return Response.json({ ok: true });
     }

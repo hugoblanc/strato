@@ -11,6 +11,7 @@
  *
  * Pure module: no I/O. It imports only types from sujet.ts, which imports it.
  */
+import type { InFlight, SentRecord, UnknownOutcome } from "./gate.ts";
 import { t } from "./i18n.ts";
 import { parseKey } from "./keys.ts";
 import type { Sujet } from "./sujet.ts";
@@ -46,6 +47,15 @@ export interface Task {
   note?: string;
   /** "task": created by the `task` command; "set": translated from a legacy `set` (or migrated from a stored card). */
   origin: "task" | "set";
+  // ---- written by the gate only (core/gate.ts, app/act.ts): no command writes them
+  /** The attempt of the next write: grows after an Undo or a write refused for sure, never after an unknown outcome. */
+  attempt?: number;
+  /** A write on its way out. */
+  inFlight?: InFlight;
+  /** The last write may have gone out: the person checks, then sends again or marks the task done. */
+  unknown?: UnknownOutcome;
+  /** What went out, frozen. */
+  sent?: SentRecord;
 }
 
 /** The fields a session writes on a task. */

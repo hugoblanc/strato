@@ -15,7 +15,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { claudeBin } from "../claude/model.ts";
 import { envValue, findStateRoot, resolveStateDir } from "../core/paths.ts";
-import { resolveSettings, useSettings } from "../core/settings.ts";
+import { resolveSettings, settings, useSettings } from "../core/settings.ts";
 import { useProviders } from "../core/links.ts";
 import { parseDuration } from "../core/text.ts";
 import { BUILTIN_PURE } from "../providers/builtin.ts";
@@ -224,4 +224,17 @@ export function mtimeOf(path: string): number {
   } catch {
     return 0;
   }
+}
+
+/**
+ * Shadow mode as config.json says now, not as it was when the process started: `setup --live` takes effect on a
+ * running board without a restart. The loaded profile follows, so the board's rendering reads the same value.
+ */
+export function shadowNow(): boolean {
+  let on = settings().workers.shadow;
+  try {
+    on = resolveSettings(readJson<unknown>(F.config, {})).workers.shadow === true;
+  } catch {}
+  if (on !== settings().workers.shadow) useSettings({ ...settings(), workers: { ...settings().workers, shadow: on } });
+  return on;
 }

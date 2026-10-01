@@ -44,7 +44,7 @@ export const USAGE = `strato: routes Slack to Claude Code work sessions, one top
   strato set <topic> key=value …        state of the topic (status, waiting, next, summary, title, why,
                                         steps, blocker, mrs, due, unverified, report); the legacy card fields
                                         (gate, ask, proposal, action, draft, draftTo) still become tasks
-  strato task <topic> add kind=draft|action|decision|question ask="…" proposal="…" [action="…"] [draft="…" draftTo="…"]
+  strato task <topic> add kind=draft|action|decision|question ask="…" proposal="…" [action="…"] [draft="…" draftTo="…" | to=<key>]
   strato task <topic> done|drop <id> [note="…"]   closes a task (carried out, or no longer applies)
   strato task <topic> edit <id> key=value…       fixes an open task (same request)
   strato close <topic>                  closes the topic and stops its session

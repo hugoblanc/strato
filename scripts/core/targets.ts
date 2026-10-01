@@ -26,6 +26,8 @@ export interface UnresolvedTarget {
   label: string;
   /** The tool the destination was read by, if any: its markup still renders the draft. */
   provider: string | null;
+  /** No connected tool serves it: the key names a tool or an account the profile does not have, or none reads it. */
+  noTool?: boolean;
 }
 
 export const isResolved = (r: ResolvedTarget | UnresolvedTarget): r is ResolvedTarget => "target" in r;
@@ -66,7 +68,7 @@ function readerOf(text: string, topic: TopicView | null): { provider: string; ac
 function typedTarget(to: string, topic: TopicView | null, channel: string): ResolvedTarget | UnresolvedTarget {
   const p = parseKey(to);
   if (!p || p.long) return { error: t("target.notAKey", { to }), label: to, provider: null };
-  if (!linkAccount(p.provider, p.account)) return { error: t("target.noAccount", { tool: toolLabel(p.provider, p.account) }), label: to, provider: p.provider };
+  if (!linkAccount(p.provider, p.account)) return { error: t("target.noAccount", { tool: toolLabel(p.provider, p.account) }), label: to, provider: p.provider, noTool: true };
   const info = pureOf(p.provider)?.threadInfo?.(p.native) ?? null;
   const sameConversation = !!info && !!topic && topic.provider === p.provider && topic.account === p.account && info.conversation === topic.conversation.id;
   const scope: Target["scope"] = info ? "thread" : descriptorOf(p.provider)?.kinds.includes("tracker") ? "ticket" : "conversation";
@@ -86,7 +88,7 @@ export function resolveTarget(s: Pick<Sujet, "key" | "channel" | "conversation">
   const reader = readerOf(text, topic);
   const parse = reader ? pureOf(reader.provider)?.parseTarget : undefined;
   const account = reader ? linkAccount(reader.provider, reader.account) : null;
-  if (!reader || !parse || !account) return { error: t("target.noReader"), label: text || s.channel, provider: topic?.provider ?? null };
+  if (!reader || !parse || !account) return { error: t("target.noReader"), label: text || s.channel, provider: topic?.provider ?? null, noTool: true };
   const r = parse(text, { thread: topic?.native ?? s.key, conversation: topic?.conversation ?? { id: "", label: s.channel } }, account);
   if ("error" in r) return { error: textOf(r.error), label: r.label ?? (text || s.channel), provider: reader.provider };
   return { provider: reader.provider, account: reader.account, target: r };
