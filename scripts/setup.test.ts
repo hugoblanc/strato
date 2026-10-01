@@ -7,7 +7,7 @@ import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "no
 import { join } from "node:path";
 import { TEST_SETTINGS } from "./test-setup.ts";
 import { actionCard, type BoardLine } from "./board.ts";
-import { backgroundSessionsOk, checkReport, mergeProfile, setEnvLine, tokenKindProblem, nextStep, shortPath, slackAppLink, parseRemote, profileDiff, profileErrors, SLACK_SCOPES, slackWorkspaceFromUrl, suggestedConfig, ticketPrefixes, topChannels } from "./core/setup.ts";
+import { backgroundSessionsOk, checkReport, mergeProfile, profileWarnings, setEnvLine, tokenKindProblem, nextStep, shortPath, slackAppLink, parseRemote, profileDiff, profileErrors, SLACK_SCOPES, slackWorkspaceFromUrl, suggestedConfig, ticketPrefixes, topChannels } from "./core/setup.ts";
 import { missingSettings, resolveSettings, useSettings } from "./core/settings.ts";
 import { workerPrompt } from "./policy/prompts.ts";
 import { CLI, cleanupRigs, cli, KEY, LINK, SCRIPTS, lines, postBoard, readSujets, type Rig, rig, run, startServe, sujet, writeSujets } from "./test-rig.ts";
@@ -40,6 +40,7 @@ globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
     : method === "search.messages" ? { ok: true, messages: { paging: { pages: 1 }, matches: [
         { channel: { id: "CPLAT", name: "platform" } }, { channel: { id: "CPLAT", name: "platform" } }, { channel: { id: "CINC", name: "incidents" } },
         { channel: { id: "D123", name: "UBOB", is_im: true } } ] } }
+    : method === "conversations.info" ? ((u.searchParams.get("channel") ?? "").includes("EXAMPLE") ? { ok: false, error: "channel_not_found" } : { ok: true, channel: { id: u.searchParams.get("channel") } })
     : method === "chat.postMessage" ? { ok: true, ts: "1759219400.000300" }
     : method === "conversations.replies" ? { ok: true, messages: [{ ts: "1759219200.000100" }] }
     : { ok: true };
@@ -458,6 +459,29 @@ describe("setup --write and --live", () => {
     expect(Bun.spawnSync(["git", "-C", ws, "status", "--porcelain"]).stdout.toString()).toBe("");
     await cli(r, ["doctor"]);
     expect(existsSync(join(r.state, ".gitignore"))).toBe(false);
+  }, 20_000);
+
+  test("ids Slack does not know are named after the write, never blocking (O26)", async () => {
+    const facts = { team: "Acme", me: "UALICE", groups: ["SPLAT"], channels: { CPLAT: true, C_EXAMPLE_REQUESTS: false } };
+    expect(profileWarnings({ team: "Acme", me: "U_EXAMPLE_ALICE", subteams: ["SPLAT", "SGONE"], watchChannels: ["CPLAT", "C_EXAMPLE_REQUESTS"], ignoreChannels: ["CUNCHECKED"] }, facts)).toEqual([
+      "slack.me: U_EXAMPLE_ALICE is not you (the token is UALICE): still the example value?",
+      "slack.subteams: SGONE not found in Acme",
+      "slack.watchChannels: C_EXAMPLE_REQUESTS not found in Acme, or not visible to you: still the example value?",
+    ]);
+    expect(profileWarnings({ team: "Globex", me: "", subteams: ["SX"], watchChannels: [], ignoreChannels: [] }, { ...facts, groups: null })).toEqual(['slack.team: "Globex", but the token belongs to "Acme"']);
+
+    const r = rig();
+    writeConfig(r, {});
+    const slack = withSlack(r);
+    const example = join(import.meta.dir, "..", "examples", "profile", "config.json");
+    const res = await run(r, ["--preload", slack.preload, CLI, "setup", "--write", example], slack.env);
+    expect(res.code).toBe(0);
+    expect(res.out).toContain("warn: slack.me: U_EXAMPLE_ALICE is not you (the token is UALICE): still the example value?");
+    expect(res.out).toContain("warn: slack.subteams: S_EXAMPLE_PLATFORM not found in Acme: still the example value?");
+    expect(res.out).toContain("warn: slack.watchChannels: C_EXAMPLE_REQUESTS not found in Acme, or not visible to you: still the example value?");
+    expect(res.out).toContain("warn: slack.ignoreChannels: C_EXAMPLE_RANDOM not found");
+    expect(lines(join(r.dir, "slack.log"))).not.toContain("chat.postMessage");
+    expect((await cli(rig(), ["setup", "--write", example])).out).toContain("not cross-checked with Slack: no usable token yet");
   }, 20_000);
 
   test("an existing profile is merged, never overwritten without --force, and the diff is shown", async () => {

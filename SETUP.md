@@ -162,6 +162,8 @@ bun .claude/skills/strato/scripts/strato.ts setup --write my-profile.json
 cp my-local.md .strato/local.md
 ```
 
+The example's Slack ids (`U_EXAMPLE_ALICE`, `C_EXAMPLE_REQUESTS`…) are placeholders: with a token, `setup --write` checks every id against your workspace and prints a `warn:` line for each one Slack does not know.
+
 ## 5. What each profile file does
 
 **`config.json`.** Every section is optional; a missing field keeps its default.

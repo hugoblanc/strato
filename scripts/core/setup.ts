@@ -238,6 +238,34 @@ export function setEnvLine(content: string, key: string, value: string): string 
   return `${content}${content && !content.endsWith("\n") ? "\n" : ""}${line}\n`;
 }
 
+// ------------------------------------------------------------------ cross-check against Slack
+
+/** What Slack says about the ids of a profile, read with the token in use. */
+export interface SlackFacts {
+  team: string;
+  me: string;
+  /** Ids of the workspace's user groups, or null when they could not be read (scope, network). */
+  groups: string[] | null;
+  /** Channel id -> whether Slack knows it for this token. Ids not looked up are absent. */
+  channels: Record<string, boolean>;
+}
+
+/**
+ * The ids of a profile that do not exist in the token's workspace: a field type-checks but never triggers, often an
+ * example value copied as is. Never blocking: a warning line per field and value.
+ */
+export function profileWarnings(slack: { team: string; me: string; subteams: string[]; watchChannels: string[]; ignoreChannels: string[] }, facts: SlackFacts): string[] {
+  const out: string[] = [];
+  const example = (v: string) => (/EXAMPLE/i.test(v) ? ": still the example value?" : "");
+  if (slack.team && slack.team !== facts.team) out.push(`slack.team: "${slack.team}", but the token belongs to "${facts.team}"`);
+  if (slack.me && slack.me !== facts.me) out.push(`slack.me: ${slack.me} is not you (the token is ${facts.me})${example(slack.me)}`);
+  if (facts.groups) for (const g of slack.subteams) if (!facts.groups.includes(g)) out.push(`slack.subteams: ${g} not found in ${facts.team}${example(g)}`);
+  for (const field of ["watchChannels", "ignoreChannels"] as const) {
+    for (const c of slack[field]) if (facts.channels[c] === false) out.push(`slack.${field}: ${c} not found in ${facts.team}, or not visible to you${example(c)}`);
+  }
+  return out;
+}
+
 // ------------------------------------------------------------------ check
 
 /** `claude agents --json` answered with a JSON array: this Claude Code can run and list background sessions. */

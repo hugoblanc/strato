@@ -12,7 +12,7 @@ What lands on me: API errors reported by support, integration questions from par
 
 ## My team
 
-Slack group: `@platform` (S01PLATFRM).
+Slack group: `@platform` (S_EXAMPLE_PLATFORM).
 A mention of `@platform` means "someone from the team", not me.
 
 | Who | Role | Takes |

@@ -20,7 +20,7 @@ import { CLAUDE_BIN, expandHome, F, fail, flags, localDay, out, readJson, run, S
 import { appToken, tokenCandidates } from "../app/slack.ts";
 import { createStateDir } from "../app/store.ts";
 import manifestYaml from "../../examples/slack-app-manifest.yaml" with { type: "text" };
-import { backgroundSessionsOk, type CheckItem, checkReport, setEnvLine, tokenKindProblem, USER_TOKEN_WHERE, nextStep, type Progress, shortPath, slackAppLink, SLACK_SCOPES, type Detected, displayNameOf, firstNameOf, linearWorkspaces, localeFromEnv, mergeProfile, parseRemote, profileDiff, profileErrors, type Remote, type SearchMatch, slackWorkspaceFromUrl, suggestedConfig, ticketPrefixes, topChannels } from "../core/setup.ts";
+import { backgroundSessionsOk, type CheckItem, checkReport, profileWarnings, type SlackFacts, setEnvLine, tokenKindProblem, USER_TOKEN_WHERE, nextStep, type Progress, shortPath, slackAppLink, SLACK_SCOPES, type Detected, displayNameOf, firstNameOf, linearWorkspaces, localeFromEnv, mergeProfile, parseRemote, profileDiff, profileErrors, type Remote, type SearchMatch, slackWorkspaceFromUrl, suggestedConfig, ticketPrefixes, topChannels } from "../core/setup.ts";
 import { missingSettings, NEW_INSTALL_PROFILE, resolveSettings, settings, useSettings } from "../core/settings.ts";
 
 /** What each flag of `setup` does, printed when none is given. */
@@ -407,6 +407,29 @@ async function storeAppToken(value: string) {
   writeProfile({ slack: { appTokenFile: file } }, false, "--app-token");
 }
 
+/**
+ * After `--write`: the profile's Slack ids checked against the workspace of the token in use, read only. Prints a
+ * `warn:` line per id Slack does not know; says so in one line when no token or no network allows the check.
+ */
+async function crossCheck() {
+  const s = settings().slack;
+  const token = chosen(await probeTokens());
+  if (!token?.team || !token.user) return out("not cross-checked with Slack: no usable token yet (setup --token)");
+  const facts: SlackFacts = { team: token.team, me: token.user, groups: null, channels: {} };
+  try {
+    if (s.subteams.length) facts.groups = ((await slackRead(token.token, "usergroups.list")).body.usergroups ?? []).map((g: { id: string }) => g.id);
+  } catch {}
+  for (const c of [...new Set([...s.watchChannels, ...s.ignoreChannels])].slice(0, 30)) {
+    try {
+      await slackRead(token.token, "conversations.info", { channel: c });
+      facts.channels[c] = true;
+    } catch (e) {
+      if (e instanceof SlackAnswer && e.message === "channel_not_found") facts.channels[c] = false;
+    }
+  }
+  for (const w of profileWarnings(s, facts)) out(`warn: ${w}`);
+}
+
 export async function setup(args: string[]) {
   const { opts } = flags(args);
   if (opts["slack-app"]) return slackApp(opts.print === "true");
@@ -422,7 +445,9 @@ export async function setup(args: string[]) {
     } catch (e) {
       fail(`cannot read ${opts.write} as JSON: ${(e as Error).message}`);
     }
-    return writeProfile(incoming, opts.force === "true", opts.write);
+    writeProfile(incoming, opts.force === "true", opts.write);
+    useSettings(resolveSettings(readJson<unknown>(F.config, {})));
+    return crossCheck();
   }
   out(SETUP_USAGE);
   process.exit(64);
