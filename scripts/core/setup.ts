@@ -199,6 +199,21 @@ export function suggestedConfig(fields: Record<string, Detected>): Raw {
   return out;
 }
 
+// ------------------------------------------------------------------ Slack app
+
+/**
+ * The link that opens Slack's "create an app" flow with the manifest already filled in (Slack's documented share link,
+ * `new_app=1&manifest_yaml=`): no YAML copied by hand, so no broken indentation. Comment and blank lines are dropped
+ * to keep the URL short; the manifest itself is unchanged.
+ */
+export function slackAppLink(manifestYaml: string): string {
+  const yaml = manifestYaml
+    .split("\n")
+    .filter((l) => l.trim() !== "" && !l.trimStart().startsWith("#"))
+    .join("\n");
+  return `https://api.slack.com/apps?new_app=1&manifest_yaml=${encodeURIComponent(yaml)}`;
+}
+
 // ------------------------------------------------------------------ check
 
 /** User-token scopes the code calls, and what breaks without them. */

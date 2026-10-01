@@ -1,4 +1,6 @@
-# Slack app for Strato: https://api.slack.com/apps -> Create New App -> From an app manifest.
+# Slack app for Strato: `strato.ts setup --slack-app` opens the creation flow with this manifest filled in
+# (or https://api.slack.com/apps -> Create New App -> From an app manifest). Editing it? The links in SETUP.md and
+# README.md embed it: a test says when they are stale.
 #
 # Strato acts as you, with a user token (xoxp-): it reads what you can read and posts as you, on your click.
 # No bot user is needed. Socket Mode is optional: it lets `listen` receive messages within a second instead of

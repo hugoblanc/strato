@@ -7,7 +7,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { TEST_SETTINGS } from "./test-setup.ts";
 import { actionCard, type BoardLine } from "./board.ts";
-import { checkReport, mergeProfile, parseRemote, profileDiff, profileErrors, SLACK_SCOPES, slackWorkspaceFromUrl, suggestedConfig, ticketPrefixes, topChannels } from "./core/setup.ts";
+import { checkReport, mergeProfile, slackAppLink, parseRemote, profileDiff, profileErrors, SLACK_SCOPES, slackWorkspaceFromUrl, suggestedConfig, ticketPrefixes, topChannels } from "./core/setup.ts";
 import { missingSettings, resolveSettings, useSettings } from "./core/settings.ts";
 import { workerPrompt } from "./policy/prompts.ts";
 import { CLI, cleanupRigs, cli, KEY, LINK, lines, postBoard, readSujets, type Rig, rig, run, startServe, sujet, writeSujets } from "./test-rig.ts";
@@ -128,6 +128,37 @@ describe("profile helpers", () => {
     expect(ko.lines).toContain("MISS  slack     no token [blocking]");
     expect(ko.lines).toContain("  to fill in: slack.me (…)");
   });
+});
+
+describe("setup --slack-app (O10)", () => {
+  test("the link opens Slack's app creation with the manifest, comments dropped, every scope kept", () => {
+    const yaml = readFileSync(join(import.meta.dir, "..", "examples", "slack-app-manifest.yaml"), "utf8");
+    const link = slackAppLink(yaml);
+    expect(link.startsWith("https://api.slack.com/apps?new_app=1&manifest_yaml=")).toBe(true);
+    const decoded = new URL(link).searchParams.get("manifest_yaml") ?? "";
+    expect(decoded).not.toContain("# ");
+    expect(decoded).toContain('background_color: "#1b1406"');
+    for (const { scope } of SLACK_SCOPES) expect(decoded).toContain(`- ${scope}`);
+    expect(decoded.split("\n")).toEqual(yaml.split("\n").filter((l) => l.trim() && !l.trimStart().startsWith("#")));
+  });
+
+  test("SETUP.md and README.md carry the link of the current manifest", () => {
+    const root = join(import.meta.dir, "..");
+    const link = slackAppLink(readFileSync(join(root, "examples", "slack-app-manifest.yaml"), "utf8"));
+    expect(readFileSync(join(root, "SETUP.md"), "utf8")).toContain(`](${link})`);
+    expect(readFileSync(join(root, "README.md"), "utf8")).toContain(`](${link})`);
+  });
+
+  test("--print shows the link and what to copy after, without opening anything", async () => {
+    const res = await cli(rig(), ["setup", "--slack-app", "--print"]);
+    expect(res.code).toBe(0);
+    expect(res.out).toContain("User OAuth Token (xoxp-…)");
+    expect(res.out).toContain("https://api.slack.com/apps?new_app=1&manifest_yaml=");
+  }, 20_000);
+
+  test("the check's missing token line points at it", async () => {
+    expect((await cli(rig(), ["setup", "--check"])).out).toContain("setup --slack-app creates it in one click");
+  }, 20_000);
 });
 
 describe("the shipped examples", () => {

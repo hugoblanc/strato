@@ -6,6 +6,7 @@
  *                                    git remotes, ticket prefixes, Linear MCP; each field with its source and confidence
  *   setup --write <file.json> [--force]   merges the file into config.json (creates the state folder), shows the diff
  *   setup --live                     turns shadow mode off (workers.shadow = false)
+ *   setup --slack-app [--print]      opens Slack's app creation with Strato's manifest filled in (--print: link only)
  *
  * Slack is only read (auth.test, users.info, usergroups.list, search.messages). Every probe tolerates a missing scope,
  * a missing token and a missing network: `--detect` then returns what it could find, and says why the rest is missing.
@@ -15,7 +16,8 @@ import { homedir } from "node:os";
 import { basename, join } from "node:path";
 import { CLAUDE_BIN, F, fail, flags, localDay, out, readJson, run, STATE, WORKSPACE, writeJson } from "../app/env.ts";
 import { appToken, tokenCandidates } from "../app/slack.ts";
-import { type CheckItem, checkReport, SLACK_SCOPES, type Detected, displayNameOf, firstNameOf, linearWorkspaces, localeFromEnv, mergeProfile, parseRemote, profileDiff, profileErrors, type Remote, type SearchMatch, slackWorkspaceFromUrl, suggestedConfig, ticketPrefixes, topChannels } from "../core/setup.ts";
+import manifestYaml from "../../examples/slack-app-manifest.yaml" with { type: "text" };
+import { type CheckItem, checkReport, slackAppLink, SLACK_SCOPES, type Detected, displayNameOf, firstNameOf, linearWorkspaces, localeFromEnv, mergeProfile, parseRemote, profileDiff, profileErrors, type Remote, type SearchMatch, slackWorkspaceFromUrl, suggestedConfig, ticketPrefixes, topChannels } from "../core/setup.ts";
 import { missingSettings, NEW_INSTALL_PROFILE, resolveSettings, settings, useSettings } from "../core/settings.ts";
 
 export const SHADOW_REFUSAL = "shadow mode: nothing is posted (bun strato.ts setup --live turns it off)";
@@ -93,7 +95,7 @@ async function check() {
   const probes = await probeTokens();
   const token = chosen(probes);
   if (!probes.length) {
-    items.push({ name: "slack", status: "missing", detail: `no user token (STRATO_SLACK_TOKEN, or SLACK_MCP_XOXP_TOKEN in ${WORKSPACE}/.claude/settings.local.json or ${WORKSPACE}/.mcp.json): see SETUP.md`, blocking: true });
+    items.push({ name: "slack", status: "missing", detail: `no user token (STRATO_SLACK_TOKEN, or SLACK_MCP_XOXP_TOKEN in ${WORKSPACE}/.claude/settings.local.json or ${WORKSPACE}/.mcp.json): see SETUP.md. No Slack app yet: setup --slack-app creates it in one click`, blocking: true });
   } else if (token) {
     const host = token.url ? (slackWorkspaceFromUrl(token.url) ?? "?") : "?";
     const meOff = s.slack.me && s.slack.me !== token.user;
@@ -281,8 +283,21 @@ function writeProfile(incoming: unknown, force: boolean, label: string) {
   out(`shadow mode: ${s.workers.shadow ? "on, nothing is posted" : "off"}`);
 }
 
+/** Prints the prefilled app creation link, and opens it unless `print` (or nothing on the machine opens a URL). */
+async function slackApp(print: boolean) {
+  const link = slackAppLink(manifestYaml);
+  out("Create Strato's Slack app, manifest already filled in: pick your workspace, Next, Create, then Install to Workspace.");
+  out("Then copy the User OAuth Token (xoxp-…) from OAuth & Permissions.");
+  out("");
+  out(link);
+  const opener = process.platform === "darwin" ? "open" : Bun.which("xdg-open") ? "xdg-open" : null;
+  if (print || !opener) return;
+  await run([opener, link], 10_000).catch(() => null);
+}
+
 export async function setup(args: string[]) {
   const { opts } = flags(args);
+  if (opts["slack-app"]) return slackApp(opts.print === "true");
   if (opts.check) return check();
   if (opts.detect) return detect();
   if (opts.live) return writeProfile({ workers: { shadow: false } }, false, "--live");
@@ -295,5 +310,5 @@ export async function setup(args: string[]) {
     }
     return writeProfile(incoming, opts.force === "true", opts.write);
   }
-  fail("usage: setup --check | --detect | --write <profile.json> [--force] | --live", 64);
+  fail("usage: setup --check | --detect | --write <profile.json> [--force] | --live | --slack-app [--print]", 64);
 }
