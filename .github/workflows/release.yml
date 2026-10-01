@@ -1,0 +1,53 @@
+name: Release
+
+# Push a tag v<version> (the version of scripts/package.json) to publish a release:
+#   git tag v0.2.0 && git push origin v0.2.0
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    # macOS: the darwin binaries get an ad hoc signature (codesign), which Apple Silicon requires; Bun cross-compiles
+    # the linux and windows targets from here.
+    runs-on: macos-latest
+    defaults:
+      run:
+        working-directory: scripts
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.2
+      - name: Tag matches scripts/package.json
+        run: |
+          version=$(jq -r .version package.json)
+          if [ "v$version" != "$GITHUB_REF_NAME" ]; then
+            echo "::error::tag $GITHUB_REF_NAME does not match scripts/package.json version $version"
+            exit 1
+          fi
+      - run: bun install --frozen-lockfile
+      - run: bun run check
+      - name: Compile the five targets
+        run: bun run build
+      - name: Smoke test the native binary
+        run: |
+          ../dist/strato-darwin-arm64 version | grep -F "${GITHUB_REF_NAME#v}"
+          (cd ../dist && shasum -a 256 -c SHA256SUMS)
+      - name: Release notes
+        run: bun ./build/release-notes.ts "$GITHUB_REF_NAME" > ../dist/NOTES.md && cat ../dist/NOTES.md
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cd ..
+          gh release create "$GITHUB_REF_NAME" \
+            --title "Strato $GITHUB_REF_NAME" \
+            --notes-file dist/NOTES.md \
+            --verify-tag \
+            dist/strato-darwin-arm64 dist/strato-darwin-x64 dist/strato-linux-x64 dist/strato-linux-arm64 dist/strato-windows-x64.exe dist/SHA256SUMS
