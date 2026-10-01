@@ -30,7 +30,14 @@ export async function doctor() {
   out(`profile  : ${F.config}${missing.length ? ` · to fill in: ${missing.join(", ")}` : ""}`);
   out(`owner    : ${s.owner.name} · workspace ${WORKSPACE}`);
   const slackOk = await connectSlack(cfg);
-  out(slackOk ? `slack    : ${slackOk.team} · user ${slackOk.me}${slackOk.me === cfg.me ? "" : ` (slack.me = ${cfg.me || "empty"}, to fix)`}` : `slack    : ${NO_TOKEN(cfg)}`);
+  if (!slackOk) out(`slack    : ${NO_TOKEN(cfg)}`);
+  else {
+    const fixes = [
+      ...(slackOk.teamUnset ? [`slack.team is not set: "${slackOk.team}"`] : []),
+      ...(slackOk.me === cfg.me ? [] : [`slack.me is ${cfg.me || "empty"}: "${slackOk.me}"`]),
+    ];
+    out(`slack    : ${slackOk.team} · user ${slackOk.me}${fixes.length ? ` · to fix in config.json, ${fixes.join(", ")} (setup --detect proposes them)` : ""}`);
+  }
   out(`socket   : ${appToken() ? "app token found, listen can open the socket" : "no app token (SLACK_APP_TOKEN or slack.appTokenFile): only watch, by polling, works"}`);
   const rows = agentsBySession();
   out(`claude   : ${rows ? `${rows.size} active session(s)` : "claude agents --json does not answer"}`);

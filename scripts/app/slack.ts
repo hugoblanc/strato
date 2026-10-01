@@ -75,24 +75,48 @@ export async function slack(method: string, params: Record<string, string | numb
   return body;
 }
 
-export const NO_TOKEN = (cfg: SlackSettings) =>
-  `no Slack token for workspace "${cfg.team || "slack.team not set in config.json"}" (STRATO_SLACK_TOKEN, ${WORKSPACE}/.claude/settings.local.json, ${WORKSPACE}/.mcp.json, SLACK_MCP_XOXP_TOKEN)`;
+/** What the last `connectSlack` saw, token by token: the "no token" message names the workspace of each. */
+let probed: { token: string; team?: string; error?: string }[] = [];
+
+const maskToken = (t: string) => `${t.slice(0, 5)}…${t.slice(-4)}`;
+
+/**
+ * Why no token is usable, in two distinct cases: none found at all (where to put one), or some found that belong to
+ * another workspace or that Slack refuses (each one masked, with its workspace or Slack's refusal code).
+ */
+export const NO_TOKEN = (cfg: SlackSettings) => {
+  const found = tokenCandidates();
+  if (!found.length) {
+    return `no Slack user token found (xoxp-…): set STRATO_SLACK_TOKEN, or SLACK_MCP_XOXP_TOKEN in ${WORKSPACE}/.claude/settings.local.json ("env") or ${WORKSPACE}/.mcp.json (the "slack" server); see SETUP.md, "Connect Slack"`;
+  }
+  const seen = found.map((t) => {
+    const p = probed.find((x) => x.token === t);
+    return `${maskToken(t)}: ${p?.team ? `workspace "${p.team}"` : (p?.error ?? "not checked")}`;
+  });
+  return `${found.length} Slack token(s) found, none usable${cfg.team ? ` for workspace "${cfg.team}" (slack.team)` : ""}: ${seen.join(", ")}`;
+};
 
 /**
  * Several tokens can live on the machine (other workspaces): keep the first one that belongs to the right workspace, else null.
+ * While `slack.team` is not set (a new installation), the first token Slack accepts is used, as `setup --check` does,
+ * and `teamUnset` says so.
  * Only an answer from Slack rules a token out (other workspace, token refused). A network failure or a timeout says
  * nothing about the token: retry, otherwise a few seconds of outage at startup would stop the listener with "no token".
  */
-export async function connectSlack(cfg: SlackSettings): Promise<{ team: string; me: string } | null> {
+export async function connectSlack(cfg: SlackSettings): Promise<{ team: string; me: string; teamUnset?: true } | null> {
   const delays = [5, 15, 30, 60];
   for (let attempt = 0; ; attempt++) {
     let transient = false;
+    probed = [];
     for (const t of tokenCandidates()) {
       TOKEN = t;
       try {
         const r = await slack("auth.test");
+        probed.push({ token: t, team: r.team });
+        if (!cfg.team) return { team: r.team, me: r.user_id, teamUnset: true };
         if (r.team === cfg.team) return { team: r.team, me: r.user_id };
       } catch (e) {
+        probed.push({ token: t, error: e instanceof SlackError ? e.code : "network" });
         if (!(e instanceof SlackError) || e.code === "ratelimited") transient = true;
       }
     }

@@ -246,6 +246,33 @@ describe("setup --detect", () => {
   }, 20_000);
 });
 
+describe("doctor and the Slack token (O5)", () => {
+  const doctorWith = (r: Rig, slack: { preload: string; env: Record<string, string> }) => run(r, ["--preload", slack.preload, CLI, "doctor"], slack.env);
+
+  test("a new profile without slack.team uses the token Slack accepts, and says what to fill in", async () => {
+    const r = rig();
+    writeConfig(r, { owner: { name: "Alice" } });
+    const res = await doctorWith(r, withSlack(r));
+    expect(res.code).toBe(0);
+    expect(res.out).toContain('slack    : Acme · user UALICE · to fix in config.json, slack.team is not set: "Acme", slack.me is empty: "UALICE"');
+  }, 20_000);
+
+  test("no token at all: where to put one", async () => {
+    const res = await cli(rig(), ["doctor"]);
+    expect(res.code).toBe(78);
+    expect(res.out).toContain("no Slack user token found (xoxp-…): set STRATO_SLACK_TOKEN");
+    expect(res.out).toContain('see SETUP.md, "Connect Slack"');
+  }, 20_000);
+
+  test("a token of another workspace: named, masked, with its workspace", async () => {
+    const r = rig();
+    writeConfig(r, { owner: { name: "Alice" }, slack: { team: "Globex", workspace: "globex", me: "UALICE" } });
+    const res = await doctorWith(r, withSlack(r));
+    expect(res.code).toBe(78);
+    expect(res.out).toContain('1 Slack token(s) found, none usable for workspace "Globex" (slack.team): xoxp-…0000: workspace "Acme"');
+  }, 20_000);
+});
+
 describe("setup --write and --live", () => {
   test("creates .strato/ in the workspace when no state folder exists", async () => {
     const r = rig();
