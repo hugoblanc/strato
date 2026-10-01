@@ -2,7 +2,11 @@
  * The pure side of `setup`: merging and validating a profile, reading what can be guessed from git remotes, commit
  * subjects and Slack answers, and the lines of `setup --check`. No disk, no network: commands/setup.ts does that.
  */
-import { DEFAULT_SETTINGS } from "./settings.ts";
+import { ACCOUNT_ID, PROVIDER_ID } from "../providers/api.ts";
+import type { ProviderDescriptor, SettingSpec } from "../providers/sdk.ts";
+import { locale, t } from "./i18n.ts";
+import { providerDescriptors, textOf } from "./links.ts";
+import { ACCOUNT_KEYS, DEFAULT_SETTINGS, TRACKER_LINK_FIELDS } from "./settings.ts";
 
 type Raw = Record<string, unknown>;
 const isObject = (v: unknown): v is Raw => typeof v === "object" && v !== null && !Array.isArray(v);
@@ -70,11 +74,16 @@ function checkAgainst(shape: unknown, v: unknown, path: string, out: string[]) {
   if (path in ENUMS && !ENUMS[path].includes(v as string)) out.push(`${path}: "${v}" is not one of ${ENUMS[path].join(", ")}`);
 }
 
+/** What the caller knows of external providers: the descriptor the person trusted, and whether its folder changed since. */
+export type ExternalProviders = Record<string, { descriptor?: ProviderDescriptor; changed?: boolean }>;
+
 /**
  * What is wrong in a raw config.json, before it is written: unknown fields and wrong types, spelled out.
  * resolveSettings never fails, so a typo ("watchChannel") would otherwise be silently ignored.
+ * The `providers` section is checked against the installed descriptors and, for external providers, the ones the
+ * caller passes (the trust cache): validation never starts a process.
  */
-export function profileErrors(raw: unknown): string[] {
+export function profileErrors(raw: unknown, external: ExternalProviders = {}): string[] {
   if (!isObject(raw)) return [`config.json: expected an object, got ${kindOf(raw)}`];
   const out: string[] = [];
   const shapes: Raw = { ...DEFAULT_SETTINGS, tracker: TRACKER_SHAPE, forge: FORGE_SHAPE };
@@ -82,6 +91,7 @@ export function profileErrors(raw: unknown): string[] {
     if (LEGACY_ROOT.has(k)) continue;
     if (!(k in shapes)) out.push(`${k}: unknown field (known: ${Object.keys(shapes).join(", ")})`);
     else if ((k === "tracker" || k === "forge") && v === null) continue;
+    else if (k === "providers") providersErrors(v, raw, external, out);
     else checkAgainst(shapes[k], v, k, out);
   }
   if (isObject(raw.forge)) {
@@ -90,6 +100,133 @@ export function profileErrors(raw: unknown): string[] {
     }
   }
   return out;
+}
+
+// ------------------------------------------------------------------ the providers section
+
+/** "a" or "b", in the person's language. */
+const orList = (items: string[]) => new Intl.ListFormat(locale(), { type: "disjunction" }).format(items);
+const quoted = (xs: string[]) => xs.map((x) => `"${x}"`);
+
+/** Edit distance, for "did you mean". */
+function distance(a: string, b: string): number {
+  const row = Array.from({ length: b.length + 1 }, (_, j) => j);
+  for (let i = 1; i <= a.length; i++) {
+    let prev = row[0];
+    row[0] = i;
+    for (let j = 1; j <= b.length; j++) {
+      const cur = row[j];
+      row[j] = Math.min(row[j] + 1, row[j - 1] + 1, prev + (a[i - 1].toLowerCase() === b[j - 1].toLowerCase() ? 0 : 1));
+      prev = cur;
+    }
+  }
+  return row[b.length];
+}
+
+/** The known name closest to a typo, when it is close enough to be the intended one. */
+function closest(name: string, known: string[]): string | null {
+  const best = known.map((k) => ({ k, d: distance(name, k) })).sort((x, y) => x.d - y.d)[0];
+  return best && best.d <= Math.max(1, Math.floor(best.k.length / 4)) ? best.k : null;
+}
+
+/** A key name that looks like a secret: it never belongs in config.json. */
+const SECRET_NAME = /token|secret|passw(or)?d|api[-_]?key|credential/i;
+
+/** The JSON kind a setting type expects, or null when the value fits. */
+function settingMismatch(spec: SettingSpec, v: unknown): string | null {
+  const ok =
+    spec.type === "string" ? typeof v === "string"
+    : spec.type === "number" ? typeof v === "number"
+    : spec.type === "boolean" ? typeof v === "boolean"
+    : spec.type === "string[]" ? Array.isArray(v) && v.every((x) => typeof x === "string")
+    : isObject(v) && Object.values(v).every((x) => typeof x === "string");
+  return ok ? null : spec.type === "string[]" ? "array of strings" : spec.type === "map" ? "object of strings" : spec.type;
+}
+
+const RESERVED_TYPES: Record<(typeof ACCOUNT_KEYS)[number], "string" | "number" | "boolean"> = {
+  auth: "string",
+  secretsFile: "string",
+  ingest: "string",
+  enabled: "boolean",
+  label: "string",
+  pollInterval: "number",
+  mcpServer: "string",
+};
+
+/** One account of the `providers` section against its provider's descriptor. */
+function accountErrors(d: ProviderDescriptor, id: string, raw: Raw, path: string, tracked: boolean, out: string[]): void {
+  const tool = textOf(d.label);
+  const known = d.settings.map((x) => x.key);
+  for (const [k, v] of Object.entries(raw)) {
+    const at = `${path}.${k}`;
+    if (k in RESERVED_TYPES) {
+      const want = RESERVED_TYPES[k as keyof typeof RESERVED_TYPES];
+      if (kindOf(v) !== want) out.push(t("cli.setup.provider.expected", { path: at, expected: want, got: kindOf(v) }));
+      else if (k === "auth") {
+        const methods = d.auth.map((m) => m.id);
+        if (!(methods.includes(v as string) || (v === "none" && !methods.length))) out.push(t("cli.setup.provider.auth", { tool, auth: String(v), methods: orList(quoted(methods.length ? methods : ["none"])), path: at }));
+      } else if (k === "ingest") {
+        if (!["push", "poll", "off"].includes(v as string)) out.push(t("cli.setup.provider.ingest", { path: at }));
+        else if (v === "push" && !d.capabilities.ingest.push) out.push(t("cli.setup.provider.noPush", { tool, path: at }));
+      }
+      continue;
+    }
+    const spec = d.settings.find((x) => x.key === k);
+    if (!spec) {
+      if (SECRET_NAME.test(k) || d.auth.some((m) => m.stores.some((x) => x.name.toLowerCase() === k.toLowerCase()))) out.push(t("cli.setup.provider.secret", { id: d.id, path: at }));
+      else {
+        const hint = closest(k, known);
+        out.push(hint ? t("cli.setup.provider.settingHint", { tool, name: k, hint, path: at }) : t("cli.setup.provider.setting", { tool, name: k, known: known.join(", "), path: at }));
+      }
+      continue;
+    }
+    if (d.id === "linear" && id === "default" && tracked && (TRACKER_LINK_FIELDS as readonly string[]).includes(k)) {
+      out.push(t("cli.setup.provider.trackerField", { path: at }));
+      continue;
+    }
+    const expected = settingMismatch(spec, v);
+    if (expected) out.push(t("cli.setup.provider.expected", { path: at, expected, got: kindOf(v) }));
+  }
+}
+
+/** The `providers` section: tool names, sources, account names, and each account against its provider's settings. */
+function providersErrors(v: unknown, root: Raw, external: ExternalProviders, out: string[]): void {
+  if (!isObject(v)) return void out.push(t("cli.setup.provider.expected", { path: "providers", expected: "object", got: kindOf(v) }));
+  const builtins = providerDescriptors();
+  const tracked = isObject(root.tracker) && (root.tracker.kind === undefined || root.tracker.kind === "linear");
+  for (const [id, entry] of Object.entries(v)) {
+    const path = `providers.${id}`;
+    if (!PROVIDER_ID.test(id)) {
+      out.push(t("cli.setup.provider.name", { path }));
+      continue;
+    }
+    if (!isObject(entry)) {
+      out.push(t("cli.setup.provider.expected", { path, expected: "object", got: kindOf(entry) }));
+      continue;
+    }
+    for (const k of Object.keys(entry)) if (k !== "source" && k !== "accounts") out.push(t("cli.setup.provider.field", { path: `${path}.${k}` }));
+    const builtin = builtins.find((d) => d.id === id);
+    const source = entry.source;
+    if (source !== undefined) {
+      const okSource = isObject(source) && (typeof source.module === "string" || (Array.isArray(source.exec) && source.exec.length > 0 && source.exec.every((x) => typeof x === "string"))) && (source.sha256 === undefined || typeof source.sha256 === "string");
+      if (!okSource || builtin) out.push(t("cli.setup.provider.source", { path: `${path}.source` }));
+      else if (external[id]?.changed) out.push(t("cli.setup.provider.changed", { id, path: `${path}.source` }));
+    } else if (!builtin) out.push(t("cli.setup.provider.notBuiltin", { id, builtins: builtins.map((d) => d.id).join(", "), path }));
+    if (entry.accounts === undefined) continue;
+    if (!isObject(entry.accounts)) {
+      out.push(t("cli.setup.provider.expected", { path: `${path}.accounts`, expected: "object", got: kindOf(entry.accounts) }));
+      continue;
+    }
+    const d = builtin ?? external[id]?.descriptor ?? null;
+    for (const [name, account] of Object.entries(entry.accounts)) {
+      const at = `${path}.accounts.${name}`;
+      if (id === "slack" && name === "default") out.push(t("cli.setup.provider.slackDefault", { path: at }));
+      else if (name !== "default" && !ACCOUNT_ID.test(name)) out.push(t("cli.setup.provider.account", { path: at }));
+      else if (!isObject(account)) out.push(t("cli.setup.provider.expected", { path: at, expected: "object", got: kindOf(account) }));
+      else if (d) accountErrors(d, name, account, at, tracked, out);
+      else if (source !== undefined && !external[id]?.changed) out.push(t("cli.setup.provider.untrusted", { id, path: at }));
+    }
+  }
 }
 
 // ------------------------------------------------------------------ detection

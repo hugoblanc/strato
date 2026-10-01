@@ -644,6 +644,23 @@ const en = {
   "provider.linear.word.item": "comment",
   "provider.linear.word.thread": "ticket",
   "provider.linear.word.conversation": "team",
+  // setup --write: the providers section of config.json
+  "cli.setup.provider.slackDefault": "Your main Slack workspace is set in the \"slack\" section; give this other one a name, such as \"partners\" ({path})",
+  "cli.setup.provider.auth": "{tool} does not connect with \"{auth}\"; choose {methods} ({path})",
+  "cli.setup.provider.account": "An account name uses lowercase letters, digits and dashes, such as \"work\" ({path})",
+  "cli.setup.provider.name": "A tool name uses lowercase letters, digits and dashes, and starts with a letter, such as \"tickets\" ({path})",
+  "cli.setup.provider.settingHint": "{tool} has no setting \"{name}\"; did you mean \"{hint}\"? ({path})",
+  "cli.setup.provider.setting": "{tool} has no setting \"{name}\"; its settings are {known} ({path})",
+  "cli.setup.provider.notBuiltin": "\"{id}\" is not a built-in tool (built in: {builtins}); an external provider needs source.module or source.exec ({path})",
+  "cli.setup.provider.untrusted": "Trust the provider \"{id}\" first, so Strato knows its settings: strato provider trust {id}, or the board's Connect page ({path})",
+  "cli.setup.provider.secret": "A secret never goes in config.json; strato setup --connect {id}, or the board's Connect page, stores it in a file only you can read ({path})",
+  "cli.setup.provider.changed": "The provider \"{id}\" changed since you trusted it; read it, then trust it again with strato provider trust {id} or on the Connect page ({path})",
+  "cli.setup.provider.trackerField": "The Linear workspace and ticket prefixes come from the \"tracker\" section; set them there, not here ({path})",
+  "cli.setup.provider.ingest": "An account reads its tool with \"push\", \"poll\" or \"off\" ({path})",
+  "cli.setup.provider.noPush": "{tool} cannot push new items; use \"poll\" or \"off\" ({path})",
+  "cli.setup.provider.source": "An external provider's source is {\"module\": path} or {\"exec\": [command, …]}, with the \"sha256\" you trusted; a built-in tool has none ({path})",
+  "cli.setup.provider.field": "A tool's entry holds \"source\" and \"accounts\" only ({path})",
+  "cli.setup.provider.expected": "Expected {expected} here, got {got} ({path})",
 } as const;
 
 export type MessageKey = keyof typeof en;
@@ -1246,6 +1263,22 @@ const fr: Record<MessageKey, string> = {
   "provider.linear.word.item": "commentaire",
   "provider.linear.word.thread": "ticket",
   "provider.linear.word.conversation": "équipe",
+  "cli.setup.provider.slackDefault": "Ton workspace Slack principal se règle dans la section « slack » ; donne un nom à cet autre workspace, par exemple « partners » ({path})",
+  "cli.setup.provider.auth": "{tool} ne se connecte pas avec « {auth} » ; choisis {methods} ({path})",
+  "cli.setup.provider.account": "Un nom de compte s'écrit en minuscules, chiffres et tirets, par exemple « work » ({path})",
+  "cli.setup.provider.name": "Un nom d'outil s'écrit en minuscules, chiffres et tirets, et commence par une lettre, par exemple « tickets » ({path})",
+  "cli.setup.provider.settingHint": "{tool} n'a pas de réglage « {name} » ; voulais-tu dire « {hint} » ? ({path})",
+  "cli.setup.provider.setting": "{tool} n'a pas de réglage « {name} » ; ses réglages sont {known} ({path})",
+  "cli.setup.provider.notBuiltin": "« {id} » n'est pas un outil intégré (intégrés : {builtins}) ; un provider externe a besoin de source.module ou source.exec ({path})",
+  "cli.setup.provider.untrusted": "Approuve d'abord le provider « {id} », pour que Strato connaisse ses réglages : strato provider trust {id}, ou la page Connect du board ({path})",
+  "cli.setup.provider.secret": "Un secret ne va jamais dans config.json ; strato setup --connect {id}, ou la page Connect du board, le range dans un fichier que toi seul peux lire ({path})",
+  "cli.setup.provider.changed": "Le provider « {id} » a changé depuis que tu l'as approuvé ; relis-le, puis approuve-le de nouveau avec strato provider trust {id} ou sur la page Connect ({path})",
+  "cli.setup.provider.trackerField": "Le workspace Linear et les préfixes de tickets viennent de la section « tracker » ; règle-les là-bas, pas ici ({path})",
+  "cli.setup.provider.ingest": "Un compte lit son outil en « push », « poll » ou « off » ({path})",
+  "cli.setup.provider.noPush": "{tool} ne sait pas pousser les nouveautés ; mets « poll » ou « off » ({path})",
+  "cli.setup.provider.source": "La source d'un provider externe est {\"module\": chemin} ou {\"exec\": [commande, …]}, avec le « sha256 » approuvé ; un outil intégré n'en a pas ({path})",
+  "cli.setup.provider.field": "L'entrée d'un outil ne contient que « source » et « accounts » ({path})",
+  "cli.setup.provider.expected": "Attendu ici : {expected}, reçu : {got} ({path})",
 };
 
 export const DICTIONARIES: Record<Locale, Record<MessageKey, string>> = { en, fr };
