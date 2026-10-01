@@ -13,17 +13,19 @@
 import { chmodSync, existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { permalinkFor } from "../chat/slack-model.ts";
+import { formatKey } from "../core/keys.ts";
 import { localeFromEnv } from "../core/setup.ts";
 
 export const DEMO_DIR = join(tmpdir(), "strato-demo");
 export const DEMO_PORT = 4394;
 
-const SLACK = "https://acme.slack.com/archives";
+const SLACK = "https://acme.slack.com";
 /** The one session the stub `claude` reports, busy: the topic at work reads as working, not as a dead session. */
 const DEMO_SESSION = { id: "demo0c", sessionId: "00000000-0000-4000-8000-00000000000c", status: "busy", name: "DM · Grace · C" };
 const ago = (now: number, minutes: number) => new Date(now - minutes * 60_000).toISOString();
 /** A Slack thread of the fictional workspace: its key (`channel:ts`) and permalink. */
-const thread = (channel: string, ts: string) => ({ key: `${channel}:${ts}`, permalink: `${SLACK}/${channel}/p${ts.replace(".", "")}` });
+const thread = (channel: string, ts: string) => ({ key: formatKey("slack", "default", `${channel}:${ts}`) as string, permalink: permalinkFor(SLACK, channel, ts) });
 
 /** The fictional profile: Alice, lead of the Platform team at Acme, in shadow mode. */
 export function demoProfile(locale: "en" | "fr") {

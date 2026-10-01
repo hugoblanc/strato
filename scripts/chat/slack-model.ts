@@ -1,3 +1,4 @@
+import { threadOfKey } from "../core/keys.ts";
 import type { SlackSettings } from "../core/settings.ts";
 import type { Sujet } from "../core/sujet.ts";
 
@@ -343,7 +344,9 @@ export function draftDestination(s: Pick<Sujet, "key" | "draftTo" | "channel">):
   // outside any thread. Only the id counts: a channel name alone cannot be resolved without guessing.
   // The real shape of a Slack id: C, G or D, then 8 to 10 characters with at least one digit ("DASHBOARD" is not one).
   const id = to.match(/\b([CGD](?=[A-Z0-9]*\d)[A-Z0-9]{8,10})\b/)?.[1];
-  const key = s.key.match(/^([A-Z0-9]+):(\d{10}\.\d{6})$/);
+  // the topic's own thread: a thread of the default Slack account, with a real ts
+  const thread = threadOfKey(s.key);
+  const key = thread && /^\d{10}\.\d{6}$/.test(thread.ts) ? [s.key, thread.channel, thread.ts] : null;
   if (id && (/nouveau message|new message|hors fil|à part|top-level/i.test(to) || id !== key?.[1])) return { channel: id, ts: null };
   if (!key) return { error: "pas de fil Slack pour ce sujet : copie le draft" };
   const named = to.match(/#[a-z0-9._-]+/i)?.[0]?.toLowerCase();

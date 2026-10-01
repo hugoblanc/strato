@@ -10,7 +10,8 @@ import { claimResume, createSujet, dropSujet, endResume, ensureState, loadSujets
 import { attention, inboundNote, isStuck, routeDecision } from "../claude/model.ts";
 import { gateLine } from "../core/cards.ts";
 import { locale } from "../core/i18n.ts";
-import { sujetKey, ticketUrl } from "../core/keys.ts";
+import { parseKey, sujetKey, threadOfKey, ticketUrl } from "../core/keys.ts";
+import { providerLabel } from "../core/links.ts";
 import { missingSettings, settings } from "../core/settings.ts";
 import { nextLine, short } from "./setup.ts";
 import { applyAssignments, attachThread, findSujet, parseAssignments, type Sujet, sujetKeys, type Trigger } from "../core/sujet.ts";
@@ -87,7 +88,7 @@ export async function open(args: string[]) {
   }
   const trigger: Trigger = kept ? { ...kept, permalink } : {
     from: opts.from ?? (issueId ? settings().owner.name : "?"),
-    channel: opts.channel ?? (issueId ? "Linear" : key.split(":")[0]),
+    channel: opts.channel ?? (issueId ? "Linear" : (threadOfKey(key)?.channel ?? providerLabel(parseKey(key)?.provider ?? ""))),
     text: opts.text ?? "",
     permalink,
   };

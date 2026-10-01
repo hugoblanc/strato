@@ -14,6 +14,7 @@ import { classify, type Config, isSilent, nextSyncCursor, permalinkFor, type Sla
 import { type AgentRow, attentionChanged, sessionAttention } from "../claude/model.ts";
 import { digestLines, eventLine, gateLine, type InfoEvent } from "../core/cards.ts";
 import { type MasterRequest, revueLine } from "../core/master.ts";
+import { threadOfKey } from "../core/keys.ts";
 import { settings } from "../core/settings.ts";
 import { applyAssignments, draftMatches, dueReminders, findSujet, type Snooze, type Sujet, sujetKeys, trackedKeys } from "../core/sujet.ts";
 import { closeTask, openTasks, taskDraftText } from "../core/tasks.ts";
@@ -36,8 +37,10 @@ export async function backfillThreads(cfg: Config, seen: Set<string>, participat
   for (const s of loadSujets()) {
     if (s.status === "closed") continue;
     for (const key of sujetKeys(s)) {
-      if (key.startsWith("linear:")) continue;
-      const [channelId, ts] = key.split(":");
+      // a ticket, or a key of another tool or account, has no Slack thread to catch up
+      const thread = threadOfKey(key);
+      if (!thread) continue;
+      const { channel: channelId, ts } = thread;
       let replies: SlackMatch[];
       try {
         replies = await repliesOf(channelId, ts, { oldest: String(since) });
@@ -196,7 +199,7 @@ async function pollSessions(prev: Map<string, string | null>, opts: { spawn?: bo
 /** Purges keys older than three days and writes `seen.json`. */
 function saveSeen(seen: Set<string>): void {
   const horizon = Date.now() / 1000 - 3 * 86400;
-  for (const id of seen) if (Number(id.split(":")[1]) < horizon) seen.delete(id);
+  for (const id of seen) if (Number(threadOfKey(id)?.ts) < horizon) seen.delete(id);
   writeJson(F.seen, [...seen]);
 }
 

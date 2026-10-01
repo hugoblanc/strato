@@ -1,6 +1,6 @@
 import { settings } from "./settings.ts";
 import { t } from "./i18n.ts";
-import { permalinkOfKey } from "./keys.ts";
+import { permalinkOfKey, threadOfKey } from "./keys.ts";
 import { parseSteps, type Sujet, sujetKeys, sujetsByKey, type Trigger } from "./sujet.ts";
 import { openTasks, taskDraftText } from "./tasks.ts";
 import { truncate, untrusted } from "./text.ts";
@@ -53,8 +53,9 @@ export function diveMarkdown(s: Sujet, threads: ThreadDump[], report: string | n
 export function eventLine(kind: string, d: Trigger & { key: string }, sujets: Sujet[], msg?: string): string {
   const sujet = sujetsByKey(sujets).get(d.key);
   const tag = sujet ? ` · topic ${sujet.letter} ${sujet.shortId ?? "?"} (${sujet.status})` : "";
-  const channelId = d.key.split(":")[0];
-  const nearby = sujet ? [] : sujets.filter((s) => s.status !== "closed" && sujetKeys(s).some((k) => k.startsWith(`${channelId}:`)));
+  // the open topics of the same Slack conversation; another tool's key has none until items carry their conversation
+  const channelId = threadOfKey(d.key)?.channel;
+  const nearby = sujet || !channelId ? [] : sujets.filter((s) => s.status !== "closed" && sujetKeys(s).some((k) => threadOfKey(k)?.channel === channelId));
   const hint = nearby.length ? ` · open topics in this channel: ${nearby.map((s) => `${s.letter} « ${truncate(s.title, 40)} »`).join(", ")}` : "";
   return `[strato] ${kind} · ${untrusted(d.channel)} · ${untrusted(d.from)} · key=${d.key}${msg ? ` · msg=${msg}` : ""}${tag}${hint} · « ${untrusted(d.text)} » · ${d.permalink}`;
 }

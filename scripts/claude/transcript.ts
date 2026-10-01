@@ -1,6 +1,6 @@
-import { keyFromPermalink } from "../chat/slack-model.ts";
 import { t } from "../core/i18n.ts";
-import { ticketPattern } from "../core/keys.ts";
+import { formatKey, ticketPattern } from "../core/keys.ts";
+import { parseLink } from "../core/links.ts";
 import { clip } from "../core/text.ts";
 
 /** An entry of a Claude Code transcript (~/.claude/projects/<folder>/<sessionId>.jsonl), reduced to what the panel reads. */
@@ -85,7 +85,8 @@ export function citations(text: string): { slack: SlackCitation[]; linear: strin
   const slack: SlackCitation[] = [];
   for (const m of text.matchAll(SLACK_LINK)) {
     const url = m[0].replace(/[.,;:!?]+$/, "");
-    const key = keyFromPermalink(url);
+    const target = parseLink(url);
+    const key = target?.provider === "slack" ? formatKey(target.provider, target.account, target.thread) : null;
     if (key) slack.push({ key, url, workspace: m[1] });
   }
   const tickets = ticketPattern("g");

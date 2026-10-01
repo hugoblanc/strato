@@ -7,7 +7,7 @@
  * Every visible word goes through core/i18n.ts: t() on the server, tr() in the page's script.
  */
 import { faviconHref, stratoMark } from "./core/brand.ts";
-import { postOnlyAction, truncate, t, clientMessages, locale, type MessageKey, type ActivityStep, type AgentNode, agentCounts, type Due, type MasterRequest, type MrStage, MR_STAGE_ORDER, parseDue, REVUE_STALE_MS, REVUE_WINDOWS, DRAFT_MAX, draftDestination, draftText, isSnoozed, type Snooze, parseSteps, permalinkOfKey, repoLabel, type SessionContext, settings, shellQuote, ticketIdOfKey, ticketUrl, type SocketHealth, socketDeaf, type Sujet, sujetKeys, takenBy, freshness, gateSince, checkable, openTasks, tasksOf, taskDraftText, taskReady, sendsUnseenMessage, type Task, type TaskKind } from "./lib.ts";
+import { postOnlyAction, truncate, t, clientMessages, locale, type MessageKey, type ActivityStep, type AgentNode, agentCounts, type Due, type MasterRequest, type MrStage, MR_STAGE_ORDER, parseDue, REVUE_STALE_MS, REVUE_WINDOWS, DRAFT_MAX, draftDestination, draftText, isSnoozed, type Snooze, parseSteps, permalinkOfKey, linkOfNative, providerKeyLabel, threadOfKey, repoLabel, type SessionContext, settings, shellQuote, ticketIdOfKey, ticketUrl, type SocketHealth, socketDeaf, type Sujet, sujetKeys, takenBy, freshness, gateSince, checkable, openTasks, tasksOf, taskDraftText, taskReady, sendsUnseenMessage, type Task, type TaskKind } from "./lib.ts";
 import { type StaleSignal, staleSignals } from "./core/refresh.ts";
 import { escapeHtml, textToHtml } from "./panel.ts";
 import type { LocalVersion, UpdateCheck, UpdateResult } from "./app/update.ts";
@@ -467,11 +467,11 @@ export function slackToHtml(text: string): string {
 const CHANNEL_NAMES = new Map<string, string>();
 function learnChannels(sujets: Sujet[], events: BoardEvent[]): void {
   for (const s of sujets) {
-    const id = s.key.split(":")[0];
-    if (s.channel && /^[CGD][A-Z0-9]{8,}$/.test(id)) CHANNEL_NAMES.set(id, s.channel);
+    const id = threadOfKey(s.key)?.channel;
+    if (id && s.channel && /^[CGD][A-Z0-9]{8,}$/.test(id)) CHANNEL_NAMES.set(id, s.channel);
   }
   for (const e of events) {
-    const id = e.key?.split(":")[0];
+    const id = e.key ? threadOfKey(e.key)?.channel : undefined;
     if (id && e.channel && /^[CGD][A-Z0-9]{8,}$/.test(id)) CHANNEL_NAMES.set(id, e.channel);
   }
 }
@@ -484,10 +484,20 @@ function keyLink(key: string, s: Sujet): string {
   const ticket = ticketIdOfKey(key);
   if (ticket) return ticketLink(ticket);
   const url = permalinkOfKey(key);
-  const [id, ts] = key.split(":");
+  const thread = threadOfKey(key);
+  if (!thread) {
+    const label = key === s.key ? s.channel : providerKeyLabel(key);
+    return url ? link(url, label) : escapeHtml(label);
+  }
+  const { channel: id, ts } = thread;
   const when = ts ? new Date(Number(ts) * 1000) : null;
   const date = when && !Number.isNaN(when.getTime()) ? ` ${String(when.getDate()).padStart(2, "0")}/${String(when.getMonth() + 1).padStart(2, "0")} ${String(when.getHours()).padStart(2, "0")}:${String(when.getMinutes()).padStart(2, "0")}` : "";
-  const twin = when && sujetKeys(s).some((k) => k !== key && k.split(":")[0] === id && Math.floor(Number(k.split(":")[1]) / 60) === Math.floor(Number(ts) / 60));
+  const twin =
+    when &&
+    sujetKeys(s).some((k) => {
+      const other = k !== key ? threadOfKey(k) : null;
+      return other !== null && other.channel === id && Math.floor(Number(other.ts) / 60) === Math.floor(Number(ts) / 60);
+    });
   const label = key === s.key ? s.channel : `${CHANNEL_NAMES.get(id) ?? `Slack ${id}`}${date}${twin && when ? `:${String(when.getSeconds()).padStart(2, "0")}` : ""}`;
   return url ? link(url, label) : escapeHtml(label);
 }
@@ -732,8 +742,7 @@ function draftToLabel(s: Pick<Sujet, "draftTo" | "channel">): string {
 function draftToLink(s: Pick<Sujet, "key" | "draftTo" | "channel">): string {
   const label = `→ ${escapeHtml(draftToLabel(s))}`;
   const dest = draftDestination(s);
-  const ws = settings().slack.workspace;
-  const href = "error" in dest ? null : dest.ts ? permalinkOfKey(`${dest.channel}:${dest.ts}`) : ws ? `https://${ws}.slack.com/archives/${dest.channel}` : null;
+  const href = "error" in dest ? null : dest.ts ? permalinkOfKey(`${dest.channel}:${dest.ts}`) : linkOfNative("slack", "default", dest.channel);
   const title = escapeHtml(href ? t(dest && !("error" in dest) && dest.ts ? "board.draft.dest.thread" : "board.draft.dest.channel", { url: href }) : (s.draftTo ?? ""));
   return href
     ? `<a href="${escapeHtml(href)}" target="_blank" rel="noopener" data-draft-dest class="min-w-0 truncate text-link hover:underline underline-offset-2" title="${title}">${label}</a>`
@@ -1005,7 +1014,7 @@ export function sessionLine(x: BoardSession, ctx: BoardContext): string {
   if (x.startedAt) sub.push(t("board.since", { time: when(x.startedAt, ctx) }));
   if (c?.lastAgent?.at) sub.push(t("board.session.lastTurn", { when: when(c.lastAgent.at, ctx) }));
   const cites: string[] = [];
-  for (const th of c?.slackThreads ?? []) cites.push(link(th.url, `Slack ${th.key.split(":")[0]}`));
+  for (const th of c?.slackThreads ?? []) cites.push(link(th.url, `Slack ${threadOfKey(th.key)?.channel ?? th.key}`));
   for (const id of c?.linearIssues ?? []) cites.push(ticketLink(id));
   if (x.remote) cites.push(link(remoteUrlOf(x.remote), "claude.ai"));
   const state = c?.master ? badge("master", "accent") : badge(t(x.status === "busy" ? "board.session.status.busy" : x.status === "waiting" ? "board.session.status.waiting" : "board.session.status.idle"), x.status === "busy" ? "clear" : x.status === "waiting" ? "warn" : "muted", x.status === "busy");

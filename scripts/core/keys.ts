@@ -176,9 +176,6 @@ export function ticketUrl(id: string): string | null {
   return linkOfNative("linear", "default", id);
 }
 
-/** Host of ticket links, for the list of links the panel may open. */
-export const TRACKER_HOST = "linear.app";
-
 /**
  * Key of a pasted reference: a ticket key as is, a link of a configured account (a Slack thread, a ticket), a bare
  * ticket id claimed by exactly one account (`ENG-12`), or a key of a configured account in its canonical form.

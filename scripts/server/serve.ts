@@ -20,7 +20,8 @@ import { DRAFT_MAX, draftDestination, permalinkFor, slackAppLink, type SocketHea
 import { type AgentRow, claudeRefs, parsePs } from "../claude/model.ts";
 import { type ActivityStep, type AgentNode, agentTree } from "../claude/transcript.ts";
 import { type ThreadDump } from "../core/cards.ts";
-import { permalinkOfKey, TRACKER_HOST } from "../core/keys.ts";
+import { permalinkOfKey, threadOfKey } from "../core/keys.ts";
+import { hostOwner } from "../core/links.ts";
 import { type MasterRequest, pendingRevue, REVUE_WINDOWS } from "../core/master.ts";
 import { settings } from "../core/settings.ts";
 import { applyAssignments, checkable, findSujet, postOnlyAction, searchSujets, type Snooze, type Sujet, sujetKeys } from "../core/sujet.ts";
@@ -31,7 +32,8 @@ import { cleanSessionName, itermTtyScript, sujetForFocus, ttyName } from "../ter
 import { hostAllowed, ORIGINLESS_ROUTES, originAllowed, terminalBasePath } from "./guard.ts";
 
 /** Hosts the panel may open in the browser, over https only. */
-const OPENABLE_HOSTS = [/^([a-z0-9-]+\.)*slack\.com$/, ...(settings().tracker ? [new RegExp(`^${TRACKER_HOST.replace(/\./g, "\\.")}$`)] : [])];
+/** The board opens only the links of a configured account's hosts (core/links.ts): Slack, and the tracker when there is one. */
+const openable = (hostname: string) => hostOwner(hostname) !== null;
 const THREAD_TTL_MS = 60_000;
 
 /** The view of a session whose transcript moves is redrawn at most every 10 s. */
@@ -936,7 +938,9 @@ export async function serve(args: string[]) {
       if (!s) return Response.json({ error: t("board.api.topicMissing") }, { status: 404 });
       if (shadow) return Response.json({ error: SHADOW_REFUSAL, code: "shadow" }, { status: 409 });
       if (!checkable(s)) return Response.json({ error: t("board.api.notCheckable", { letter: s.letter }) }, { status: 409 });
-      const [channel, ts] = s.key.split(":");
+      const thread = threadOfKey(s.key);
+      if (!thread) return Response.json({ error: t("board.api.notCheckable", { letter: s.letter }) }, { status: 409 });
+      const { channel, ts } = thread;
       if (!hasSlackToken()) await connectSlack(cfg);
       if (!hasSlackToken()) return Response.json({ error: NO_TOKEN(cfg) }, { status: 503 });
       try {
@@ -1072,10 +1076,10 @@ export async function serve(args: string[]) {
         try {
           target = typeof body.url === "string" ? new URL(body.url) : null;
         } catch {}
-        if (!target || target.protocol !== "https:" || !OPENABLE_HOSTS.some((re) => re.test(target.hostname)))
+        if (!target || target.protocol !== "https:" || !openable(target.hostname))
           return Response.json({ error: t("board.api.linkRefused") }, { status: 400 });
         // a Slack link opens in the app, on the message, without a redirecting tab; falls back to https without a known team
-        const app = settings().ui.slackApp && /(^|\.)slack\.com$/.test(target.hostname) ? slackAppLink(target.href, await slackTeamId()) : null;
+        const app = settings().ui.slackApp && hostOwner(target.hostname)?.provider === "slack" ? slackAppLink(target.href, await slackTeamId()) : null;
         Bun.spawn(["open", app ?? target.href], { stdin: "ignore", stdout: "ignore", stderr: "ignore" });
         return Response.json({ ok: true });
       }

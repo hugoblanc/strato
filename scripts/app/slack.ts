@@ -6,7 +6,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { bestText, channelGuess, channelLabel, classify, type Config, humanize, type Kind, matchFromEditEvent, matchFromSocketEvent, type SlackChannel, type SlackMatch, SOCKET_SUBTYPES, threadKey } from "../chat/slack-model.ts";
 import { type ThreadDump } from "../core/cards.ts";
-import { permalinkOfKey } from "../core/keys.ts";
+import { permalinkOfKey, threadOfKey } from "../core/keys.ts";
 import { settings, type SlackSettings } from "../core/settings.ts";
 import { tokenKindProblem, USER_TOKEN_WHERE } from "../core/setup.ts";
 import { type Sujet, sujetKeys, type Trigger } from "../core/sujet.ts";
@@ -335,11 +335,12 @@ export async function repliesOf(channel: string, ts: string, extra: Record<strin
   return all.slice(0, REPLIES_MAX);
 }
 
-/** Reads a whole Slack thread for the dive sheet. null for a ticket key. */
+/** Reads a whole Slack thread for the dive sheet. null for any key but a thread of the default Slack account. */
 export async function threadDump(key: string): Promise<ThreadDump | null> {
   const permalink = permalinkOfKey(key);
-  if (!permalink || key.startsWith("linear:")) return null;
-  const [channel, ts] = key.split(":");
+  const thread = threadOfKey(key);
+  if (!permalink || !thread) return null;
+  const { channel, ts } = thread;
   const messages: ThreadDump["messages"] = [];
   for (const m of (await repliesOf(channel, ts)) as (SlackMatch & { bot_profile?: { name?: string } })[]) {
     const from = m.user ? await nameOf(m.user) : m.username || m.bot_profile?.name || "bot";

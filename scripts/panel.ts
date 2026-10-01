@@ -5,7 +5,7 @@
  * External links therefore go through POST /api/open, which opens them in the browser.
  * Every visible word goes through core/i18n.ts (keys `panel.*`).
  */
-import { locale, openTasks, parseSteps, permalinkOfKey, repoLabel, settings, sujetKeys, sujetsByKey, t, taskDraftText, ticketIdOfKey, ticketUrl, type SessionContext, type Sujet, type ThreadDump } from "./lib.ts";
+import { locale, openTasks, parseSteps, permalinkOfKey, providerKeyLabel, repoLabel, settings, sujetKeys, sujetsByKey, t, taskDraftText, threadOfKey, ticketIdOfKey, ticketUrl, type SessionContext, type Sujet, type ThreadDump } from "./lib.ts";
 
 export function escapeHtml(s: string): string {
   return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;");
@@ -160,13 +160,17 @@ function statusText(s: Sujet): string {
   return `${s.status}${gate}${s.waiting ? ` · ${t("panel.status.waiting", { who: s.waiting })}` : ""}`;
 }
 
-/** Short label of a key: the topic's channel for the main thread, the channel id otherwise, the id for a ticket. */
+/**
+ * Short label of a key: the topic's channel for the main thread, the channel id otherwise, the id for a ticket, the
+ * tool and its native id for any other key.
+ */
 function keyLabel(key: string, s: Sujet, ctx: PanelContext): string {
   const ticket = ticketIdOfKey(key);
   if (ticket) return ticket;
-  const [channel, ts] = key.split(":");
-  const when = Number(ts) ? ` · ${ctx.timeOf(new Date(Number(ts) * 1000).toISOString())}` : "";
-  return `Slack ${key === s.key ? s.channel : channel}${when}`;
+  const thread = threadOfKey(key);
+  if (!thread) return providerKeyLabel(key);
+  const when = Number(thread.ts) ? ` · ${ctx.timeOf(new Date(Number(thread.ts) * 1000).toISOString())}` : "";
+  return `Slack ${key === s.key ? s.channel : thread.channel}${when}`;
 }
 
 function topBar(): string {
@@ -175,9 +179,10 @@ function topBar(): string {
 
 /** Label of a thread cited by a session: the channel's name when known, else its id, then the time of the root message. */
 function threadLabel(key: string, channel: string | undefined, ctx: PanelContext): string {
-  const [id, ts] = key.split(":");
-  const when = Number(ts) ? ` · ${ctx.timeOf(new Date(Number(ts) * 1000).toISOString())}` : "";
-  return `Slack ${channel ?? id}${when}`;
+  const thread = threadOfKey(key);
+  if (!thread) return providerKeyLabel(key);
+  const when = Number(thread.ts) ? ` · ${ctx.timeOf(new Date(Number(thread.ts) * 1000).toISOString())}` : "";
+  return `Slack ${channel ?? thread.channel}${when}`;
 }
 
 function messageItem(m: ThreadDump["messages"][number]): string {
