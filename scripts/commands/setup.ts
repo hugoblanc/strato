@@ -17,7 +17,7 @@ import { basename, join } from "node:path";
 import { CLAUDE_BIN, F, fail, flags, localDay, out, readJson, run, SCRIPT, STATE, WORKSPACE, writeJson } from "../app/env.ts";
 import { appToken, tokenCandidates } from "../app/slack.ts";
 import manifestYaml from "../../examples/slack-app-manifest.yaml" with { type: "text" };
-import { type CheckItem, checkReport, nextStep, type Progress, shortPath, slackAppLink, SLACK_SCOPES, type Detected, displayNameOf, firstNameOf, linearWorkspaces, localeFromEnv, mergeProfile, parseRemote, profileDiff, profileErrors, type Remote, type SearchMatch, slackWorkspaceFromUrl, suggestedConfig, ticketPrefixes, topChannels } from "../core/setup.ts";
+import { type CheckItem, checkReport, tokenKindProblem, USER_TOKEN_WHERE, nextStep, type Progress, shortPath, slackAppLink, SLACK_SCOPES, type Detected, displayNameOf, firstNameOf, linearWorkspaces, localeFromEnv, mergeProfile, parseRemote, profileDiff, profileErrors, type Remote, type SearchMatch, slackWorkspaceFromUrl, suggestedConfig, ticketPrefixes, topChannels } from "../core/setup.ts";
 import { missingSettings, NEW_INSTALL_PROFILE, resolveSettings, settings, useSettings } from "../core/settings.ts";
 
 export const SHADOW_REFUSAL = "shadow mode: nothing is posted (bun strato.ts setup --live turns it off)";
@@ -104,7 +104,9 @@ async function check() {
   const probes = await probeTokens();
   const token = chosen(probes);
   if (!probes.length) {
-    items.push({ name: "slack", status: "missing", detail: `no user token (STRATO_SLACK_TOKEN, or SLACK_MCP_XOXP_TOKEN in ${short(join(WORKSPACE, ".claude/settings.local.json"))} or ${short(join(WORKSPACE, ".mcp.json"))}): see SETUP.md. No Slack app yet: setup --slack-app creates it in one click`, blocking: true });
+    items.push({ name: "slack", status: "missing", detail: `no user token. Copy ${USER_TOKEN_WHERE} into STRATO_SLACK_TOKEN, or SLACK_MCP_XOXP_TOKEN in ${short(join(WORKSPACE, ".claude/settings.local.json"))} or ${short(join(WORKSPACE, ".mcp.json"))} (SETUP.md "Connect Slack"). No Slack app yet: setup --slack-app creates it in one click`, blocking: true });
+  } else if (token && tokenKindProblem(token.token)) {
+    items.push({ name: "slack", status: "missing", detail: `${mask(token.token)}: ${tokenKindProblem(token.token)}`, blocking: true });
   } else if (token) {
     const host = token.url ? (slackWorkspaceFromUrl(token.url) ?? "?") : "?";
     const meOff = s.slack.me && s.slack.me !== token.user;
@@ -116,7 +118,7 @@ async function check() {
   } else if (probes.every((p) => p.error?.startsWith("network:"))) {
     items.push({ name: "slack", status: "warn", detail: `token found but Slack unreachable (${probes[0].error}): not verified`, blocking: true });
   } else {
-    const seen = probes.map((p) => (p.error ? `${mask(p.token)}: ${p.error}` : `${mask(p.token)}: workspace ${p.team}`)).join(", ");
+    const seen = probes.map((p) => `${mask(p.token)}: ${p.error ? (tokenKindProblem(p.token) ?? p.error) : `workspace ${p.team}`}`).join(", ");
     items.push({ name: "slack", status: "missing", detail: `no usable token${s.slack.team ? ` for workspace "${s.slack.team}"` : ""} (${seen})`, blocking: true });
   }
 

@@ -7,7 +7,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { TEST_SETTINGS } from "./test-setup.ts";
 import { actionCard, type BoardLine } from "./board.ts";
-import { checkReport, mergeProfile, nextStep, shortPath, slackAppLink, parseRemote, profileDiff, profileErrors, SLACK_SCOPES, slackWorkspaceFromUrl, suggestedConfig, ticketPrefixes, topChannels } from "./core/setup.ts";
+import { checkReport, mergeProfile, tokenKindProblem, nextStep, shortPath, slackAppLink, parseRemote, profileDiff, profileErrors, SLACK_SCOPES, slackWorkspaceFromUrl, suggestedConfig, ticketPrefixes, topChannels } from "./core/setup.ts";
 import { missingSettings, resolveSettings, useSettings } from "./core/settings.ts";
 import { workerPrompt } from "./policy/prompts.ts";
 import { CLI, cleanupRigs, cli, KEY, LINK, lines, postBoard, readSujets, type Rig, rig, run, startServe, sujet, writeSujets } from "./test-rig.ts";
@@ -227,6 +227,18 @@ describe("setup --check", () => {
     expect(lines(join(r.dir, "slack.log"))).toEqual(["auth.test"]);
   }, 20_000);
 
+  test("which token, on which page; a token of the wrong kind is named (O11)", async () => {
+    expect(tokenKindProblem("xoxp-1")).toBeNull();
+    expect(tokenKindProblem("xoxb-1")).toContain("Bot User OAuth Token");
+    expect(tokenKindProblem("xapp-1")).toContain("app-level token for Socket Mode");
+    expect(tokenKindProblem("abc")).toContain("OAuth & Permissions > User OAuth Token");
+    expect((await cli(rig(), ["setup", "--check"])).out).toContain("no user token. Copy your Slack app > OAuth & Permissions > User OAuth Token (xoxp-…) into STRATO_SLACK_TOKEN");
+    const r = rig();
+    const res = await setupWith(r, ["--check"], withSlack(r, { STRATO_SLACK_TOKEN: "xoxb-acme-fake-0000" }));
+    expect(res.code).toBe(1);
+    expect(res.out).toContain("MISS  slack     xoxb-…0000: xoxb- is the Bot User OAuth Token");
+  }, 20_000);
+
   test("an empty profile lists what to fill in", async () => {
     const r = rig();
     writeConfig(r, {});
@@ -311,7 +323,7 @@ describe("doctor and the Slack token (O5)", () => {
   test("no token at all: where to put one", async () => {
     const res = await cli(rig(), ["doctor"]);
     expect(res.code).toBe(78);
-    expect(res.out).toContain("no Slack user token found (xoxp-…): set STRATO_SLACK_TOKEN");
+    expect(res.out).toContain("no Slack user token found: copy your Slack app > OAuth & Permissions > User OAuth Token (xoxp-…) into STRATO_SLACK_TOKEN");
     expect(res.out).toContain('see SETUP.md, "Connect Slack"');
     expect(res.out.trim().split("\n").at(-1)).toMatch(/^Next: bun .*strato\.ts setup --slack-app/);
   }, 20_000);

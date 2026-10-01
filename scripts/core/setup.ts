@@ -214,6 +214,22 @@ export function slackAppLink(manifestYaml: string): string {
   return `https://api.slack.com/apps?new_app=1&manifest_yaml=${encodeURIComponent(yaml)}`;
 }
 
+// ------------------------------------------------------------------ tokens
+
+/** Where the one token Strato needs lives on the Slack app's pages. */
+export const USER_TOKEN_WHERE = "your Slack app > OAuth & Permissions > User OAuth Token (xoxp-…)";
+
+/**
+ * A token of the wrong kind, named: the Slack app's pages show several tokens and secrets, and Slack would only
+ * answer a bare `invalid_auth` or, for a bot token, read as a bot that sees nothing. Null for a user token.
+ */
+export function tokenKindProblem(token: string): string | null {
+  if (token.startsWith("xoxp-")) return null;
+  if (token.startsWith("xoxb-")) return `xoxb- is the Bot User OAuth Token: Strato needs the User OAuth Token (xoxp-…), on the same page`;
+  if (token.startsWith("xapp-")) return `xapp- is the app-level token for Socket Mode (SLACK_APP_TOKEN or slack.appTokenFile), not the user token: copy ${USER_TOKEN_WHERE}`;
+  return `not a Slack user token: copy ${USER_TOKEN_WHERE}`;
+}
+
 // ------------------------------------------------------------------ check
 
 /** User-token scopes the code calls, and what breaks without them. */

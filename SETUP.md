@@ -74,6 +74,17 @@ Both options below start from the same Slack app, created from [`examples/slack-
 
 If the link does not open the creation flow, create the app by hand: https://api.slack.com/apps, **Create New App**, **From an app manifest**, pick your workspace, paste the manifest.
 
+The app's pages show several tokens and secrets. Strato needs one, and a second only for real time:
+
+| Token | Starts with | Where on the Slack app's pages | Needed? |
+| --- | --- | --- | --- |
+| User OAuth Token | `xoxp-` | **OAuth & Permissions** | Yes |
+| App-Level Token | `xapp-` | **Basic Information** > **App-Level Tokens** (you generate it) | Only for Socket Mode (option B) |
+| Bot User OAuth Token | `xoxb-` | **OAuth & Permissions**, when the app has a bot | No, ignore it |
+| Signing Secret, Client Secret, Verification Token | (no prefix) | **Basic Information** | No, ignore them |
+
+`setup --check` names a token of the wrong kind when it finds one.
+
 The manifest asks for the scopes the code actually calls: `search:read`; `channels:history`, `groups:history`, `im:history`, `mpim:history`; `channels:read`, `groups:read`, `im:read`, `mpim:read`; `users:read`, `usergroups:read`; `chat:write` and `reactions:write` for the board's Send button and check mark.
 `setup --check` lists any scope your token lacks, and what stops working without it.
 

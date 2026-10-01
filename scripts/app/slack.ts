@@ -8,6 +8,7 @@ import { bestText, channelGuess, channelLabel, classify, type Config, humanize, 
 import { type ThreadDump } from "../core/cards.ts";
 import { permalinkOfKey } from "../core/keys.ts";
 import { settings, type SlackSettings } from "../core/settings.ts";
+import { tokenKindProblem, USER_TOKEN_WHERE } from "../core/setup.ts";
 import { type Sujet, sujetKeys, type Trigger } from "../core/sujet.ts";
 import { truncate } from "../core/text.ts";
 import { expandHome, F, fail, localDay, readJson, WORKSPACE, writeJson } from "./env.ts";
@@ -87,11 +88,11 @@ const maskToken = (t: string) => `${t.slice(0, 5)}…${t.slice(-4)}`;
 export const NO_TOKEN = (cfg: SlackSettings) => {
   const found = tokenCandidates();
   if (!found.length) {
-    return `no Slack user token found (xoxp-…): set STRATO_SLACK_TOKEN, or SLACK_MCP_XOXP_TOKEN in ${WORKSPACE}/.claude/settings.local.json ("env") or ${WORKSPACE}/.mcp.json (the "slack" server); see SETUP.md, "Connect Slack"`;
+    return `no Slack user token found: copy ${USER_TOKEN_WHERE} into STRATO_SLACK_TOKEN, or SLACK_MCP_XOXP_TOKEN in ${WORKSPACE}/.claude/settings.local.json ("env") or ${WORKSPACE}/.mcp.json (the "slack" server); see SETUP.md, "Connect Slack"`;
   }
   const seen = found.map((t) => {
     const p = probed.find((x) => x.token === t);
-    return `${maskToken(t)}: ${p?.team ? `workspace "${p.team}"` : (p?.error ?? "not checked")}`;
+    return `${maskToken(t)}: ${p?.team ? `workspace "${p.team}"` : (tokenKindProblem(t) ?? p?.error ?? "not checked")}`;
   });
   return `${found.length} Slack token(s) found, none usable${cfg.team ? ` for workspace "${cfg.team}" (slack.team)` : ""}: ${seen.join(", ")}`;
 };
