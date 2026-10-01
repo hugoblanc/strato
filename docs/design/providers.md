@@ -292,7 +292,7 @@ export type AuthStep =
 export interface SecretSpec {
   /** Name in the secret file: `SLACK_USER_TOKEN`, `LINEAR_API_KEY`. */
   name: string;
-  /** Environment variables also accepted, first match wins (legacy sources). Stripped from sessions' environment (section 11.4). */
+  /** Environment variables also accepted, first match wins (legacy sources of the default account only). Stripped from sessions' environment (section 11.4). */
   env?: string[];
   /** Rewritten by Strato when the provider refreshes it (OAuth refresh tokens). */
   refreshable?: boolean;
@@ -539,8 +539,16 @@ export interface Provider {
   /** Checks the secrets and returns who the person is. */
   connect(ctx: AccountContext): Promise<Identity>;
   poll?(ctx: AccountContext, cursor: IngestCursor | null, opts: { since: number; maxItems: number }): Promise<PollResult>;
-  /** Push: resolves when the connection ends; `onItems` is called as items arrive, with a cursor when the tool gives one. */
-  subscribe?(ctx: AccountContext, onItems: (items: Item[], cursor?: IngestCursor) => void): Promise<{ end: "clean" | "cut" | "fatal"; retryAfterMs?: number }>;
+  /**
+   * Push: resolves when the connection ends, or soon after `ctx.signal` aborts it. `onItems` is called as items arrive,
+   * with a cursor when the tool gives one, and with no item at all for a delivery that carried none (the connection is
+   * alive). `events.opened` says the connection is open; `refused` says why the tool refused to open it.
+   */
+  subscribe?(ctx: AccountContext, onItems: (items: Item[], cursor?: IngestCursor) => void, events?: { opened(): void }): Promise<{ end: "clean" | "cut" | "fatal"; retryAfterMs?: number; refused?: string }>;
+  /** The replies of one thread since `since` (Unix ms), oldest first, without the item that opened it: the catch-up of tracked threads. */
+  replies?(ctx: AccountContext, thread: string, opts: { since: number; max: number }): Promise<Item[]>;
+  /** Fills in what was too costly to read for every item (display names, readable text), only for the items triage keeps. */
+  complete?(ctx: AccountContext, items: Item[]): Promise<Item[]>;
   /** Native ids of the threads the person took part in recently. */
   participated?(ctx: AccountContext, days: number): Promise<string[]>;
   context?(ctx: AccountContext, thread: string, opts: { since?: number; max: number }): Promise<ContextResult>;
@@ -579,6 +587,8 @@ export interface AccountContext {
 }
 ```
 
+The account's folder also holds the core's own files, which the store refuses to write: `keys.json` (the long-key map), `seen.json` (dedup) and `ingest.json` (the cursor).
+
 A provider never receives the state folder path, other accounts' secrets, the topics, nor a way to start a session.
 The registry captures `fetch` for the built-in providers before importing any external module, so a module that patches the global one does not reach their requests (section 13.4 says what this does and does not protect).
 
@@ -589,6 +599,8 @@ The registry captures `fetch` for the built-in providers before importing any ex
    A fatal error marks the account down; the board and `doctor` say so, with the setup command to run.
 3. **Ingest.** `listen` subscribes to every push account and polls the others; `watch` polls every account.
    A push account is also polled every 5 minutes and on wake from sleep, because a dead push connection says nothing (today's catch-up through `search.messages`); this is why `push` requires `poll`.
+   A push account whose connection ends `fatal` (no app-level token, a refused connection) is polled instead, with one line.
+   Each account runs in its own loop, with its own retry: one account down never stops the others.
    Items go through one triage (section 7), one dedup, one log.
 4. **Context.** Sessions, the panel, `dive` and the card sweep read a thread through `context`, cached 60 s per key as the panel does today.
 5. **Act.** Only `app/act.ts` calls `act` and `undo`, after the gate (section 8).
@@ -648,7 +660,8 @@ A native id the core cannot map (empty, or over 64 KiB) is rejected with its ite
 - A bare Slack key is read as Slack on the default account, everywhere: `sujets.json`, `seen.json`, `events.ndjson`, `snooze.json`, report names, the master's lines, the hooks of running sessions.
 - The default Slack account's canonical form is the bare form: new Slack items of the default account keep producing bare keys, byte for byte as today.
 - `linear:ABC-123` stays the canonical key of a ticket on the default Linear account.
-- `seen.json` keeps holding the default Slack account's item ids (`channel:ts` of each message) with its 3-day purge; other accounts keep their dedup ids, with their time, in `<state>/providers/<provider>-<account>/seen.json` as `{ id: unixMs }`, because `saveSeen` reads the `ts` part of a bare id as a time and could not purge other shapes.
+- `seen.json` keeps holding the default Slack account's item ids (`channel:ts` of each message) with its 3-day purge; other accounts keep the keys of the items they handled, with the time they handled them, in `<state>/providers/<provider>-<account>/seen.json` as `{ key: unixMs }`, purged after 3 days by that time, because the purge of the root file reads the `ts` part of a bare id as a time and could not purge other shapes.
+  Their cursor is `ingest.json` in the same folder; the default Slack account's stays `syncedTo` in `tick.json`.
 
 ### 5.4 Stored keys are never rewritten
 
@@ -831,6 +844,7 @@ The order is today's, unchanged: a tracked thread gives `moi` or `suite`; the pe
 One rule is new and uses `Item.event`: a `status` event outside a tracked thread is ignored; an `assigned` event is a `mention` when the provider sets `mentionsMe` (the person is the assignee).
 Also in the core: deduplication per account, the edit rule (an edit is raised only when it adds a mention and its previous version was not raised), the digest of `tiers` and `bot`, the takeover by a teammate (`takenBy`), the closing of a draft task when the person posts its text by hand (`draftMatches`), the one-line-per-event output and the `msg=<id>` inbox.
 `classify` stays exported with its signature: it builds the `Item` and the rules from a `SlackMatch` and a `Config`, then calls `classifyItem`, so every existing triage test keeps running.
+Triage runs in two steps, as Slack's always did: first without `ignoreAuthors`, so an ignored item costs no name lookup, then, for a kept item, with the names the provider fills in only then (`complete`, section 4.10).
 
 No new `<type>` is added to the master's protocol: providers map their signals onto the existing ones.
 An item with a `title` puts it at the start of the quoted text (`« PLAT-12 Checkout fails: … »`), so the event line keeps its shape.
@@ -1372,9 +1386,11 @@ Stderr is free text, captured as the provider's log.
 | `initialize` | `{ api: 1, strato: "0.2.0", locale, account: { id, label, settings }, secrets: { NAME: value }, offline: false }` | `{ ok: true }` | 15 s |
 | `connect` | `{}` | `Identity` | 20 s |
 | `poll` | `{ cursor, since, maxItems }` | `PollResult` | 60 s |
-| `subscribe` | `{}` | `{ ok: true }`, then `items` notifications until `unsubscribe` or `subscription.end` | 15 s |
+| `subscribe` | `{}` | `{ ok: true }` once the connection is open, then `items` notifications until `unsubscribe` or `subscription.end` | 15 s |
 | `unsubscribe` | `{}` | `{ ok: true }` | 5 s |
 | `participated` | `{ days }` | `{ threads: string[] }` | 30 s |
+| `replies` | `{ thread, since, max }` | `{ items: Item[] }` | 30 s |
+| `complete` | `{ items }` | `{ items }` | 30 s |
 | `context` | `{ thread, since?, max }` | `ContextResult` | 30 s |
 | `act` | `{ action, idempotencyKey, dryRun }` | `ActResult` | 30 s |
 | `undo` | `{ token }` | `ActResult` | 30 s |
@@ -1403,8 +1419,8 @@ A provider may still open its own connections (a Socket-Mode-like push, IMAP); i
 
 | Notification | Params | Meaning |
 | --- | --- | --- |
-| `items` | `{ items, cursor? }` | Pushed items; Strato persists `cursor` once it has handled the batch, so a crash right after loses nothing a poll cannot catch up |
-| `subscription.end` | `{ end: "clean" \| "cut" \| "fatal", retryAfterMs? }` | The exec form of `subscribe`'s result: the push connection ended |
+| `items` | `{ items, cursor? }` | Pushed items; Strato persists `cursor` once it has handled the batch, so a crash right after loses nothing a poll cannot catch up; an empty `items` says the connection is alive |
+| `subscription.end` | `{ end: "clean" \| "cut" \| "fatal", retryAfterMs?, refused? }` | The exec form of `subscribe`'s result: the push connection ended |
 | `log` | `{ level, message }` | A log line |
 | `health` | `{ status: "ok" \| "degraded" \| "down", detail }` | Informative, for `doctor` and the board; it never ends a subscription |
 
@@ -1642,6 +1658,26 @@ Each stage is one or more commits that leave `bun run check` green and the guard
   Per-account `seen.json` purge by time.
 - **Compatibility.** Slack events keep `type: "slack"`; `seen.json` and `tick.json` unchanged; the master's line format and `<type>` values unchanged; `listen` with Slack alone behaves as today.
 - **Done when.** Check green; `listen` and `watch` on the rig, with the fake Slack preload of `check.test.ts`, print the same lines as before.
+- **As built.** Where the stage departs from the text above, and why:
+  - The engine lives in a new `app/ingest.ts`, not in `commands/watch.ts`: `processItems` (the one triage pass), the dedup stores, `catchUpThreads`, `pollPass` and `runAccount` (the loop of one account) are shared by `listen`, `watch` and `backlog`, and tested on their own.
+    `processMatches` stays, as the Slack form of `processItems`, for its tests.
+  - The default Slack account keeps its own loop in `commands/watch.ts`, because its state (`seen.json`, `tick.json` with the socket's health) and its lines are what the board and the master read today; it now goes through the Slack provider's `poll`, `subscribe`, `replies` and `complete`.
+    Every other account runs in `runAccount`, next to it, in the same process.
+    The golden replay (`ingest-golden.test.ts`) records `listen`, `watch` and `backlog` on the code before the stage and checks the same stdout lines, `events.ndjson` lines and `seen.json` after it.
+  - The provider interface gains two optional methods and two details of `subscribe` (section 4.10, and the exec table of 13.2):
+    `replies`, because the catch-up of tracked threads needs the facts of each reply (who wrote it), which `context` does not carry;
+    `complete`, because reading every author's name before triage would cost Slack one `users.info` per new author on every pass, which the two-step triage avoided;
+    `subscribe` reports an empty delivery (the socket's health counts every event), its opening (the "back" line) and why it was refused (the outage lines).
+  - `app/slack.ts` holds one `SlackClient` per Slack account (token, HTTP, names and conversation caches); its top-level functions work on the default account's client with their signatures.
+    A named Slack account reads its tokens from its secret file and goes through its account context's fetch; the environment variables of a `SecretSpec` are legacy sources of the default account only, or a named account would pick up the default account's token.
+  - The Socket Mode connection (`connexionSocket`) moves from `commands/watch.ts` to `app/slack.ts`, re-exported, since the provider uses it.
+  - A provider account's cursor is `ingest.json` in its folder, not `cursor.json`: the provider's own store may use that name.
+  - The thread catch-up runs where it ran: in `listen` at startup, every 5 minutes and on wake, for every account with `replies`; `watch` keeps polling without it, as it did for Slack.
+  - A push account whose connection ends `fatal` is polled instead, with one line, rather than stopped.
+  - The default Slack account is listened to when it is the only source (as before: no token stops the command), and next to other accounts when the `slack` section names the person or the workspace, or a token is found; a failure is then one line and the other accounts carry on.
+  - `keepMessage` stores the item's key and conversation; `open --msg` opens on the key when the link was not kept, and the topic stores its conversation (`Sujet.conversation`), so the event line's nearby topics work for any tool.
+  - Every provider string goes through `oneLine` (core/text.ts) before `untrusted()`; item links and the links quoted in prompts (`{{permalink}}`) go through `checkedLink` (core/links.ts): https, at most 2 KiB, no whitespace nor control character, on the provider's hosts (any installed provider's for a prompt), else `-`.
+  - Two behaviors change on failures only: a participation search that fails at startup leaves the participated threads empty instead of crashing the listener, and `backlog` reports a Slack failure on one line instead of a stack.
 
 ### act
 
