@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { resolve, sep } from "node:path";
 export function truncate(s: string, n: number): string {
   return s.length <= n ? s : `${s.slice(0, n - 1)}…`;
@@ -17,9 +18,15 @@ export function parseDuration(s: string): number {
   return Number(m[1]) * factor;
 }
 
-/** File name of a topic's report, derived from its main key. */
+/**
+ * File name of a topic's report, derived from its main key. Bare Slack keys and `linear:` keys keep the name they
+ * always had, where sessions write today; any other key gets a 6-character hash suffix, because sanitizing alone can
+ * map two keys to one file (`slack@partners:…` and `slack_partners:…`).
+ */
 export function reportFile(key: string): string {
-  return `${key.replace(/[^A-Za-z0-9._-]+/g, "_")}.md`;
+  const name = key.replace(/[^A-Za-z0-9._-]+/g, "_");
+  if (/^[A-Z0-9]+:/.test(key) || key.startsWith("linear:") || !/^[a-z][a-z0-9-]*[@:]/.test(key)) return `${name}.md`;
+  return `${name}-${createHash("sha256").update(key).digest("hex").slice(0, 6)}.md`;
 }
 
 /** Single quotes for the shell. */

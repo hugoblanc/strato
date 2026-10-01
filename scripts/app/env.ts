@@ -1,6 +1,7 @@
 /**
  * The startup shared by every command: where the script is, where the state is, which profile is loaded.
- * Importing this module installs the profile (`useSettings`) and the policy folders (`usePolicyDirs`) for all others.
+ * Importing this module installs the profile (`useSettings`), the built-in providers' descriptors (`useProviders`) and
+ * the policy folders (`usePolicyDirs`) for all others.
  *
  * - Workspace: `STRATO_WORKSPACE` (legacy `AIGUILLEUR_WORKSPACE`), else `workspace` from config.json, else (development
  *   clone only) what precedes `/.claude/` in the skill path (a project skill lives in `<project>/.claude/skills/<name>/`),
@@ -15,7 +16,9 @@ import { join } from "node:path";
 import { claudeBin } from "../claude/model.ts";
 import { envValue, findStateRoot, resolveStateDir } from "../core/paths.ts";
 import { resolveSettings, useSettings } from "../core/settings.ts";
+import { useProviders } from "../core/links.ts";
 import { parseDuration } from "../core/text.ts";
+import { BUILTIN_DESCRIPTORS } from "../providers/builtin.ts";
 import { usePolicyDirs } from "../policy/prompts.ts";
 import { COMPILED, entryOf } from "./self.ts";
 import { statSync } from "node:fs";
@@ -136,12 +139,15 @@ export const F = {
   inbox: join(STATE, "inbox"),
   /** Images pasted in the board for a session, one folder per topic: the session reads them by path. */
   uploads: join(STATE, "uploads"),
+  /** One folder per provider account, `<provider>-<account>/`: its cursors, its map of long keys, its small state. */
+  providers: join(STATE, "providers"),
 };
 
 const loaded = resolveSettings(readJson<unknown>(F.config, {}));
 /** The working directory of topic sessions (cwd, CLAUDE.md, .mcp.json). */
 export const WORKSPACE = envValue(process.env, "WORKSPACE") ? derivedWorkspace() : expandHome(loaded.workspace) || derivedWorkspace();
 useSettings({ ...loaded, workspace: WORKSPACE });
+useProviders([...BUILTIN_DESCRIPTORS]);
 usePolicyDirs([F.policy]);
 
 export const out = (line: string) => process.stdout.write(`${line}\n`);

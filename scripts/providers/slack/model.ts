@@ -1,0 +1,119 @@
+/**
+ * The pure side of the Slack provider: its descriptor (capabilities, auth, settings, vocabulary, links as data) and
+ * the adapters of chat/slack-model.ts to the provider interface. chat/slack-model.ts stays where it is, with its tests.
+ */
+import { DRAFT_MAX, draftDestination, humanize, slackAppLink } from "../../chat/slack-model.ts";
+import { PROVIDER_API } from "../api.ts";
+import type { Account, Identity, LinkSpec, ProviderDescriptor, Target, Text } from "../sdk.ts";
+
+const key = (k: string): Text => ({ key: `provider.slack.${k}` });
+
+const REPLY = "^/archives/([A-Z0-9]+)/p(\\d{10})(\\d{6})[^?#]*\\?(?:[^#]*&)?thread_ts=(\\d+\\.\\d+)";
+const MESSAGE = "^/archives/([A-Z0-9]+)/p(\\d{10})(\\d{6})";
+
+/**
+ * Slack's links. A reply's link carries its root in `thread_ts`: the thread is the root, the item the reply. A
+ * channel id alone links to the channel (a separate message). The workspace's own host names its account; any other
+ * `*.slack.com` host reads as the default account, which comes first, as `parsePermalink` always did (core/links.ts
+ * tries exact hosts before wildcards).
+ */
+export const SLACK_LINKS: LinkSpec = {
+  parse: [
+    { host: "{settings.workspace}.slack.com", pattern: REPLY, thread: "$1:$4", item: "$1:$2.$3" },
+    { host: "{settings.workspace}.slack.com", pattern: MESSAGE, thread: "$1:$2.$3" },
+    { host: "*.slack.com", pattern: REPLY, thread: "$1:$4", item: "$1:$2.$3" },
+    { host: "*.slack.com", pattern: MESSAGE, thread: "$1:$2.$3" },
+  ],
+  of: [
+    { match: "^([A-Z0-9]+):(\\d{10})\\.(\\d{6})$", url: "https://{settings.workspace}.slack.com/archives/$1/p$2$3" },
+    { match: "^([CGD][A-Z0-9]+)$", url: "https://{settings.workspace}.slack.com/archives/$1" },
+  ],
+};
+
+export const SLACK_DESCRIPTOR: ProviderDescriptor = {
+  id: "slack",
+  label: key("label"),
+  api: { min: PROVIDER_API, max: PROVIDER_API },
+  kinds: ["chat"],
+  capabilities: {
+    ingest: { push: true, poll: true },
+    participation: true,
+    context: true,
+    actions: ["reply", "post", "react", "delete"],
+    undo: ["reply", "post", "react"],
+    // chat.postMessage has no idempotency key
+    idempotent: [],
+    edits: true,
+    identity: true,
+  },
+  auth: [
+    {
+      id: "user-token",
+      kind: "user-token",
+      label: key("auth.userToken"),
+      docs: "https://docs.slack.dev/authentication/tokens#user",
+      steps: [
+        { kind: "open", url: "https://api.slack.com/apps", say: key("auth.userToken.open") },
+        { kind: "paste", secret: "SLACK_USER_TOKEN", say: key("auth.userToken.paste"), shape: "xoxp-" },
+        { kind: "verify" },
+      ],
+      stores: [
+        { name: "SLACK_USER_TOKEN", env: ["STRATO_SLACK_TOKEN", "AIGUILLEUR_SLACK_TOKEN", "SLACK_MCP_XOXP_TOKEN"] },
+        { name: "SLACK_APP_TOKEN", env: ["SLACK_APP_TOKEN"] },
+      ],
+    },
+  ],
+  settings: [
+    { key: "team", type: "string", label: key("setting.team") },
+    { key: "workspace", type: "string", label: key("setting.workspace") },
+    { key: "me", type: "string", label: key("setting.me"), ask: key("ask.me"), triage: "me" },
+    { key: "subteams", type: "string[]", label: key("setting.subteams"), default: [], ask: key("ask.subteams"), candidatesFrom: "slack.subteams", triage: "groups" },
+    { key: "teamAlias", type: "string", label: key("setting.teamAlias"), default: "", ask: key("ask.teamAlias"), triage: "groupAlias" },
+    { key: "watchChannels", type: "string[]", label: key("setting.watchChannels"), default: [], ask: key("ask.watchChannels"), candidatesFrom: "slack.watchChannels", triage: "watch" },
+    { key: "ignoreChannels", type: "string[]", label: key("setting.ignoreChannels"), default: [], ask: key("ask.ignoreChannels"), triage: "ignore" },
+    { key: "ignoreAuthors", type: "string[]", label: key("setting.ignoreAuthors"), default: [], ask: key("ask.ignoreAuthors"), triage: "ignoreAuthors" },
+    { key: "teammates", type: "string[]", label: key("setting.teammates"), default: [], ask: key("ask.teammates"), triage: "teammates" },
+    { key: "appId", type: "string", label: key("setting.appId"), default: "" },
+    { key: "appTokenFile", type: "string", label: key("setting.appTokenFile"), default: "" },
+    { key: "userTokenFile", type: "string", label: key("setting.userTokenFile"), default: "" },
+  ],
+  vocabulary: {
+    item: key("word.item"),
+    thread: key("word.thread"),
+    conversation: key("word.conversation"),
+    targetFormat:
+      'a reply in a thread = the channel and the Slack link of the thread ("#support, https://…"); a separate message in a channel = the name, the channel ID and "new message" ("#announcements (C0123456789), new message")',
+    doneMarker: "the ✅ reaction on the original message",
+  },
+  links: SLACK_LINKS,
+  hosts: ["slack.com", "*.slack.com"],
+  apiHosts: ["slack.com"],
+  maxText: DRAFT_MAX,
+  mcp: { server: "slack", readTools: ["conversations_replies", "conversations_history", "conversations_search_messages"], writeTools: ["conversations_add_message"] },
+  undoMs: 30_000,
+};
+
+const escapeHtml = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+
+/** mrkdwn to plain text, mentions left as ids: the network side (app/slack.ts `readable`) knows people's names. */
+export const slackRender = {
+  plain: (text: string) => humanize(text, (uid) => uid),
+  html: (text: string) => escapeHtml(humanize(text, (uid) => uid, true)),
+};
+
+/**
+ * A topic's free-text destination (`draftTo`) to a target, with today's rules (`draftDestination`): the thread linked
+ * in it, a channel id for a separate message, else the topic's own thread.
+ */
+export function slackParseTarget(text: string, topic: { thread: string; conversation: { id: string; label: string } }): Target | { error: Text } {
+  const dest = draftDestination({ key: topic.thread, draftTo: text, channel: topic.conversation.label });
+  if ("error" in dest) return { error: { en: dest.error } };
+  return dest.ts
+    ? { scope: "thread", native: `${dest.channel}:${dest.ts}`, label: dest.channel === topic.conversation.id ? topic.conversation.label : dest.channel }
+    : { scope: "conversation", native: dest.channel, label: dest.channel };
+}
+
+/** The `slack://` link of a Slack link, on the account's team: opens the message in the app. */
+export function slackDeepLink(url: string, _account: Account, identity: Identity): string | null {
+  return identity.tenant ? slackAppLink(url, identity.tenant) : null;
+}

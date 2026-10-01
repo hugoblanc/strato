@@ -14,7 +14,9 @@
  * - GitLab repos acme/api ("api", the default) and acme/web ("web", alias "monorepo", MR numbers from 2000);
  * - fictional companies and vendors in the stories: Initech, Globex, Umbrella, Hooli, Vigil.
  */
+import { useProviders } from "./core/links.ts";
 import { resolveSettings, useSettings } from "./core/settings.ts";
+import { BUILTIN_DESCRIPTORS } from "./providers/builtin.ts";
 
 export const TEST_SETTINGS = resolveSettings({
   owner: { name: "Alice" },
@@ -34,3 +36,4 @@ export const TEST_SETTINGS = resolveSettings({
 });
 
 useSettings(TEST_SETTINGS);
+useProviders([...BUILTIN_DESCRIPTORS]);

@@ -4,7 +4,11 @@
  *
  * The file may be partial: every missing section takes its default value, field by field.
  * The legacy flat format (`team`, `me`, `subteams`… at the root) is still read, as the `slack` section.
+ * The `slack` and `tracker` sections are the default Slack and Linear accounts; other accounts live under `providers`
+ * (`resolveAccounts`, docs/design/providers.md section 6).
  */
+import { effectiveCapabilities } from "../providers/api.ts";
+import type { Account, ProviderDescriptor } from "../providers/sdk.ts";
 
 export interface SlackSettings {
   /** Workspace name as `auth.test` returns it: picks the right token when several are lying around on the machine. */
@@ -82,6 +86,20 @@ export interface GcSettings {
   idleHours: number;
 }
 
+/** Where an external provider's code is (`module` or `exec`), and the hash of its folder the person trusted. */
+export interface ProviderSource {
+  module?: string;
+  exec?: string[];
+  sha256?: string;
+}
+
+/** One tool in the `providers` section: its code when it is not built in, and its named accounts. */
+export interface ProviderSection {
+  source?: ProviderSource;
+  /** Account name -> its fields: the reserved keys of `ACCOUNT_KEYS`, every other one a setting of the provider. */
+  accounts: Record<string, Record<string, unknown>>;
+}
+
 export interface Settings {
   /** Who Strato serves: their first name appears in the prompts, the cards and the board. */
   owner: { name: string };
@@ -90,6 +108,8 @@ export interface Settings {
   slack: SlackSettings;
   tracker: TrackerSettings | null;
   forge: ForgeSettings | null;
+  /** Accounts beyond the default Slack (`slack`) and Linear (`tracker`) ones, by provider id. */
+  providers: Record<string, ProviderSection>;
   workers: {
     /** Start topic sessions with --dangerously-skip-permissions. False by default: a choice to make knowingly. */
     skipPermissions: boolean;
@@ -137,6 +157,7 @@ export const DEFAULT_SETTINGS: Settings = {
   },
   tracker: null,
   forge: null,
+  providers: {},
   workers: { skipPermissions: false, allow: [], shadow: false },
   refresh: { auto: true, staleDays: 3, graceMinutes: 20, everyMinutes: 30, maxParallel: 3 },
   gc: { everyMinutes: 60, idleHours: 12 },
@@ -184,12 +205,120 @@ export function resolveSettings(raw: unknown): Settings {
     slack: section(DEFAULT_SETTINGS.slack, { ...legacy, ...(isObject(r.slack) ? r.slack : {}) }),
     tracker: optional(r.tracker, { kind: "linear", workspace: "", prefixes: [] } as TrackerSettings),
     forge: optional(r.forge, { kind: "gitlab", host: "gitlab.com", repos: {}, aliases: {}, iidRanges: [], defaultRepo: "", integrationBranch: "dev", releaseBranch: "main" } as ForgeSettings),
+    providers: providersSection(r.providers),
     workers: section(DEFAULT_SETTINGS.workers, { ...("skipPermissions" in r ? { skipPermissions: r.skipPermissions } : {}), ...(isObject(r.workers) ? r.workers : {}) }),
     refresh: section(DEFAULT_SETTINGS.refresh, r.refresh),
     gc: section(DEFAULT_SETTINGS.gc, r.gc),
     policy: section(DEFAULT_SETTINGS.policy, r.policy),
     ui: section(DEFAULT_SETTINGS.ui, r.ui),
   };
+}
+
+/** The `providers` section as read: objects only, each with its accounts (objects only too). */
+function providersSection(raw: unknown): Record<string, ProviderSection> {
+  if (!isObject(raw)) return {};
+  const out: Record<string, ProviderSection> = {};
+  for (const [id, v] of Object.entries(raw)) {
+    if (!isObject(v)) continue;
+    const accounts = isObject(v.accounts) ? Object.fromEntries(Object.entries(v.accounts).filter(([, a]) => isObject(a))) : {};
+    out[id] = { ...(isObject(v.source) ? { source: v.source as ProviderSource } : {}), accounts: accounts as Record<string, Raw> };
+  }
+  return out;
+}
+
+// ------------------------------------------------------------------ accounts
+
+/** Keys of an account handled by the core; every other key is a setting of the provider. */
+export const ACCOUNT_KEYS = ["auth", "secretsFile", "ingest", "enabled", "label", "pollInterval", "mcpServer"] as const;
+/** Settings of the default Linear account that only the `tracker` section sets when it exists. */
+export const TRACKER_LINK_FIELDS = ["workspace", "prefixes"] as const;
+
+/** An account as the core runs it: what the provider sees (`account`), and what only the core reads. */
+export interface ResolvedAccount {
+  account: Account;
+  /** `KEY=value` file of its secrets. The default Slack account keeps `slack.userTokenFile` and its search order. */
+  secretsFile: string;
+  /** Seconds between polls. */
+  pollInterval: number;
+  /** The matching MCP server of the workspace's `.mcp.json`, for the session permissions. */
+  mcpServer: string | null;
+  /** Where it is configured: the legacy `slack` or `tracker` section, or `providers`. */
+  from: "slack" | "tracker" | "providers";
+}
+
+/** What account resolution reads from a descriptor, when the provider is known. */
+export type AccountDescriptor = Pick<ProviderDescriptor, "auth" | "capabilities"> & Partial<Pick<ProviderDescriptor, "mcp">>;
+
+const ingestModes = ["push", "poll", "off"] as const;
+
+/** Push when the auth method allows it, else poll; a provider not known yet is polled. */
+function defaultIngest(d: AccountDescriptor | undefined, auth: string): Account["ingest"] {
+  if (!d) return "poll";
+  const c = effectiveCapabilities(d, auth);
+  return c.ingest.push ? "push" : c.ingest.poll ? "poll" : "off";
+}
+
+/** One account of the `providers` section, its reserved keys read, its other keys kept as settings. */
+function accountFrom(provider: string, id: string, raw: Raw, base: Raw, d: AccountDescriptor | undefined, from: ResolvedAccount["from"], defaults: { auth?: string; ingest?: Account["ingest"] } = {}): ResolvedAccount {
+  const settingsOf: Raw = { ...base };
+  for (const [k, v] of Object.entries(raw)) if (!(ACCOUNT_KEYS as readonly string[]).includes(k)) settingsOf[k] = v;
+  const auth = typeof raw.auth === "string" ? raw.auth : (defaults.auth ?? d?.auth[0]?.id ?? "none");
+  const ingest = ingestModes.includes(raw.ingest as Account["ingest"]) ? (raw.ingest as Account["ingest"]) : (defaults.ingest ?? defaultIngest(d, auth));
+  const named = [settingsOf.team, settingsOf.workspace].find((x): x is string => typeof x === "string" && x !== "");
+  return {
+    account: { provider, id, label: typeof raw.label === "string" && raw.label ? raw.label : (named ?? id), auth, ingest, settings: settingsOf },
+    secretsFile: typeof raw.secretsFile === "string" && raw.secretsFile ? raw.secretsFile : `~/.config/strato/${provider}-${id}.env`,
+    pollInterval: typeof raw.pollInterval === "number" && raw.pollInterval > 0 ? raw.pollInterval : 60,
+    mcpServer: typeof raw.mcpServer === "string" && raw.mcpServer ? raw.mcpServer : (d?.mcp?.server ?? null),
+    from,
+  };
+}
+
+/**
+ * Every account of a profile, in a stable order: the default Slack account (the `slack` section or the legacy flat
+ * keys), the named Slack accounts, the default Linear account, then the other providers in file order.
+ * - `providers.slack.accounts.default` is ignored (validation refuses it): the default Slack account lives in `slack`.
+ * - With a `tracker` section, the default Linear account takes `workspace` and `prefixes` from it, and its other fields
+ *   from `providers.linear.accounts.default`; without the latter it is a links-only account (no auth, no ingest), which
+ *   is the behavior of a tracker section.
+ * - An account with `enabled: false` is left out.
+ * `descriptors` gives the default auth method and ingest mode; an unknown provider's account is kept, polled.
+ */
+export function resolveAccounts(s: Settings, descriptors: Record<string, AccountDescriptor> = {}): ResolvedAccount[] {
+  const out: ResolvedAccount[] = [];
+  const enabled = (raw: Raw) => raw.enabled !== false;
+  const slackD = descriptors.slack;
+  out.push({
+    account: { provider: "slack", id: "default", label: s.slack.team || s.slack.workspace || "default", auth: slackD?.auth[0]?.id ?? "user-token", ingest: slackD ? defaultIngest(slackD, slackD.auth[0]?.id ?? "") : "push", settings: { ...s.slack } },
+    secretsFile: s.slack.userTokenFile,
+    pollInterval: s.slack.pollInterval,
+    mcpServer: slackD?.mcp?.server ?? null,
+    from: "slack",
+  });
+  const section = (id: string) => s.providers[id]?.accounts ?? {};
+  for (const [id, raw] of Object.entries(section("slack"))) if (id !== "default" && enabled(raw)) out.push(accountFrom("slack", id, raw, {}, slackD, "providers"));
+  const linear = section("linear");
+  const tracked = s.tracker?.kind === "linear";
+  for (const [id, raw] of Object.entries(linear)) {
+    if (!enabled(raw) || (id === "default" && tracked)) continue;
+    out.push(accountFrom("linear", id, raw, {}, descriptors.linear, "providers"));
+  }
+  if (tracked && s.tracker) {
+    const own = linear.default;
+    const raw: Raw = own ? Object.fromEntries(Object.entries(own).filter(([k]) => !(TRACKER_LINK_FIELDS as readonly string[]).includes(k))) : {};
+    if (!own || enabled(own)) {
+      const links = { workspace: s.tracker.workspace, prefixes: s.tracker.prefixes };
+      const resolved = accountFrom("linear", "default", raw, links, descriptors.linear, "tracker", own ? {} : { auth: "none", ingest: "off" });
+      // the default Linear account goes first among the Linear accounts
+      const at = out.findIndex((a) => a.account.provider === "linear");
+      out.splice(at < 0 ? out.length : at, 0, resolved);
+    }
+  }
+  for (const [provider, p] of Object.entries(s.providers)) {
+    if (provider === "slack" || provider === "linear") continue;
+    for (const [id, raw] of Object.entries(p.accounts)) if (enabled(raw)) out.push(accountFrom(provider, id, raw, {}, descriptors[provider], "providers"));
+  }
+  return out;
 }
 
 /** What is missing for Strato to run, spelled out, for `doctor`. */
