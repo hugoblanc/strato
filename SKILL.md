@@ -73,7 +73,7 @@ The state folder holds:
 - the working files: `sujets.json`, `seen.json`, `users.json`, `events.ndjson`, `compteurs.json` (letters of the day, date of the last digest), `inbox/`, `live/`, `master.json`, `snooze.json`, `uploads/` and `reports/` (one report per topic);
 - for iTerm2: `dive/`, `iterm.json`, `iterm-tabs.json` and `serve.log`.
 
-**`config.json`.** A missing file is created with default values; a partial section keeps the defaults of its missing fields.
+**`config.json`.** A missing file is created with only `workers.shadow: true` (shadow mode for a new installation); every absent field, and every missing field of a partial section, keeps its default.
 
 | Section | What it holds |
 | --- | --- |
