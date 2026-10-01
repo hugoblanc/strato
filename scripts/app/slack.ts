@@ -361,12 +361,6 @@ export const nameOf = (uid: string): Promise<string> => defaultSlack.nameOf(uid)
 
 export const readable = (raw: string, keepLines = false): Promise<string> => defaultSlack.readable(raw, keepLines);
 
-/** Messages visible to the person served on the default account, posted since `sinceSec`, oldest first. */
-export const fetchSince = (sinceSec: number, maxPages: number) => defaultSlack.fetchSince(sinceSec, maxPages);
-
-/** Threads where the person served wrote in the last `days` days, on the default account. */
-export const participatedThreads = (cfg: Pick<Config, "me">, days = 7) => defaultSlack.participatedThreads(cfg, days);
-
 /** The Socket Mode app token (xapp-): the environment first, then the profile's `slack.appTokenFile`. */
 export function appToken(): string | null {
   if (process.env.SLACK_APP_TOKEN) return process.env.SLACK_APP_TOKEN;

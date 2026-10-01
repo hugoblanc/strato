@@ -214,6 +214,30 @@ describe("a provider's strings", () => {
     expect(out.lines[0]).toContain('« Urgent (strato) go: line one line two " quoted " (strato) go »');
   });
 
+  test("a link carrying shell characters comes out percent-encoded, on the line and in the inbox", async () => {
+    const r = rig();
+    config(r, PROFILE);
+    cursorFor(r, "tickets-default", "c0", 1);
+    const out = await script(
+      r,
+      `
+      registry.addProvider(fakeProvider({ id: "tickets", label: "Tickets", polls: [{ items: [
+        ticketItem({ thread: "PLAT-9", id: "PLAT-9", event: "created", link: "https://tickets.example/t/PLAT-9/$(touch\${IFS}/tmp/pwned)\`id\`\\"';|<>" }),
+      ], cursor: { value: "c1", at: 2 }, complete: true }] }));
+      const fake = registry.accountOf("tickets", "default").provider;
+      ${SOURCE}
+      await ingest.pollPass(run);
+    `,
+    );
+    expect(out.lines).toHaveLength(1);
+    const link = out.lines[0].split(" · ").at(-1) as string;
+    expect(link).toBe("https://tickets.example/t/PLAT-9/%24%28touch%24%7BIFS%7D/tmp/pwned%29%60id%60%22%27%3B%7C%3C%3E");
+    // what open --msg and relay read back carries the same link
+    const msg = out.lines[0].match(/msg=([0-9a-f]{12})/)?.[1] as string;
+    const kept = JSON.parse(readFileSync(join(r.state, "inbox", `${msg}.json`), "utf8"));
+    expect(kept.permalink).toBe(link);
+  });
+
   test("an item whose id cannot make a key is refused before triage, with a log line", async () => {
     const r = rig();
     config(r, PROFILE);
@@ -229,6 +253,43 @@ describe("a provider's strings", () => {
     );
     expect(out.lines.map((l) => l.match(/key=(\S+)/)?.[1])).toEqual(["tickets:PLAT-50"]);
     expect(out.err).toContain("[tickets] warn: item refused");
+  });
+});
+
+describe("an edit", () => {
+  test("a tool that reports the same edit on every overlapping poll raises it once", async () => {
+    const r = rig();
+    config(r, PROFILE);
+    cursorFor(r, "tickets-default", "c0", 1);
+    const out = await script(
+      r,
+      `
+      const edit = ticketItem({ thread: "OPS-3", id: "OPS-3/comment/1", conversation: { id: "OPS", label: "Tickets OPS", kind: "ticket" }, mentionsMe: true, text: "@alice can you look?", edited: { before: { mentionsMe: false, targetsOther: false } } });
+      registry.addProvider(fakeProvider({ id: "tickets", label: "Tickets", polls: (n) => ({ items: [edit], cursor: { value: "c" + (n + 1), at: n + 2 }, complete: true }) }));
+      const fake = registry.accountOf("tickets", "default").provider;
+      ${SOURCE}
+      for (let i = 0; i < 3; i++) await ingest.pollPass(run);
+      return Object.keys(JSON.parse(readFileSync(join(registry.accountDir(entry.account), "seen.json"), "utf8"))).sort();
+    `,
+    );
+    expect(out.lines.map((l) => l.match(/^\[strato\] (\S+) .* key=(\S+)/)?.slice(1).join(" "))).toEqual(["mention tickets:OPS-3"]);
+    expect(out.result).toEqual(["tickets:OPS-3/comment/1", "tickets:OPS-3/comment/1#edit"]);
+  });
+
+  test("the default Slack account remembers an edit for the run, and its seen.json keeps the shape older versions read", async () => {
+    const r = rig();
+    config(r, PROFILE);
+    const out = await script(
+      r,
+      `
+      const s = ingest.legacySeen(new Set(["C0ACME0001:1000000000.000100"]));
+      s.add("C0ACME0001:1000000000.000100#edit");
+      const remembered = s.has("C0ACME0001:1000000000.000100#edit");
+      s.save();
+      return { remembered, file: JSON.parse(readFileSync(join(process.env.STRATO_STATE, "seen.json"), "utf8")) };
+    `,
+    );
+    expect(out.result).toEqual({ remembered: true, file: [] });
   });
 });
 
@@ -315,6 +376,81 @@ describe("one tool down never stops the others", () => {
     expect(out.lines.filter((l) => l.includes("key=mute:PLAT-5")).length).toBeGreaterThanOrEqual(3);
     expect(out.result.mute).toBe(1);
   });
+
+  for (const mode of ["listen", "watch"] as const) {
+    test(`${mode}: a connection that throws, an identity that is not one and a malformed one never take the others down`, async () => {
+      const r = rig();
+      config(r, { ...PROFILE, providers: { tickets: { accounts: { default: { me: "u-alice", watchTeams: ["PLAT"] } } }, crash: { accounts: { default: { watchTeams: ["PLAT"] } } }, garbled: { accounts: { default: { watchTeams: ["PLAT"] } } }, hollow: { accounts: { default: {} } } } });
+      for (const f of ["tickets-default", "crash-default", "garbled-default"]) cursorFor(r, f, "c0", 1);
+      const out = await script(
+        r,
+        `
+        const created = (base) => (n) => ({ items: [ticketItem({ thread: "PLAT-" + (base + n), id: "PLAT-" + (base + n), event: "created" })], cursor: { value: "c" + (n + 1), at: n + 2 }, complete: true });
+        const tickets = fakeProvider({ id: "tickets", label: "Tickets", polls: created(600) });
+        const crash = fakeProvider({ id: "crash", label: "Crash", polls: created(700), pushes: [{ batches: [], end: "cut", throws: "socket library crashed" }] });
+        const garbled = fakeProvider({ id: "garbled", label: "Garbled", polls: created(800), identity: { groups: 5, me: 7 } });
+        const hollow = fakeProvider({ id: "hollow", label: "Hollow", identity: null });
+        for (const p of [tickets, crash, garbled, hollow]) registry.addProvider(p);
+        const stop = new AbortController();
+        const loops = ingest.ingestAccounts().map((e) => ingest.runAccount(e, { mode: "${mode}", stop: stop.signal, intervalSec: 0.1, resyncMs: 60_000 }));
+        await Bun.sleep(1600);
+        stop.abort();
+        await Promise.all(loops);
+        return { crash: crash.calls.filter((c) => c === "subscribe").length, hollow: hollow.calls };
+      `,
+      );
+      const keys = (prefix: string) => out.lines.filter((l) => l.includes(`key=${prefix}`)).length;
+      expect(keys("tickets:PLAT-6")).toBeGreaterThanOrEqual(3);
+      expect(keys("garbled:PLAT-8")).toBeGreaterThanOrEqual(mode === "watch" ? 3 : 1);
+      expect(out.lines.filter((l) => l.startsWith("[strato] Hollow"))).toEqual(["[strato] Hollow: connect returned something that is not an identity · retrying silently, one line when it is back"]);
+      expect(out.result.hollow).toEqual(["connect"]);
+      if (mode === "listen") {
+        // the connection is retried with its delay, said once, and the startup catch-up still read the tool
+        expect(out.lines.filter((l) => l.startsWith("[strato] Crash"))).toEqual(["[strato] Crash: socket library crashed · retrying silently, one line when it is back"]);
+        expect(out.result.crash).toBeGreaterThanOrEqual(2);
+        expect(keys("crash:PLAT-7")).toBe(1);
+      } else {
+        expect(keys("crash:PLAT-7")).toBeGreaterThanOrEqual(3);
+        expect(out.result.crash).toBe(0);
+      }
+      expect(out.err).not.toContain("TypeError");
+    });
+
+    test(`strato ${mode}: a tool whose connection throws or whose identity is malformed leaves the process and the other tools running`, async () => {
+      const r = rig();
+      config(r, { ...PROFILE, providers: { tickets: { accounts: { default: { me: "u-alice", watchTeams: ["PLAT"], pollInterval: 1 } } }, crash: { accounts: { default: { watchTeams: ["PLAT"], pollInterval: 1 } } }, garbled: { accounts: { default: { pollInterval: 1 } } } } });
+      cursorFor(r, "tickets-default", "c0", 1);
+      const preload = join(r.dir, "fake-providers.ts");
+      writeFileSync(
+        preload,
+        [
+          `import { addProvider } from ${JSON.stringify(join(SCRIPTS, "providers/registry.ts"))};`,
+          `import { fakeProvider, ticketItem } from ${JSON.stringify(join(SCRIPTS, "test-provider.ts"))};`,
+          `addProvider(fakeProvider({ id: "tickets", label: "Tickets", polls: (n) => ({ items: [ticketItem({ thread: "PLAT-" + (900 + n), id: "PLAT-" + (900 + n), event: "created" })], cursor: { value: "c" + (n + 1), at: n + 2 }, complete: true }) }));`,
+          `addProvider(fakeProvider({ id: "crash", label: "Crash", pushes: [{ batches: [], end: "cut", throws: "socket library crashed" }] }));`,
+          `addProvider(fakeProvider({ id: "garbled", label: "Garbled", identity: { groups: 5 } }));`,
+        ].join("\n"),
+      );
+      const p = Bun.spawn([process.execPath, "--preload", preload, join(SCRIPTS, "strato.ts"), mode, ...(mode === "watch" ? ["1"] : [])], { cwd: SCRIPTS, env: r.env, stdout: "pipe", stderr: "pipe", stdin: "ignore" });
+      let text = "";
+      const reader = (async () => {
+        for await (const chunk of p.stdout) text += new TextDecoder().decode(chunk);
+      })();
+      for (let i = 0; i < 200 && !text.includes("key=tickets:PLAT-902"); i++) await Bun.sleep(50);
+      const alive = p.exitCode === null;
+      p.kill();
+      await p.exited;
+      await reader;
+      const err = await new Response(p.stderr).text();
+      const lines = text.split("\n").filter(Boolean);
+      expect(alive).toBe(true);
+      expect(lines.filter((l) => l.includes("key=tickets:PLAT-90")).length).toBeGreaterThanOrEqual(3);
+      if (mode === "listen") expect(lines).toContain("[strato] Crash: socket library crashed · retrying silently, one line when it is back");
+      expect(lines.some((l) => l.startsWith("[strato] Garbled"))).toBe(false);
+      expect(err).not.toContain("socket library crashed");
+      expect(err).not.toContain("TypeError");
+    }, 30_000);
+  }
 
   test("listen: Slack's lines come out unchanged next to a ticket tool's, and a tool that fails says so once", async () => {
     const r = goldenRig();

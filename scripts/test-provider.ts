@@ -4,7 +4,7 @@
  * hostile strings. Pure: the test script adds it to the registry (`addProvider`) in its own process.
  */
 import { PROVIDER_API } from "./providers/api.ts";
-import type { IngestCursor, Item, PollResult, Provider, ProviderDescriptor, ProviderError } from "./providers/sdk.ts";
+import type { Identity, IngestCursor, Item, PollResult, Provider, ProviderDescriptor, ProviderError } from "./providers/sdk.ts";
 
 /** An answer, or the error the call throws. */
 type Answer<T> = T | { error: Partial<ProviderError> & { code: string } };
@@ -18,13 +18,16 @@ export interface FakeSpec {
   replies?: Record<string, Answer<Item[]>>;
   /** What `connect` throws, when it should fail. */
   connectError?: Partial<ProviderError> & { code: string };
+  /** What `connect` returns instead of a well-formed identity: a provider that breaks its contract. */
+  identity?: unknown;
   /** Threads the person took part in. */
   participated?: string[];
   /**
    * Makes the tool a push tool. Each connection, in turn (the last one repeated): the batches it delivers once open
-   * (an empty batch is a delivery without items), then how it ends; "hold" keeps it open until its signal aborts.
+   * (an empty batch is a delivery without items), then how it ends; "hold" keeps it open until its signal aborts;
+   * `throws`, an Error with this message thrown instead of an answer, as a crashing socket library would.
    */
-  pushes?: { batches: Item[][]; end: "clean" | "cut" | "fatal" | "hold"; refused?: string }[];
+  pushes?: { batches: Item[][]; end: "clean" | "cut" | "fatal" | "hold"; refused?: string; throws?: string }[];
 }
 
 /** A ticket tool on `tickets.example`, its links `https://tickets.example/t/PLAT-12`. */
@@ -68,6 +71,7 @@ export function fakeProvider(spec: FakeSpec): Provider & { calls: string[] } {
             const list = spec.pushes ?? [];
             const c = list[Math.min(connections++, list.length - 1)];
             calls.push("subscribe");
+            if (c.throws) throw new Error(c.throws);
             if (c.end === "fatal") return { end: "fatal" as const, ...(c.refused ? { refused: c.refused } : {}) };
             events?.opened();
             for (const batch of c.batches) onItems(batch);
@@ -79,6 +83,7 @@ export function fakeProvider(spec: FakeSpec): Provider & { calls: string[] } {
     async connect(ctx) {
       calls.push("connect");
       if (spec.connectError) throw { retryable: false, fatal: true, message: spec.connectError.code, ...spec.connectError };
+      if ("identity" in spec) return spec.identity as Identity;
       return { me: String(ctx.account.settings.me ?? "u-alice"), name: "Alice", workspace: "acme" };
     },
     async poll(_ctx, cursor) {

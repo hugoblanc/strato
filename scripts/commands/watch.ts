@@ -11,7 +11,10 @@ import { dayTime, durationOrFail, F, fail, HEARTBEAT_MS, localTime, mtimeOf, now
 import {
   accountLabel,
   accountSeen,
+  announcedLine,
+  cappedLine,
   catchUpThreads,
+  connectAccount,
   ingestAccounts,
   itemKeyOf,
   legacySeen,
@@ -30,11 +33,10 @@ import {
 import { appToken, defaultSlack, tokenCandidates } from "../app/slack.ts";
 import { runGc } from "./gc.ts";
 import { pickCards, refreshCards } from "./refresh.ts";
-import { type Counters, ensureState, keepMessage, loadSujets, logEvent, withLock } from "../app/store.ts";
+import { type Counters, ensureState, loadSujets, logEvent, withLock } from "../app/store.ts";
 import { type Config, socketDeaf, type SocketHealth } from "../chat/slack-model.ts";
 import { type AgentRow, attentionChanged, sessionAttention } from "../claude/model.ts";
-import { digestLines, eventLine, gateLine, type InfoEvent } from "../core/cards.ts";
-import { conversationRef } from "../core/keys.ts";
+import { digestLines, gateLine, type InfoEvent } from "../core/cards.ts";
 import { type MasterRequest, revueLine } from "../core/master.ts";
 import { settings } from "../core/settings.ts";
 import { dueReminders, findSujet, type Snooze, type Sujet, trackedKeys } from "../core/sujet.ts";
@@ -245,7 +247,7 @@ export async function listen(opts: Record<string, string>) {
       try {
         const r = await src.provider.poll?.(src.ctx, { value: String(fromSec), at: fromSec * 1000 }, { since: fromSec * 1000, maxItems: 3000 });
         if (!r) throw new Error("no poll");
-        if (!r.complete) out("[strato] more than 3,000 messages since the last pass: the oldest were not read, run backlog if needed");
+        if (!r.complete) out(cappedLine(null, 3000));
         found = r.items.filter((it) => !seen.has(itemKeyOf(src, it.id) ?? ""));
         await processItems(src, r.items, firstRun && why === "startup");
         next = Number(r.cursor.value);
@@ -530,7 +532,8 @@ export async function watch(intervalArg?: string) {
 
   if (slack) out(`[strato] polling armed · every ${interval} s · ${firstRun ? "first run: history marked as read" : "messages that arrived while stopped will come out"}`);
   if (!alone) out(`[strato] polling armed · ${labelsOf(others)} · each account in its own loop`);
-  for (const entry of others) void runAccount(entry, { mode: "watch", stop: stop.signal, ...(intervalArg ? { intervalSec: interval } : {}) });
+  // runAccount never rejects; the catch is a last guard so that one account can never take the process down
+  for (const entry of others) void runAccount(entry, { mode: "watch", stop: stop.signal, ...(intervalArg ? { intervalSec: interval } : {}) }).catch((e) => outageLines(accountLabel(entry.account), out).failed(providerError(e).message, true));
 
   let backoff = 0;
   for (let tick = 0; ; tick++) {
@@ -542,7 +545,7 @@ export async function watch(intervalArg?: string) {
         // 5 min margin for the Slack index lag (in the provider), dedup absorbs the overlap
         const r = await src.provider.poll?.(src.ctx, { value: String(syncedTo), at: syncedTo * 1000 }, { since: syncedTo * 1000, maxItems: 3000 });
         if (!r) throw new Error("no poll");
-        if (!r.complete) out("[strato] more than 3,000 messages since the last pass: the oldest were not read, run backlog if needed");
+        if (!r.complete) out(cappedLine(null, 3000));
         await processItems(src, r.items, tick === 0 && firstRun);
         seen.save();
         // incomplete pass: not beyond the oldest message read; a cursor never moves back
@@ -555,8 +558,12 @@ export async function watch(intervalArg?: string) {
     } catch (e) {
       const pe = providerError(e);
       if (pe.fatal) {
-        out(`[strato] FATAL: ${pe.code}, polling stopped`);
-        if (alone) process.exit(75);
+        // alone, the command stops as before; next to other accounts, only Slack stops, said like any other account
+        if (alone) {
+          out(`[strato] FATAL: ${pe.code}, polling stopped`);
+          process.exit(75);
+        }
+        outageLines("Slack", out).failed(pe.message, true);
         slack = null;
       }
       backoff = Math.min(300, backoff === 0 ? interval : backoff * 2);
@@ -579,7 +586,7 @@ export async function backlog(opts: Record<string, string>) {
     slack.src.participated = await participatedOf(slack.src);
     try {
       const r = await slack.src.provider.poll?.(slack.src.ctx, null, { since: Date.now() - ms, maxItems: 6000 });
-      if (r && !r.complete) out("[strato] more than 6,000 messages over the period: only the most recent are read");
+      if (r && !r.complete) out(cappedLine(null, 6000, true));
       await backlogItems(slack.src, r?.items ?? [], sujets, tracked, count);
     } catch (e) {
       if (alone) fail(providerError(e).message);
@@ -602,8 +609,7 @@ async function backlogItems(src: Source, items: Item[], sujets: Sujet[], tracked
       count.silent++;
       continue;
     }
-    const conversation = conversationRef(src.account.provider, src.account.id, r.item.conversation.id) ?? undefined;
-    out(eventLine(r.kind, { ...r.d, conversation }, sujets, keepMessage(r.d, { key: r.d.key, item: itemKeyOf(src, item.id) ?? undefined, conversation })));
+    out(announcedLine(src, r, itemKeyOf(src, item.id) ?? undefined, sujets));
     count.n++;
   }
 }
@@ -613,11 +619,11 @@ async function backlogAccount(entry: AccountEntry, sinceMs: number, sujets: Suje
   const lines = outageLines(accountLabel(entry.account), out);
   if (!entry.provider?.poll) return;
   try {
-    const identity = await entry.provider.connect(accountContext(entry));
+    const identity = await connectAccount(entry, accountContext(entry));
     const src = sourceOf(entry, identity, accountSeen(entry.account));
     src.participated = await participatedOf(src);
     const r = await entry.provider.poll(src.ctx, null, { since: sinceMs, maxItems: 6000 });
-    if (!r.complete) out(`[strato] ${src.label}: more than 6,000 items over the period: only the most recent are read`);
+    if (!r.complete) out(cappedLine(src.label, 6000, true));
     await backlogItems(src, r.items, sujets, tracked, count);
   } catch (e) {
     lines.failed(providerError(e).message);

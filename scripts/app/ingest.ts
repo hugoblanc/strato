@@ -41,13 +41,21 @@ export interface SeenStore {
 const SEEN_KEEP_MS = 3 * 86_400_000;
 
 /**
+ * What an edit is remembered under, next to its item's id: a tool that reports the same edit on every overlapping
+ * poll raises it once. The item's id alone is marked too, so a later pass that finds the edited item stays quiet.
+ */
+const EDIT_MARK = "#edit";
+
+/**
  * seen.json of the default Slack account, as older versions read it: the bare ids of its messages (`channel:ts`),
- * purged by the time their ts says.
+ * purged by the time their ts says. Edit marks stay in memory, so the file keeps the shape older versions wrote:
+ * Slack reports an edit once, from its socket, and a mark only has to outlive the catch-ups of the same run.
  */
 export function legacySeen(ids: Set<string> = new Set(readJson<string[]>(F.seen, []))): SeenStore {
+  const edits = new Set<string>();
   return {
-    has: (id) => ids.has(id),
-    add: (id) => void ids.add(id),
+    has: (id) => (id.endsWith(EDIT_MARK) ? edits : ids).has(id),
+    add: (id) => void (id.endsWith(EDIT_MARK) ? edits : ids).add(id),
     save() {
       const horizon = (Date.now() - SEEN_KEEP_MS) / 1000;
       for (const id of ids) if (Number(threadOfKey(id)?.ts) < horizon) ids.delete(id);
@@ -91,6 +99,30 @@ export interface Source {
 
 /** The account's name in a line: its tool, and its name when it is not the default one. Third-party text when external. */
 export const accountLabel = (a: Pick<Account, "provider" | "id">) => untrusted(oneLine(`${providerLabel(a.provider)}${a.id === "default" ? "" : ` (${a.id})`}`));
+
+/**
+ * What `connect` returned, as the core accepts it: its string fields, its groups that are strings. Null when it is not
+ * an object at all: the provider broke its contract, and connecting is retried like any failure.
+ */
+export function checkedIdentity(raw: unknown): Identity | null {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
+  const r = raw as Record<string, unknown>;
+  const str = (v: unknown) => (typeof v === "string" ? v : "");
+  return {
+    me: str(r.me),
+    name: str(r.name),
+    workspace: str(r.workspace),
+    ...(typeof r.tenant === "string" && r.tenant ? { tenant: r.tenant } : {}),
+    ...(Array.isArray(r.groups) ? { groups: r.groups.filter((g): g is string => typeof g === "string" && g !== "") } : {}),
+  };
+}
+
+/** `connect` of an account, its answer checked: what it throws, or a provider error when its answer is not an identity. */
+export async function connectAccount(entry: AccountEntry, ctx: AccountContext): Promise<Identity> {
+  const identity = checkedIdentity(await (entry.provider as Provider).connect(ctx));
+  if (!identity) throw { code: "bad_result", message: "connect returned something that is not an identity", retryable: true, fatal: false };
+  return identity;
+}
 
 /** An account resolved with its provider and the identity `connect` returned. */
 export function sourceOf(entry: AccountEntry, identity: Identity, seen: SeenStore, opts: { signal?: AbortSignal; fetchImpl?: typeof fetch } = {}): Source {
@@ -193,21 +225,43 @@ export async function processItems(src: Source, items: Item[], markOnly = false)
       continue;
     }
     if (item.author.isMe) src.participated.add(key);
-    if (item.edited) {
+    const editId = item.edited ? id + EDIT_MARK : null;
+    if (editId) {
       // an edit that adds the mention: the original is often already read (ignored silently), it must still come out,
-      // unless its previous version already did (watched channel, tracked thread, DM): one line per message
-      if (editAlreadyRaised(item, key, src.rules, tracked, src.participated)) continue;
+      // unless its previous version already did (watched channel, tracked thread, DM), or this edit already came in
+      // (a tool polled with overlapping windows reports it again): one line per message
+      if (src.seen.has(editId) || editAlreadyRaised(item, key, src.rules, tracked, src.participated)) continue;
     } else if (src.seen.has(id)) continue;
-    if (markOnly) {
+    const mark = () => {
       src.seen.add(id);
+      if (editId) src.seen.add(editId);
+    };
+    if (markOnly) {
+      mark();
       continue;
     }
     try {
-      await sortOne(src, item, key, id, tracked, sujets, () => src.seen.add(id));
+      await sortOne(src, item, key, id, tracked, sujets, mark);
     } catch (e) {
       out(triageErrorLine(checkedLink(item.link, src.account.provider) ?? id, e));
     }
   }
+}
+
+/**
+ * The event line of a kept item, for the master, with the message kept in the inbox that `open --msg` and `relay`
+ * read back. Shared by the listener and `backlog`.
+ */
+export function announcedLine(src: Pick<Source, "account">, r: { kind: Kind; d: Trigger & { key: string }; item: Item }, id: string | undefined, sujets: Sujet[]): string {
+  const conversation = conversationRef(src.account.provider, src.account.id, r.item.conversation.id) ?? undefined;
+  return eventLine(r.kind, { ...r.d, conversation }, sujets, keepMessage(r.d, { key: r.d.key, item: id, conversation }));
+}
+
+/** The line of a pass that hit its cap: the oldest items were not read. Slack's default account keeps its words. */
+export function cappedLine(label: string | null, max: number, period = false): string {
+  const n = max.toLocaleString("en");
+  if (label === null) return period ? `[strato] more than ${n} messages over the period: only the most recent are read` : `[strato] more than ${n} messages since the last pass: the oldest were not read, run backlog if needed`;
+  return period ? `[strato] ${label}: more than ${n} items over the period: only the most recent are read` : `[strato] ${label}: more than ${n} items since the last pass: the oldest were not read, run backlog if needed`;
 }
 
 /** Triages one item and prints its line; `done` marks it read as soon as its trace is written, not before. */
@@ -223,7 +277,7 @@ async function sortOne(src: Source, item: Item, key: string, id: string, tracked
     return void done();
   }
   if (kind === "moi") await dropSentDraft(d.key, d.text, d.permalink);
-  out(eventLine(kind, { ...d, conversation }, sujets, keepMessage(d, { key: d.key, item: id, conversation })));
+  out(announcedLine(src, r, id, sujets));
   // the line is out: even if the log fails next, do not repeat it on the next pass
   done();
   logEvent({ type: itemEventType(src.account.provider), kind, key: d.key, from: d.from, channel: d.channel, permalink: d.permalink, ...extra });
@@ -448,20 +502,29 @@ export function ingestAccounts(): AccountEntry[] {
 /**
  * The ingest loop of one account, until `stop` or a fatal error: connect (retried while the tool does not answer),
  * then push (listen, for a push account) or poll. Every failure stays inside this account: a line, a retry with a
- * growing delay, never an exception out of here.
+ * growing delay, never an exception out of here. What the loops do not expect (a provider that breaks its contract,
+ * a bug) ends this account with one line; the other accounts carry on.
  */
 export async function runAccount(entry: AccountEntry, opts: RunOptions): Promise<void> {
   const say = opts.say ?? out;
-  const label = accountLabel(entry.account);
-  const lines = outageLines(label, say);
+  const lines = outageLines(accountLabel(entry.account), say);
+  try {
+    await runConnected(entry, opts, lines);
+  } catch (e) {
+    lines.failed(providerError(e).message, true);
+  }
+}
+
+async function runConnected(entry: AccountEntry, opts: RunOptions, lines: ReturnType<typeof outageLines>): Promise<void> {
   if (!entry.provider) return void lines.failed(entry.problem ?? "no provider", true);
   const provider = entry.provider;
   const caps = effectiveCapabilities(provider.descriptor, entry.account.auth).ingest;
+  const io = { signal: opts.stop, ...(opts.fetchImpl ? { fetchImpl: opts.fetchImpl } : {}) };
 
   let identity: Identity | null = null;
   for (let backoff = 5; !identity && !opts.stop.aborted; backoff = Math.min(300, backoff * 2)) {
     try {
-      identity = await provider.connect(accountContext(entry, { signal: opts.stop, ...(opts.fetchImpl ? { fetchImpl: opts.fetchImpl } : {}) }));
+      identity = await connectAccount(entry, accountContext(entry, io));
       lines.ok();
     } catch (e) {
       const pe = providerError(e);
@@ -471,12 +534,26 @@ export async function runAccount(entry: AccountEntry, opts: RunOptions): Promise
     }
   }
   if (!identity) return;
-  const src = sourceOf(entry, identity, accountSeen(entry.account), { signal: opts.stop, ...(opts.fetchImpl ? { fetchImpl: opts.fetchImpl } : {}) });
+  const src = sourceOf(entry, identity, accountSeen(entry.account), io);
   src.participated = await participatedOf(src);
   const run: AccountRun = { src, cursor: readCursor(entry.account) };
   const push = opts.mode === "listen" && entry.account.ingest === "push" && caps.push && !!provider.subscribe;
   if (push) await runPush(run, opts, lines);
   else await runPoll(run, opts, lines);
+}
+
+/** How a push connection ended, read from what `subscribe` resolved or threw: a throw is a cut, or the end of push when fatal. */
+type PushEnd = { end: "clean" | "cut" | "fatal"; retryAfterMs?: number; refused?: string };
+
+async function pushOnce(src: Source, signal: AbortSignal, onItems: Parameters<NonNullable<Provider["subscribe"]>>[1], opened: () => void): Promise<PushEnd> {
+  try {
+    const r = await (src.provider.subscribe as NonNullable<Provider["subscribe"]>)({ ...src.ctx, signal }, onItems, { opened });
+    const end = r?.end === "clean" || r?.end === "fatal" ? r.end : "cut";
+    return { end, ...(typeof r?.retryAfterMs === "number" ? { retryAfterMs: r.retryAfterMs } : {}), ...(typeof r?.refused === "string" ? { refused: r.refused } : {}) };
+  } catch (e) {
+    const pe = providerError(e);
+    return { end: pe.fatal ? "fatal" : "cut", refused: pe.message, ...(pe.retryAfterMs !== undefined ? { retryAfterMs: pe.retryAfterMs } : {}) };
+  }
 }
 
 /** The poll loop: one pass every interval, the tracked threads every 5 min in listen mode, a growing delay on failures. */
@@ -493,7 +570,7 @@ async function runPoll(run: AccountRun, opts: RunOptions, lines: ReturnType<type
       const threads = threadsEvery > 0 && Date.now() - lastThreads >= threadsEvery;
       const r = await pollPass(run, { threads });
       if (threads && !r.threadsFailed) lastThreads = Date.now();
-      if (!r.complete) say(`[strato] ${run.src.label}: more than ${PASS_MAX_ITEMS.toLocaleString("en")} items since the last pass: the oldest were not read, run backlog if needed`);
+      if (!r.complete) say(cappedLine(run.src.label, PASS_MAX_ITEMS));
       lines.ok();
       backoff = 0;
     } catch (e) {
@@ -519,7 +596,7 @@ async function runPush(run: AccountRun, opts: RunOptions, lines: ReturnType<type
     syncing = (async () => {
       try {
         const r = await pollPass(run, { threads: true });
-        if (!r.complete) say(`[strato] ${src.label}: more than ${PASS_MAX_ITEMS.toLocaleString("en")} items since the last pass: the oldest were not read, run backlog if needed`);
+        if (!r.complete) say(cappedLine(src.label, PASS_MAX_ITEMS));
       } catch (e) {
         const pe = providerError(e);
         if (why !== "periodic") say(`[strato] ${src.label}: catch-up failed (${why}): ${untrusted(oneLine(truncate(pe.message, 200)))}`);
@@ -554,8 +631,9 @@ async function runPush(run: AccountRun, opts: RunOptions, lines: ReturnType<type
   try {
     while (!opts.stop.aborted && src.provider.subscribe) {
       connection = new AbortController();
-      const r = await src.provider.subscribe(
-        { ...src.ctx, signal: connection.signal },
+      const r = await pushOnce(
+        src,
+        connection.signal,
         (items, cursor) => {
           const valid = Array.isArray(items) ? items.filter(isItem) : [];
           if (!valid.length) return;
@@ -572,24 +650,22 @@ async function runPush(run: AccountRun, opts: RunOptions, lines: ReturnType<type
             }
           });
         },
-        {
-          opened: () => {
-            lines.ok();
-            backoff = 1;
-          },
+        () => {
+          lines.ok();
+          backoff = 1;
         },
       );
       await chain;
-      if (r?.end === "fatal") {
+      if (r.end === "fatal") {
         // the tool will not push (no app-level token, a refused connection): polling still brings its items
         say(`[strato] ${src.label}: ${untrusted(oneLine(truncate(r.refused ?? "the connection ended for good", 200)))} · polled instead`);
         fellBack = true;
         break;
       }
-      if (r?.refused) lines.failed(r.refused);
+      if (r.refused) lines.failed(r.refused);
       if (opts.stop.aborted) break;
-      await pause(Math.max(backoff, Math.min(900, (r?.retryAfterMs ?? 0) / 1000)) * 1000, opts.stop);
-      backoff = r?.end === "clean" ? 1 : Math.min(60, backoff * 2);
+      await pause(Math.max(backoff, Math.min(900, (r.retryAfterMs ?? 0) / 1000)) * 1000, opts.stop);
+      backoff = r.end === "clean" ? 1 : Math.min(60, backoff * 2);
     }
   } finally {
     opts.stop.removeEventListener("abort", onStop);

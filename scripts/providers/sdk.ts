@@ -200,13 +200,19 @@ export interface Item {
   text: string;
   /** Unix ms. */
   time: number;
-  /** https link to the item, else to its thread. The core drops it unless it is https, on `hosts`, and without whitespace. */
+  /**
+   * https link to the item, else to its thread. The core drops it unless it is https, on `hosts`, without whitespace
+   * nor credentials, and percent-encodes what a shell would read in it.
+   */
   link: string;
   /** The person, or one of their groups, is mentioned; or the tool says the item targets them (assignment). */
   mentionsMe: boolean;
   /** At least one person is explicitly targeted, and not the person served. */
   targetsOther: boolean;
-  /** An edit: the facts of the version before it, so an edit is raised only when it adds a mention. */
+  /**
+   * An edit: the facts of the version before it, so an edit is raised only when it adds a mention. The core raises an
+   * edit of an item once, even when overlapping polls report it again.
+   */
   edited?: { before: Pick<Item, "mentionsMe" | "targetsOther"> };
   /** Why the tool notified the person, when it says so. Informative, for the event line. */
   reason?: "assigned" | "mentioned" | "subscribed" | "watched";
