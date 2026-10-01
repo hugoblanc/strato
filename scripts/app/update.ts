@@ -1,6 +1,9 @@
 /**
- * The installation's version and its update from the board. An installation is a git clone of the skill's repository;
- * what belongs to the installation lives outside it (the state folder), so updating is a fast-forward of the clone.
+ * The installation's version and its update from the board. An installation is either a compiled binary (updated from
+ * GitHub releases, app/release.ts) or a git clone of the skill's repository (below); what belongs to the installation
+ * lives outside both (the state folder), so updating replaces code only. `mode` picks one, by default the running one.
+ *
+ * Git clone mode:
  *
  * - `localVersion()`: package.json version, short sha, modified files, branch, upstream.
  * - `checkUpdates()`: `git fetch`, then the commits between HEAD and its upstream, sorted by core/version.ts.
@@ -13,11 +16,15 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { compareSemver, type GroupedChanges, groupChanges } from "../core/version.ts";
+import { applyRelease, binaryLocalVersion, checkRelease, type ReleaseOptions } from "./release.ts";
+import { COMPILED } from "./self.ts";
 
-/** The repository root: the parent of `scripts/` (the folder of SCRIPT in app/env.ts). */
+/** The repository root of a development clone: the parent of `scripts/`. Meaningless inside a binary. */
 export const SKILL_ROOT = join(import.meta.dir, "..", "..");
 
-export interface UpdateOptions {
+export interface UpdateOptions extends ReleaseOptions {
+  /** `binary` (GitHub releases) or `git` (the clone); the running mode by default. */
+  mode?: "binary" | "git";
   /** Repository root, `SKILL_ROOT` by default. */
   root?: string;
   /** Command run in `<root>/scripts` after the pull: `bun run check` by default (typecheck and tests). */
@@ -45,8 +52,11 @@ export interface Commit {
 export interface UpdateCheck {
   checkedAt: string;
   available: boolean;
-  /** Why no update is offered: no upstream, fetch failed, local commits not in the upstream. */
-  reason?: "noUpstream" | "fetchFailed" | "diverged";
+  /**
+   * Why no update is offered: no upstream, fetch failed, local commits not in the upstream, or (binary) a newer
+   * release without a binary for this platform.
+   */
+  reason?: "noUpstream" | "fetchFailed" | "diverged" | "noAsset";
   /** The git error, for `fetchFailed`. */
   error?: string;
   upstream: string | null;
@@ -59,7 +69,11 @@ export interface UpdateCheck {
   changes: GroupedChanges;
 }
 
-export type UpdateFailure = "noUpstream" | "dirty" | "pullFailed" | "installFailed" | "checkFailed";
+/**
+ * `checkFailed` is the test suite (git) or the new binary refusing to start (binary). Binary only: `noAsset` (no binary
+ * for this platform, or no SHA256SUMS), `downloadFailed`, `checksumFailed`, `replaceFailed` (the swap on disk).
+ */
+export type UpdateFailure = "noUpstream" | "dirty" | "pullFailed" | "installFailed" | "checkFailed" | "noAsset" | "downloadFailed" | "checksumFailed" | "replaceFailed";
 
 export type UpdateResult =
   | { ok: true; from: string; to: string; fromVersion: string | null; toVersion: string | null; changes: GroupedChanges }
@@ -137,7 +151,10 @@ const commitsOf = (out: string): Commit[] =>
       return { sha: l.slice(0, i), subject: l.slice(i + 1) };
     });
 
+const binaryMode = (opts: UpdateOptions) => (opts.mode ?? (COMPILED ? "binary" : "git")) === "binary";
+
 export async function localVersion(opts: UpdateOptions = {}): Promise<LocalVersion> {
+  if (binaryMode(opts)) return binaryLocalVersion(opts);
   const root = opts.root ?? SKILL_ROOT;
   let version: string | null = null;
   try {
@@ -159,6 +176,7 @@ export async function localVersion(opts: UpdateOptions = {}): Promise<LocalVersi
 }
 
 export async function checkUpdates(opts: UpdateOptions = {}): Promise<UpdateCheck> {
+  if (binaryMode(opts)) return checkRelease(opts);
   const root = opts.root ?? SKILL_ROOT;
   const local = await localVersion(opts);
   const base = { checkedAt: new Date().toISOString(), available: false, upstream: local.upstream, target: null, newer: false, commits: [], changes: groupChanges([]) };
@@ -178,6 +196,7 @@ export async function checkUpdates(opts: UpdateOptions = {}): Promise<UpdateChec
 }
 
 export async function applyUpdate(opts: UpdateOptions = {}): Promise<UpdateResult> {
+  if (binaryMode(opts)) return applyRelease(opts);
   const root = opts.root ?? SKILL_ROOT;
   const scripts = join(root, "scripts");
   const local = await localVersion(opts);

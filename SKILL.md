@@ -15,47 +15,50 @@ Each topic carries a stable letter (A, B, C… then AA) that the owner uses to n
 Commands, lines from the script and prompts to sessions stay as they are.
 
 **Former name.** Strato used to be called "aiguilleur".
-During the transition, lines prefixed `[aiguilleur]` mean exactly the same as `[strato]`, `/aiguilleur` starts the same master, and `scripts/aiguilleur.ts` is an alias of `scripts/strato.ts`.
+During the transition, lines prefixed `[aiguilleur]` mean exactly the same as `[strato]`, `/aiguilleur` starts the same master, and, in a development clone, `scripts/aiguilleur.ts` is an alias of `scripts/strato.ts`.
 
-## The script
+## The command
 
-```bash
-S="<base directory of this skill>/scripts/strato.ts"
-```
+<!-- strato:command -->
+`$STRATO` below stands for the command that runs Strato. It depends on how Strato is installed:
 
-The base directory is the one Claude Code shows when it loads the skill ("Base directory for this skill").
+- **Binary** (the default install, `install.sh`): `strato` if it is in the PATH, else its absolute path (`~/.local/bin/strato`). `strato install-skill` writes this file with the command already filled in.
+- **Development clone** (this repository cloned into `.claude/skills/strato/`): `bun <base directory of this skill>/scripts/strato.ts`, where the base directory is the one Claude Code shows when it loads the skill ("Base directory for this skill").
+
+Type the command in full every time (`$STRATO doctor` is `strato doctor`, or `bun /…/scripts/strato.ts doctor`): it is not a shell variable.
+<!-- /strato:command -->
 
 | Command | Role |
 | --- | --- |
-| `bun $S doctor` | The loaded profile, what is missing, the Slack token, the socket, `claude agents`, the state, the policy, the locale |
-| `bun $S setup --check \| --detect \| --write <file.json> [--force] \| --live` | The guided setup (below, "Setup"): prerequisites, what can be guessed, writing the profile, leaving shadow mode |
-| `bun $S listen` | Socket Mode listener, to run through `Monitor`: one line per event to handle, received by WebSocket. The normal mode |
-| `bun $S watch` | The same by polling every `slack.pollInterval` seconds. Fallback when the socket does not open |
-| `bun $S backlog --since 12h` | Recent relevant messages, to catch up |
-| `bun $S digest [--since 6h]` | Messages set aside (third parties, bots) since the last digest, grouped by channel, without any Slack call |
-| `bun $S gates` | One line per open topic: `A · asker (channel) · request → proposal · [gate]` |
-| `bun $S card <topic>` | The card: why it is for the owner, what is not checked, the exact action, the report, `claude attach` |
-| `bun $S term <topic>` | Joins the topic's session in the current terminal (`claude attach`), or resumes it if stopped (`claude --resume`). This is what the board's terminal drawer runs |
-| `bun $S dive <topic \| Slack link>` | Opens the topic's session in a new iTerm2 tab of the window the command runs from, and writes its sheet (card, full Slack threads, report) in `<state>/dive/`. `--window` uses the dive window, `--no-tab` only writes the sheet |
-| `bun $S serve [--port N]` | Local server of the board and of the iTerm2 panel, on 127.0.0.1 only, port `ui.port` by default |
-| `bun $S open --msg <id> --title …` | Opens a topic, gives it a letter and starts its work session |
-| `bun $S open <TICKET-123> --title …` | Opens an implementation topic from a tracker ticket: worktree, tests, adversarial review, merge request towards the integration branch |
-| `bun $S attach <topic> <Slack link \| TICKET-123>` | Attaches another thread or a ticket to the topic |
-| `bun $S relay <topic> --kind suite\|moi --msg <id>` | Relays a message of one of the topic's threads to its session |
-| `bun $S send <topic> <message…>` | Instruction or information from the master to the topic's session |
-| `bun $S set <topic> status=… waiting=… steps="…" next="…" summary="…" …` | Writes the state of a topic (`-` empties a field). The legacy card fields (`gate`, `ask`, `action`, `draft`…) still become tasks |
-| `bun $S task <topic> add kind=… ask="…" …`, `done <id>`, `drop <id>`, `edit <id> …` | What waits for the owner: one task per thing to decide or to send, closed explicitly |
-| `bun $S revue-done <id> <summary…>` | Closes a request made from the board, with the answer the board shows |
-| `bun $S close <topic>` | Closes the topic and stops its session (conversation kept) |
-| `bun $S gc [--dry]` | Stops the sessions of closed topics and those idle for `gc.idleHours` (conversation kept) |
-| `bun $S refresh [<topic>…] [--stale] [--dry]` | Each session rereads its thread and revalidates its card: the named topics, every open card, or with `--stale` those the sweep flags |
-| `bun $S list [--all]`, `bun $S get <topic>` | Look things up |
+| `$STRATO doctor` | The loaded profile, what is missing, the Slack token, the socket, `claude agents`, the state, the policy, the locale |
+| `$STRATO setup --check \| --detect \| --write <file.json> [--force] \| --live` | The guided setup (below, "Setup"): prerequisites, what can be guessed, writing the profile, leaving shadow mode |
+| `$STRATO listen` | Socket Mode listener, to run through `Monitor`: one line per event to handle, received by WebSocket. The normal mode |
+| `$STRATO watch` | The same by polling every `slack.pollInterval` seconds. Fallback when the socket does not open |
+| `$STRATO backlog --since 12h` | Recent relevant messages, to catch up |
+| `$STRATO digest [--since 6h]` | Messages set aside (third parties, bots) since the last digest, grouped by channel, without any Slack call |
+| `$STRATO gates` | One line per open topic: `A · asker (channel) · request → proposal · [gate]` |
+| `$STRATO card <topic>` | The card: why it is for the owner, what is not checked, the exact action, the report, `claude attach` |
+| `$STRATO term <topic>` | Joins the topic's session in the current terminal (`claude attach`), or resumes it if stopped (`claude --resume`). This is what the board's terminal drawer runs |
+| `$STRATO dive <topic \| Slack link>` | Opens the topic's session in a new iTerm2 tab of the window the command runs from, and writes its sheet (card, full Slack threads, report) in `<state>/dive/`. `--window` uses the dive window, `--no-tab` only writes the sheet |
+| `$STRATO serve [--port N]` | Local server of the board and of the iTerm2 panel, on 127.0.0.1 only, port `ui.port` by default |
+| `$STRATO open --msg <id> --title …` | Opens a topic, gives it a letter and starts its work session |
+| `$STRATO open <TICKET-123> --title …` | Opens an implementation topic from a tracker ticket: worktree, tests, adversarial review, merge request towards the integration branch |
+| `$STRATO attach <topic> <Slack link \| TICKET-123>` | Attaches another thread or a ticket to the topic |
+| `$STRATO relay <topic> --kind suite\|moi --msg <id>` | Relays a message of one of the topic's threads to its session |
+| `$STRATO send <topic> <message…>` | Instruction or information from the master to the topic's session |
+| `$STRATO set <topic> status=… waiting=… steps="…" next="…" summary="…" …` | Writes the state of a topic (`-` empties a field). The legacy card fields (`gate`, `ask`, `action`, `draft`…) still become tasks |
+| `$STRATO task <topic> add kind=… ask="…" …`, `done <id>`, `drop <id>`, `edit <id> …` | What waits for the owner: one task per thing to decide or to send, closed explicitly |
+| `$STRATO revue-done <id> <summary…>` | Closes a request made from the board, with the answer the board shows |
+| `$STRATO close <topic>` | Closes the topic and stops its session (conversation kept) |
+| `$STRATO gc [--dry]` | Stops the sessions of closed topics and those idle for `gc.idleHours` (conversation kept) |
+| `$STRATO refresh [<topic>…] [--stale] [--dry]` | Each session rereads its thread and revalidates its card: the named topics, every open card, or with `--stale` those the sweep flags |
+| `$STRATO list [--all]`, `$STRATO get <topic>` | Look things up |
 
 `<topic>` accepts the letter, any key of the topic (`channel:ts` or `linear:TICKET-123`), a Slack link of one of its threads, the short session id or the sessionId.
 
 ## The profile
 
-Nothing specific to a team is written in the code: everything comes from the state folder, which `bun $S doctor` summarises.
+Nothing specific to a team is written in the code: everything comes from the state folder, which `$STRATO doctor` summarises.
 
 **Where the state lives.** `STRATO_STATE`, else `<workspace>/.strato`, else `<workspace>/.aiguilleur` for an installation made before the rename.
 The workspace is `STRATO_WORKSPACE`, else `workspace` in config.json, else what precedes `/.claude/` in the skill's path.
@@ -111,7 +114,7 @@ The goal is the profile of `examples/profile/` (read both files once before star
 
 ### 1. Prerequisites
 
-`bun $S setup --check`.
+`$STRATO setup --check`.
 A `MISS … [blocking]` line comes first: Bun or Claude Code missing, or no Slack user token.
 For the token, walk the owner through `SETUP.md` "Connect Slack" (the app manifest is `examples/slack-app-manifest.yaml`) and wait until `setup --check` shows `ok  slack`: without a token, `--detect` finds nothing from Slack.
 Optional lines (`socket`, `glab`, `ttyd`, `iTerm2`) are mentioned once, in one sentence, never blocking.
@@ -119,7 +122,7 @@ A `scopes` warning is worth fixing now if it lists `search:read`, a `*:history` 
 
 ### 2. Detection
 
-`bun $S setup --detect` prints JSON: `fields` (each with `value`, `source`, `confidence`, and `candidates` when it is a choice), `suggested` (a partial `config.json` built from the high and medium confidence fields) and `notes` (what could not be read, and why).
+`$STRATO setup --detect` prints JSON: `fields` (each with `value`, `source`, `confidence`, and `candidates` when it is a choice), `suggested` (a partial `config.json` built from the high and medium confidence fields) and `notes` (what could not be read, and why).
 Show the owner a short summary, not the JSON, for instance:
 
 ```
@@ -149,13 +152,13 @@ Each block says where the answer goes.
 | **h. Language and tone** | Language of the board and of your messages (`en` or `fr`). Tone of drafts in a sentence or two. A voice file (how you write)? | `ui.locale`; `local.md` "Notes"; voice file: see below |
 
 Socket Mode: if `setup --check` found no app token and the owner wants real time, ask for the path of the file holding `SLACK_APP_TOKEN` and the app ID (`slack.appTokenFile`, `slack.appId`), per `SETUP.md` option B.
-A voice file only reaches the work sessions through the policy: if the owner wants it, copy `scripts/policy/defaults/worker.md` to `<state>/policy/worker.md` and add, in step 4, "Before writing a draft, read <path of the voice file> and follow it."
+A voice file only reaches the work sessions through the policy: if the owner wants it, copy the default template to the state folder with `$STRATO policy-default worker > <state>/policy/worker.md` and add, in step 4, "Before writing a draft, read <path of the voice file> and follow it."
 Tell them the cost in one sentence: that template no longer follows upstream updates.
 
 ### 4. Write the profile
 
 1. Merge `suggested` and the answers into one JSON object, with `"workers": { "shadow": true }` for the first day.
-   Write it to a temporary file outside the repository (`$TMPDIR/strato-profile.json`), then `bun $S setup --write <that file>`.
+   Write it to a temporary file outside the repository (`$TMPDIR/strato-profile.json`), then `$STRATO setup --write <that file>`.
    The command validates every field (an unknown field or a wrong type is refused, nothing written), merges into an existing `config.json` and prints the diff; `--force` replaces the file instead, only if the owner asks to start over.
    Show the diff lines and the "to fill in" line; settle anything left.
 2. Write `<state>/local.md` (the state folder is printed by `--detect` as `state`) with the five sections `## Who I am`, `## My team`, `## Ownership map`, `## Never without my go`, `## Notes`, in the shape of `examples/profile/local.md`.
@@ -163,7 +166,7 @@ Tell them the cost in one sentence: that template no longer follows upstream upd
 
 ### 5. Rehearsal
 
-`bun $S backlog --since 24h`: it reads Slack and lists the messages Strato would have raised over the last day; it opens nothing and posts nothing.
+`$STRATO backlog --since 24h`: it reads Slack and lists the messages Strato would have raised over the last day; it opens nothing and posts nothing.
 For each line, say in a few words what would have happened under the rules of "Handling an event": a topic opened, attached, ignored as not for the owner (name the owner from the map), or noise.
 Then ask two questions: "Anything here you would not want to see?" and "Anything from yesterday that is missing?".
 Noise: add the bot to `slack.ignoreAuthors` or the channel to `slack.ignoreChannels`. Missing: the channel to `slack.watchChannels`, the group to `slack.subteams`.
@@ -171,12 +174,12 @@ Apply with `setup --write` on a partial file, rerun the backlog once.
 
 ### 6. Start in shadow mode
 
-1. `bun $S doctor`: everything on one screen, with "shadow mode: nothing is posted" on the sessions line.
+1. `$STRATO doctor`: everything on one screen, with "shadow mode: nothing is posted" on the sessions line.
 2. Start the board and arm the listener as in "Startup" (steps 2 to 4), and give the owner the board's URL.
-3. Tell them, in two sentences: sessions now prepare cards and drafts for real requests, and nothing leaves (the board's Send and Go are off, the server refuses them); after a day or two of cards they trust, `bun $S setup --live` turns posting on.
+3. Tell them, in two sentences: sessions now prepare cards and drafts for real requests, and nothing leaves (the board's Send and Go are off, the server refuses them); after a day or two of cards they trust, `$STRATO setup --live` turns posting on.
 
-**Going live.** When the owner asks, run `bun $S setup --live`: the running board picks it up without a restart.
-Sessions started in shadow mode keep their instruction until they receive a go from the board; if the owner wants to give a go inside such a session instead, first `bun $S send <topic> "[strato] Shadow mode is over: the usual execution rule applies again."`.
+**Going live.** When the owner asks, run `$STRATO setup --live`: the running board picks it up without a restart.
+Sessions started in shadow mode keep their instruction until they receive a go from the board; if the owner wants to give a go inside such a session instead, first `$STRATO send <topic> "[strato] Shadow mode is over: the usual execution rule applies again."`.
 
 ## Socket Mode
 
@@ -216,7 +219,7 @@ If the panel stays empty, read `<state>/serve.log`.
 ## The board
 
 The board is the overview in a browser tab: `http://127.0.0.1:<ui.port>/board`.
-It is served by the same `bun $S serve` as the panel, with its own page (Tailwind v4 from a CDN, IBM Plex): `scripts/board.ts`, pure and tested in `board.test.ts`.
+It is served by the same `$STRATO serve` as the panel, with its own page (Tailwind v4 from a CDN, IBM Plex): `scripts/board.ts`, pure and tested in `board.test.ts`.
 It only reads what Strato has already seen: `sujets.json`, `events.ndjson`, `live/` and `~/.claude/sessions/`.
 If the server is down, nothing changes for the master or the CLI.
 
@@ -239,7 +242,7 @@ A session's `busy` / `idle` / `waiting` status comes from `~/.claude/sessions/<p
 - **Write to the session**: `POST /api/send`. A stopped session is resumed with the message (`claude --bg --resume`); a live one receives it through a throwaway `claude -p` restricted to the `SendMessage` tool. A message from the owner on the board is an instruction or a go, like what they would type in the session.
 - **✅ on the thread**: adds the `white_check_mark` reaction to the original message, on behalf of the owner, for a closed and settled topic.
 - **Paste an image**: kept in `<state>/uploads/<topic>/` (png, jpeg, gif, webp, 10 MB max, purged after 30 days), sent to the session as a file path to read.
-- **Terminal**: a real terminal in the page, through one `ttyd` per topic on 127.0.0.1 (ports 7700 to 7799), running `bun $S term <topic>`. **iTerm2** runs `dive`. **claude.ai** opens the session in Remote Control.
+- **Terminal**: a real terminal in the page, through one `ttyd` per topic on 127.0.0.1 (ports 7700 to 7799), running `$STRATO term <topic>`. **iTerm2** runs `dive`. **claude.ai** opens the session in Remote Control.
 - **Stop** (`claude stop`, topic stays open) and **Close** (like `close`); both need a second click within 4 s.
 - **Later**: pauses the topic until a time, or until the next message from someone else in the thread. A pause "until…" takes a reason and guarantees a reminder.
 - **Revalidate** / **Revalidate cards**: the session(s) reread their thread and rewrite their card, without sending anything.
@@ -253,7 +256,7 @@ Never start `serve` with an emptied environment (`env -i`): the `claude -p` used
 
 ## Topics declare themselves
 
-Each topic session is started with hooks in its `--settings`, which call `bun $S hook` on six transitions.
+Each topic session is started with hooks in its `--settings`, which call `$STRATO hook` on six transitions.
 The session then writes its state in `<state>/live/<sessionId>.json`, one file per session, so never two concurrent writes.
 `listen` watches that folder with `fs.watch`: a transition is seen within a second.
 
@@ -303,23 +306,23 @@ Writing rules for the card live in `policy/card-style.md`: the fact first, one s
 
 ## Startup
 
-1. `bun $S doctor`. It says where the state is, which policy is loaded, whether there is an app token for the socket, the board's port and the locale.
+1. `$STRATO doctor`. It says where the state is, which policy is loaded, whether there is an app token for the socket, the board's port and the locale.
    If it prints "to fill in" for `slack.*` or `owner.name`, run "Setup" first.
 2. Read `<state>/local.md` if it exists: the notes of this installation (team conventions, known pitfalls, history). They complement this protocol and win over it in case of conflict.
-   If `ui.iterm` is true: `zsh "$(dirname $S)/iterm-mark.zsh"` (amber tab and badge on the master's terminal).
-   If the board does not answer (`curl -s -o /dev/null http://127.0.0.1:<ui.port>/board`), start it in the background with the Bash tool (`run_in_background`): `bun $S serve`. Never with an emptied environment.
-3. `bun $S gates`, and show the result: it is what already waits for the owner.
-4. Arm the listener with the `Monitor` tool: `command` = `bun $S listen` if `doctor` found an app token, else `bun $S watch`; `description` = `strato Slack`, `timeout_ms` = `1800000`.
+   If `ui.iterm` is true: `$STRATO iterm-mark` (amber tab and badge on the master's terminal).
+   If the board does not answer (`curl -s -o /dev/null http://127.0.0.1:<ui.port>/board`), start it in the background with the Bash tool (`run_in_background`): `$STRATO serve`. Never with an emptied environment.
+3. `$STRATO gates`, and show the result: it is what already waits for the owner.
+4. Arm the listener with the `Monitor` tool: `command` = `$STRATO listen` if `doctor` found an app token, else `$STRATO watch`; `description` = `strato Slack`, `timeout_ms` = `1800000`.
    **Always the 30-minute maximum**, otherwise the monitor expires every 5 minutes by default.
    On every expiry, the master re-arms it without telling the owner: it is the harness cycle, not a Slack event.
    A restart catches up through `search.messages` and rereads the threads of every open topic since the last tick, then the same catch-up runs every 5 minutes and on wake from sleep.
    The socket never says it went deaf: `listen` records its health in `tick.json`, and the board shows "Slack no longer delivers events" with the link to re-enable them (`slack.appId`). Only the owner can re-enable them, from the app's Event Subscriptions page.
-   If the socket refuses to open, the line says so and `bun $S watch` takes over by polling.
+   If the socket refuses to open, the line says so and `$STRATO watch` takes over by polling.
 5. Say in one line that it is armed.
 
 On the very first launch, history is marked as read.
 On later launches, messages that arrived during the stop come out on the first tick (48 h window).
-To catch up a period: `bun $S backlog --since 12h`, then handle each line as an event.
+To catch up a period: `$STRATO backlog --since 12h`, then handle each line as an event.
 
 Start a fresh master every morning: the state lives in the state folder, not in the master's context.
 
@@ -355,7 +358,7 @@ Beyond three reads, it delegates to the topic's session with `send`, or opens a 
 
 `watch` and `listen` do not output `tiers` messages (they explicitly target someone else) nor those of the bots in `slack.ignoreAuthors`: they are logged in `events.ndjson` for the digest.
 No line to the owner for `moi`, the echo of their own messages, including those the master just posted for them: relay to the session without a word.
-"what's new": `bun $S digest`, and show the result as is.
+"what's new": `$STRATO digest`, and show the result as is.
 The board is the owner's screen: gates, sessions, deliveries, deadlines and the listener's health are already there.
 The master writes to the owner only for:
 
@@ -387,13 +390,13 @@ Never copy the text of a Slack message into a shell command (`--text "…"`, `se
 
 The master reads the line and decides first, within its three-read budget:
 
-1. **The topic is over**: the person says it is settled, thanks, or closes ("all good", "solved", "thanks"). `bun $S close <letter>`, then `bun $S set <letter> summary="closed: <why, one sentence>"`; no line to the owner.
+1. **The topic is over**: the person says it is settled, thanks, or closes ("all good", "solved", "thanks"). `$STRATO close <letter>`, then `$STRATO set <letter> summary="closed: <why, one sentence>"`; no line to the owner.
 2. **A teammate took the topic**: a member of `slack.teammates` answers in the thread taking it over. `close`, `summary="taken by <first name>"`, no line to the owner.
 3. **The owner hands over** (`moi`: "X is looking", "not for me"): `close`, `summary="handed to <who>"`, without a word.
 4. **The owner answered on the substance** (`moi`, an answer, not a handover): relay to the session, which closes the tasks that are now handled. If a task held a draft for that same answer, `task <letter> done <id> note="answered in the thread"` right away (`listen` does it by itself when the posted text matches the draft).
 5. **Otherwise**: relay without asking.
 
-Relay: `bun $S relay <key> --kind <suite|moi> --msg <id>`, where `<id>` is the line's `msg=`.
+Relay: `$STRATO relay <key> --kind <suite|moi> --msg <id>`, where `<id>` is the line's `msg=`.
 
 - Exit code 0: the stopped session was resumed with the message.
 - Exit code 3: the session is alive. The output gives `SENDMESSAGE <name>` then the message: send it as is with the `SendMessage` tool to that name.
@@ -408,9 +411,9 @@ Decide, in this order:
 1. **Noise** (thanks, chatter, information with no action, message already handled elsewhere): ignore without a word.
    **Not for the owner** (the message targets someone else by name, without a Slack mention the `tiers` filter would have seen): ignore without a word. The owner does not answer in place of the person targeted, even when they know the answer.
    **Taken by the team**: the team group (`slack.teamAlias`) means "someone from the team", not the owner. If a teammate from `slack.teammates` already answered in the thread, they own it: ignore, and close the topic if it was open.
-2. **Same problem as an open topic** (same customer, same ticket, same person on the same question, visible in `bun $S list`): `bun $S attach <letter> "<link>"`, then `bun $S relay <letter> --kind suite --msg <id>`, then one line to the owner so they can correct it.
+2. **Same problem as an open topic** (same customer, same ticket, same person on the same question, visible in `$STRATO list`): `$STRATO attach <letter> "<link>"`, then `$STRATO relay <letter> --kind suite --msg <id>`, then one line to the owner so they can correct it.
 3. **Doubtful attachment**: ask the owner in one line, with the most likely hypothesis.
-4. **Work request**: `bun $S open --msg <id> --title "<4 to 6 words>"`, no line to the owner: the topic shows up on the board.
+4. **Work request**: `$STRATO open --msg <id> --title "<4 to 6 words>"`, no line to the owner: the topic shows up on the board.
 
 To triage, the master may reread the thread (Slack MCP, `conversations_replies`), within its three-read budget.
 
@@ -425,15 +428,15 @@ Gate or blocked session: nothing to say, the board shows it in "Waiting on you".
 | The owner says | The master does |
 | --- | --- |
 | "A send", "A go" | Carries out card A's action (next section) |
-| "A ?" | `bun $S card A`, shown as is |
-| "A open", or a Slack link with "dive" | `bun $S dive A` with iTerm2; without it, give `claude attach <id>` or the session's name in claude.ai/code |
-| "A close" | `bun $S close A` |
-| "A attach <link>" | `bun $S attach A <link>`, then `send A` to tell the session |
-| "tell A to …" | `bun $S send A "[strato] …"` |
+| "A ?" | `$STRATO card A`, shown as is |
+| "A open", or a Slack link with "dive" | `$STRATO dive A` with iTerm2; without it, give `claude attach <id>` or the session's name in claude.ai/code |
+| "A close" | `$STRATO close A` |
+| "A attach <link>" | `$STRATO attach A <link>`, then `send A` to tell the session |
+| "tell A to …" | `$STRATO send A "[strato] …"` |
 | "this message belonged to A" | `attach` and `send` to A, then `close` the topic opened by mistake |
-| "status", "what is waiting for me" | `bun $S gates` |
-| "what's new" | `bun $S digest` |
-| "list" | `bun $S list`, or `--all` for closed topics |
+| "status", "what is waiting for me" | `$STRATO gates` |
+| "what's new" | `$STRATO digest` |
+| "list" | `$STRATO list`, or `--all` for closed topics |
 | "recheck everything", or a `[strato] request · … full review` line | The full review (below) |
 
 A go without a letter ("ok send") while several cards have a pending action: ask which one, quoting the candidate letters, without executing anything.
@@ -442,14 +445,14 @@ A go without a letter while a single card has a pending action: name it in the c
 ## Carrying out a go
 
 The session prepares; the master executes when the go is given to the master. A go given in the session is carried out by the session.
-In shadow mode (`doctor` says "shadow mode: nothing is posted"), the master carries out no go either: it answers that shadow mode is on and that `bun $S setup --live` turns it off.
+In shadow mode (`doctor` says "shadow mode: nothing is posted"), the master carries out no go either: it answers that shadow mode is on and that `$STRATO setup --live` turns it off.
 
-1. `bun $S card A` to reread the open tasks: the exact action of the task the go is about, and its draft if there is one (`draft` is what goes out, as is, to `draftTo`). A go without a task id while several tasks are open: ask which one.
+1. `$STRATO card A` to reread the open tasks: the exact action of the task the go is about, and its draft if there is one (`draft` is what goes out, as is, to `draftTo`). A go without a task id while several tasks are open: ask which one.
    If the owner has not seen that exact text in this conversation, show it and wait for their go on that text.
 2. Recheck the time-sensitive facts, within the three-read budget: the deployment or status the action relies on, and that nobody answered in the thread since the preparation.
 3. If a fact changed: execute nothing, tell the owner in one line, and send the topic back to its session with `send`.
 4. Otherwise, carry out the action as written in the card: Slack message in the given thread, ticket, command.
-5. `bun $S task A done <id> note="<link of what went out>"`, then `bun $S set A status=<waiting|closed> next="…" summary="…"`, then one line to the owner with the link of what went out.
+5. `$STRATO task A done <id> note="<link of what went out>"`, then `$STRATO set A status=<waiting|closed> next="…" summary="…"`, then one line to the owner with the link of what went out.
 
 ## Full review
 
@@ -464,19 +467,19 @@ It is the only way from the board to the master: an interactive session does not
 The review exceeds the three-read budget on purpose.
 The master launches one sub-agent per source, in parallel, to keep its context clean, and each returns a list "what, link, what is missing".
 
-1. **Slack**: `bun $S backlog --since <window>`, then for each message: did the owner answer, does a topic carry it, did a teammate take it.
-2. **Topics**: `bun $S list --all` over the window. A closed topic whose thread moved after closing, an open topic whose session is stopped while its card says `working`, a `waiting` card whose expected answer arrived.
+1. **Slack**: `$STRATO backlog --since <window>`, then for each message: did the owner answer, does a topic carry it, did a teammate take it.
+2. **Topics**: `$STRATO list --all` over the window. A closed topic whose thread moved after closing, an open topic whose session is stopped while its card says `working`, a `waiting` card whose expected answer arrived.
 3. **Tickets**, if `tracker` is configured: tickets assigned to or created by the owner, updated in the window, and comments mentioning them.
 4. **Merge requests**, if `forge` is configured: `glab mr list --reviewer=@me` and `glab mr list --author=@me` in each repository of `forge.repos`.
 
 Then the master acts, never posting anything on Slack:
 
-- session to relaunch: `bun $S send <letter> "[strato] Review: <what was missed, with the link>"`;
+- session to relaunch: `$STRATO send <letter> "[strato] Review: <what was missed, with the link>"`;
 - closed topic to reopen, or request without a topic: `open`;
 - message that belongs to an open topic: `attach` then `send`.
 
 Report: one line to the owner per thing done or to decide, nothing about what was already in order.
-For a request from the board, finish with `bun $S revue-done <id> "<summary in one or two sentences>"`: the board shows it under its counter for a day.
+For a request from the board, finish with `$STRATO revue-done <id> "<summary in one or two sentences>"`: the board shows it under its counter for a day.
 Without a summary after 45 min, the board says the review "got no summary" and reopens the button.
 
 ## Requests and reminders from the board
@@ -489,7 +492,7 @@ Without a summary after 45 min, the board says the review "got no summary" and r
 
 Handle it as if the owner had typed it in this conversation, with the same rules (three-read budget, delegation, nothing sent without a go).
 A link alone is triaged like an incoming message: ignore, attach or open a topic.
-Finish with `bun $S revue-done <id> "<answer in one or two sentences>"`: the answer shows under the board's counter, that is where the owner reads it. Do not repeat it in the chat.
+Finish with `$STRATO revue-done <id> "<answer in one or two sentences>"`: the answer shows under the board's counter, that is where the owner reads it. Do not repeat it in the chat.
 
 **Reminder** (a pause "until…" reached its date):
 
@@ -502,8 +505,17 @@ It is the only notification the master sends outside an emergency.
 
 ## Updating Strato
 
-An installation is a git clone of the skill's repository; everything specific to it lives in the state folder, outside the clone.
-The version is `version` in `scripts/package.json`. There is no changelog file: "what's new" is read from the commit subjects, so commits follow `feat(scope): …`, `fix(scope): …`, `docs`, `test`, `chore`, `refactor`.
+An installation is either a binary (`strato version` says `binary`) or a git clone of the skill's repository; in both cases everything specific to it lives in the state folder, outside the code.
+The version is `version` in `scripts/package.json`, and a release is the tag `v<version>` on GitHub.
+
+**Binary.** `serve` asks GitHub for the latest release at startup and every 30 min (`api.github.com/repos/hugoblanc/strato/releases/latest`, no token).
+When it is newer than the installed version, "Update · N changes" lists the release's "What's new".
+"Update" downloads the binary of this platform and `SHA256SUMS`, checks the SHA-256, checks that the new binary starts (`version`), then swaps it in place: the new file is written next to the old one and renamed over it, and the old one is kept as `<binary>.previous`.
+To go back by hand: `mv ~/.local/bin/strato.previous ~/.local/bin/strato`.
+The rest (request to the master, restart of `serve`) is the same as below.
+After an update, `strato install-skill` rewrites this file if the new version changed it (the master is told to reread it either way).
+
+**Git clone.** There is no changelog file: "what's new" is read from the commit subjects, so commits follow `feat(scope): …`, `fix(scope): …`, `docs`, `test`, `chore`, `refactor`.
 
 The board's top bar shows the installed version (commit and branch in its tooltip).
 `serve` fetches the clone's upstream at startup and every 30 min (`git fetch`, never a prompt); a clone without upstream (a development checkout) shows the version only.
@@ -526,9 +538,9 @@ On that line, the master:
 
 1. rereads this SKILL.md in full, now: the protocol may have changed, and its previous reading is stale;
 2. rereads `<state>/local.md` if it exists;
-3. stops its Monitor and re-arms the listener with the same command (`bun $S listen` or `bun $S watch`): the running listener still executes the old code;
+3. stops its Monitor and re-arms the listener with the same command (`$STRATO listen` or `$STRATO watch`): the running listener still executes the old code;
 4. does not restart `serve`, which already restarted on the new code;
-5. finishes with `bun $S revue-done <id> "<one line: what it reloaded>"`, and says nothing else to the owner.
+5. finishes with `$STRATO revue-done <id> "<one line: what it reloaded>"`, and says nothing else to the owner.
 
 The update never touches the state folder, the topic sessions, or a clone with local changes.
 Topic sessions already running keep the prompts they were started with; the new policy applies to the next ones.

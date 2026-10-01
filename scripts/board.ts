@@ -1110,7 +1110,9 @@ function updateFailure(f: Extract<UpdateResult, { ok: false }>): string {
           ? t("board.update.failed.installFailed", { from })
           : f.reason === "pullFailed"
             ? t("board.update.failed.pullFailed")
-            : t("board.update.failed.noUpstream");
+            : f.reason === "noUpstream"
+              ? t("board.update.failed.noUpstream")
+              : t(`board.update.failed.${f.reason}`, { from });
   const output = f.output
     ? `<details><summary class="cursor-pointer select-none text-muted">${escapeHtml(t("board.update.failed.output"))}</summary><pre class="mt-1 max-h-48 overflow-auto whitespace-pre-wrap font-mono text-[11.5px] text-ink">${escapeHtml(f.output)}</pre></details>`
     : "";
@@ -1127,6 +1129,7 @@ export function versionControl(v: VersionState): string {
   const tipLines = [t(local.dirty.length ? "board.update.version.tipModified" : "board.update.version.tip", { version: versionLabel(local.version, "?"), sha: local.sha || "?", branch: local.branch || "?" })];
   if (check?.reason === "fetchFailed") tipLines.push(t("board.update.check.fetchFailed", { error: check.error ?? "" }));
   if (check?.reason === "diverged") tipLines.push(t("board.update.check.diverged", { upstream: check.upstream ?? "" }));
+  if (check?.reason === "noAsset") tipLines.push(t("board.update.check.noAsset", { error: check.error ?? "" }));
   const pill = `<span data-version class="rounded-full border border-line px-2 py-px font-mono text-[11.5px] text-muted" title="${escapeHtml(tipLines.join("\n"))}">${escapeHtml(versionLabel(local.version, local.sha))}</span>`;
   if (v.running)
     return `${pill}<button type="button" disabled aria-busy="true" data-update-running title="${escapeHtml(t("board.update.running.tip"))}" class="${BTN}"><span class="mr-1.5 inline-block h-3 w-3 animate-spin rounded-full border-2 border-current border-r-transparent" aria-hidden="true"></span>${escapeHtml(t("board.update.running"))}</button>`;
