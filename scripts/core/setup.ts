@@ -240,6 +240,16 @@ export function setEnvLine(content: string, key: string, value: string): string 
 
 // ------------------------------------------------------------------ check
 
+/** `claude agents --json` answered with a JSON array: this Claude Code can run and list background sessions. */
+export function backgroundSessionsOk(code: number, output: string): boolean {
+  if (code !== 0) return false;
+  try {
+    return Array.isArray(JSON.parse(output));
+  } catch {
+    return false;
+  }
+}
+
 /** User-token scopes the code calls, and what breaks without them. */
 export const SLACK_SCOPES: { scope: string; why: string }[] = [
   { scope: "search:read", why: "catch-up, watch, backlog" },

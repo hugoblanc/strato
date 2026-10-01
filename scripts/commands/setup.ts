@@ -20,7 +20,7 @@ import { CLAUDE_BIN, expandHome, F, fail, flags, localDay, out, readJson, run, S
 import { appToken, tokenCandidates } from "../app/slack.ts";
 import { createStateDir } from "../app/store.ts";
 import manifestYaml from "../../examples/slack-app-manifest.yaml" with { type: "text" };
-import { type CheckItem, checkReport, setEnvLine, tokenKindProblem, USER_TOKEN_WHERE, nextStep, type Progress, shortPath, slackAppLink, SLACK_SCOPES, type Detected, displayNameOf, firstNameOf, linearWorkspaces, localeFromEnv, mergeProfile, parseRemote, profileDiff, profileErrors, type Remote, type SearchMatch, slackWorkspaceFromUrl, suggestedConfig, ticketPrefixes, topChannels } from "../core/setup.ts";
+import { backgroundSessionsOk, type CheckItem, checkReport, setEnvLine, tokenKindProblem, USER_TOKEN_WHERE, nextStep, type Progress, shortPath, slackAppLink, SLACK_SCOPES, type Detected, displayNameOf, firstNameOf, linearWorkspaces, localeFromEnv, mergeProfile, parseRemote, profileDiff, profileErrors, type Remote, type SearchMatch, slackWorkspaceFromUrl, suggestedConfig, ticketPrefixes, topChannels } from "../core/setup.ts";
 import { missingSettings, NEW_INSTALL_PROFILE, resolveSettings, settings, useSettings } from "../core/settings.ts";
 
 export const SHADOW_REFUSAL = "shadow mode: nothing is posted (bun strato.ts setup --live turns it off)";
@@ -102,7 +102,17 @@ async function check() {
   items.push({ name: "bun", status: bunOk ? "ok" : "missing", detail: bunOk ? Bun.version : `${Bun.version}, 1.1 or later needed`, blocking: true });
 
   const claude = await run([CLAUDE_BIN, "--version"], 10_000).catch(() => ({ code: -1, out: "" }));
-  items.push(claude.code === 0 ? { name: "claude", status: "ok", detail: `${CLAUDE_BIN}${claude.out.trim() ? ` (${claude.out.trim()})` : ""}`, blocking: true } : { name: "claude", status: "missing", detail: "Claude Code not found: https://claude.com/claude-code", blocking: true });
+  const version = claude.out.trim();
+  if (claude.code !== 0) items.push({ name: "claude", status: "missing", detail: "Claude Code not found: https://claude.com/claude-code", blocking: true });
+  else {
+    // topics run as background sessions: a Claude Code without `claude agents` passes --version and fails at the first topic
+    const agents = await run([CLAUDE_BIN, "agents", "--json"], 5_000).catch(() => ({ code: -1, out: "" }));
+    items.push(
+      backgroundSessionsOk(agents.code, agents.out)
+        ? { name: "claude", status: "ok", detail: `${CLAUDE_BIN}${version ? ` (${version})` : ""}`, blocking: true }
+        : { name: "claude", status: "missing", detail: `Claude Code${version ? ` ${version}` : ""} has no background sessions (\`claude agents --json\` fails): update it with \`claude update\``, blocking: true },
+    );
+  }
 
   const probes = await probeTokens();
   const token = chosen(probes);

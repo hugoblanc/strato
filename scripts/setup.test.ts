@@ -7,7 +7,7 @@ import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "no
 import { join } from "node:path";
 import { TEST_SETTINGS } from "./test-setup.ts";
 import { actionCard, type BoardLine } from "./board.ts";
-import { checkReport, mergeProfile, setEnvLine, tokenKindProblem, nextStep, shortPath, slackAppLink, parseRemote, profileDiff, profileErrors, SLACK_SCOPES, slackWorkspaceFromUrl, suggestedConfig, ticketPrefixes, topChannels } from "./core/setup.ts";
+import { backgroundSessionsOk, checkReport, mergeProfile, setEnvLine, tokenKindProblem, nextStep, shortPath, slackAppLink, parseRemote, profileDiff, profileErrors, SLACK_SCOPES, slackWorkspaceFromUrl, suggestedConfig, ticketPrefixes, topChannels } from "./core/setup.ts";
 import { missingSettings, resolveSettings, useSettings } from "./core/settings.ts";
 import { workerPrompt } from "./policy/prompts.ts";
 import { CLI, cleanupRigs, cli, KEY, LINK, SCRIPTS, lines, postBoard, readSujets, type Rig, rig, run, startServe, sujet, writeSujets } from "./test-rig.ts";
@@ -237,6 +237,18 @@ describe("setup --check", () => {
     const res = await setupWith(r, ["--check"], withSlack(r, { STRATO_SLACK_TOKEN: "xoxb-acme-fake-0000" }));
     expect(res.code).toBe(1);
     expect(res.out).toContain("MISS  slack     xoxb-…0000: xoxb- is the Bot User OAuth Token");
+  }, 20_000);
+
+  test("a Claude Code without background sessions is a blocking miss (O18)", async () => {
+    expect(backgroundSessionsOk(0, "[]")).toBe(true);
+    expect(backgroundSessionsOk(0, '[{"id":"s1"}]')).toBe(true);
+    expect(backgroundSessionsOk(1, "[]")).toBe(false);
+    expect(backgroundSessionsOk(0, "error: unknown command 'agents'")).toBe(false);
+    const r = rig();
+    writeFileSync(join(r.dir, "bin", "claude"), `#!/bin/sh\nif [ "$1" = "--version" ]; then echo "1.0.0 (Claude Code)"; exit 0; fi\necho "error: unknown command 'agents'" >&2\nexit 1\n`);
+    const res = await cli(r, ["setup", "--check"]);
+    expect(res.out).toContain("MISS  claude    Claude Code 1.0.0 (Claude Code) has no background sessions (`claude agents --json` fails): update it with `claude update` [blocking]");
+    expect(res.out).toContain("Next: install or update Claude Code");
   }, 20_000);
 
   test("an empty profile lists what to fill in", async () => {
