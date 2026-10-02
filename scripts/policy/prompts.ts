@@ -4,6 +4,7 @@ import { COMPILED, commandForEntry } from "../app/self.ts";
 import { locale } from "../core/i18n.ts";
 import { parseKey } from "../core/keys.ts";
 import { actsOnThreads, checkedLink, descriptorOf, englishOf, readsThreads } from "../core/links.ts";
+import { type Role, roleOf, roleSections } from "../core/roles.ts";
 import { ownerForms, settings } from "../core/settings.ts";
 import { draftReaderOf } from "../core/targets.ts";
 import { oneLine, untrusted } from "../core/text.ts";
@@ -16,14 +17,16 @@ import type { Task } from "../core/tasks.ts";
  * The policy of the work sessions: what they do with a message, how they write the card, what waits for a go.
  * It lives in Markdown templates, not in code:
  * - `policy/defaults/*.md`: the policy shipped with Strato, neutral, in English;
- * - `<state>/policy/*.md`: the installation's own, which replaces a default file by file (in any language).
+ * - `<state>/policy/*.md`: the installation's own, which replaces a default file by file (in any language);
+ * - `policy/defaults/roles/<role>.md` and `<state>/policy/roles/<role>.md`: what a role adds (core/roles.ts).
  * The code keeps only the mechanics: the `set` and `task` commands that fill the card, and the variables.
  *
  * Syntax: `{{name}}`, and `{{#if name}}…{{/if}}` for a passage that only makes sense when the variable is set.
  * `{{#si name}}…{{/si}}` is the same block under its original French spelling, still read for existing profiles.
  * An unknown variable is an error, never a silent hole in a prompt.
  * Variables always provided: owner, team_group (empty without an alias), timezone, integration_branch, every entry of
- * `settings().policy`, and the words of the topic's tool (`TOPIC_VARS`). d_owner (« d'Alice ») and qu_owner
+ * `settings().policy`, the words of the topic's tool (`TOPIC_VARS`) and the fragments of the person's role
+ * (`ROLE_VARS`, read from `roles/<role>.md` in the same folders, the installation's first). d_owner (« d'Alice ») and qu_owner
  * (« qu'Alice ») are French elided forms of owner: the English defaults do not use them, they are still provided for
  * French profiles that do.
  */
@@ -41,6 +44,10 @@ import followUpMoiMd from "./defaults/follow-up-moi.md" with { type: "text" };
 import refreshMd from "./defaults/refresh.md" with { type: "text" };
 import ticketMd from "./defaults/ticket.md" with { type: "text" };
 import workerMd from "./defaults/worker.md" with { type: "text" };
+import roleAccountManagerMd from "./defaults/roles/account-manager.md" with { type: "text" };
+import roleManagerMd from "./defaults/roles/manager.md" with { type: "text" };
+import roleOperationsMd from "./defaults/roles/operations.md" with { type: "text" };
+import roleSupportMd from "./defaults/roles/support.md" with { type: "text" };
 
 /**
  * The known templates, one `<name>.md` file each. The French suffixes (moi = me, coequipier = teammate,
@@ -78,6 +85,17 @@ export const EMBEDDED_DEFAULTS: Record<PolicyTemplate, string> = {
   refresh: refreshMd,
 };
 
+/**
+ * The shipped role files (`policy/defaults/roles/<role>.md`), embedded like the templates. The developer role has none:
+ * its prompts are the shipped templates, byte for byte.
+ */
+export const EMBEDDED_ROLES: Partial<Record<Role, string>> = {
+  support: roleSupportMd,
+  operations: roleOperationsMd,
+  "account-manager": roleAccountManagerMd,
+  manager: roleManagerMd,
+};
+
 /** A template file of one folder, or null; the defaults folder is the embedded copy inside a binary. */
 function readTemplate(dir: string, name: PolicyTemplate): string | null {
   if (dir === DEFAULT_POLICY_DIR && COMPILED) return EMBEDDED_DEFAULTS[name];
@@ -93,6 +111,31 @@ let policyDirs: string[] = [DEFAULT_POLICY_DIR];
 /** Policy folders of the installation, from highest to lowest priority; the defaults always come last. */
 export function usePolicyDirs(dirs: string[]): void {
   policyDirs = [...dirs, DEFAULT_POLICY_DIR];
+}
+
+/** A role file of one folder (`<dir>/roles/<role>.md`), or null. */
+function readRole(dir: string, role: Role): string | null {
+  if (dir === DEFAULT_POLICY_DIR && COMPILED) return EMBEDDED_ROLES[role] ?? null;
+  try {
+    return readFileSync(join(dir, "roles", `${role}.md`), "utf8");
+  } catch {
+    return null;
+  }
+}
+
+/** The role file in force, from the installation's `policy/roles/` first, else the shipped one, else null. */
+function loadRole(role: Role): string | null {
+  for (const dir of policyDirs) {
+    const text = readRole(dir, role);
+    if (text !== null) return text;
+  }
+  return null;
+}
+
+/** The folder the role file in force comes from, for `doctor`; null when the role has none (the developer role). */
+export function roleSource(role: Role): string | null {
+  for (const dir of policyDirs) if (readRole(dir, role) !== null) return dir;
+  return null;
 }
 
 /** The folder a template comes from, for `doctor`. */
@@ -169,8 +212,16 @@ export const TOPIC_VARS = [
 ] as const;
 export type TopicVar = (typeof TOPIC_VARS)[number];
 
+/**
+ * The fragments of the person's role (core/roles.ts): `role_rules` (what a session does with a topic in this job) and
+ * `role_tone` (how its drafts sound), the `## rules` and `## tone` sections of the role file in force. Reserved and
+ * always defined like `TOPIC_VARS`; empty for the developer role, whose prompts stay the shipped ones.
+ */
+export const ROLE_VARS = ["role_rules", "role_tone"] as const;
+export type RoleVar = (typeof ROLE_VARS)[number];
+
 /** The `policy` variables of the profile that are named like a variable the code sets: they are ignored. */
-export const shadowedPolicyNames = (policy: Record<string, string>): string[] => Object.keys(policy).filter((k) => (TOPIC_VARS as readonly string[]).includes(k));
+export const shadowedPolicyNames = (policy: Record<string, string>): string[] => Object.keys(policy).filter((k) => (TOPIC_VARS as readonly string[]).includes(k) || (ROLE_VARS as readonly string[]).includes(k));
 
 /** The command a session runs to read one key's thread, or "" when Strato cannot read it. */
 function contextCommand(key: string, script: string | undefined): string {
@@ -208,8 +259,8 @@ export function topicVars(key: string | null, script?: string): Record<TopicVar,
   };
 }
 
-/** The variables common to all templates. `settings().policy` may replace one or add some, never a `TOPIC_VARS` one. */
-export function baseVars(): Record<string, string> {
+/** The variables a role file reads: every base variable but the role's own fragments. */
+function varsBeforeRole(): Record<string, string> {
   const s = settings();
   return {
     ...ownerForms(),
@@ -220,6 +271,39 @@ export function baseVars(): Record<string, string> {
     ...s.policy,
     ...topicVars(null),
   };
+}
+
+/**
+ * The fragments of `role` (the profile's by default), rendered with the base variables: a role file may name
+ * `{{owner}}`, and an unknown variable in it is an error, as in a template. Both are empty when the role has no file.
+ */
+export function roleVars(role: Role = roleOf(), vars: Record<string, string> = varsBeforeRole()): Record<RoleVar, string> {
+  const text = loadRole(role);
+  if (text === null) return { role_rules: "", role_tone: "" };
+  const { rules, tone } = roleSections(text);
+  const name = `roles/${role}.md`;
+  return { role_rules: rules ? renderTemplate(rules, vars, name) : "", role_tone: tone ? renderTemplate(tone, vars, name) : "" };
+}
+
+/** The variables common to all templates. `settings().policy` may replace one or add some, never a reserved one. */
+export function baseVars(): Record<string, string> {
+  const vars = varsBeforeRole();
+  return { ...vars, ...roleVars(roleOf(), vars) };
+}
+
+/** True when the template in force reads the variable, in a `{{name}}` or a `{{#if name}}` block. */
+const readsVar = (name: PolicyTemplate, v: string): boolean => new RegExp(`\\{\\{(?:#(?:if|si) )?${v}\\}\\}`).test(loadTemplate(name));
+
+/**
+ * Rule added by the code to the worker and ticket prompts when the person's role has fragments that the templates in
+ * force do not read: an override written before roles still gets them. Empty for the developer role, and whenever the
+ * templates read `{{role_rules}}` and the card rules `{{role_tone}}`.
+ */
+export function roleRule(template: PolicyTemplate): string {
+  const v = roleVars();
+  const rules = v.role_rules && !readsVar(template, "role_rules") ? `\n\n${v.role_rules}` : "";
+  const tone = v.role_tone && !readsVar("card-style", "role_tone") ? `\n\nTone of every draft: ${v.role_tone}` : "";
+  return `${rules}${tone}`;
 }
 
 /**
@@ -345,7 +429,7 @@ export function workerPrompt(title: string, key: string, t: Trigger, script: str
     agents_rule: agentsRule(),
     card_command: cardCommand(script, key, "working|waiting|closed", ["draft", "action", "decision", "question"], report, words),
   });
-  return `${prompt}${contextRule(key, script)}\n\n${untrustedRule()}${shadowRule()}`;
+  return `${prompt}${contextRule(key, script)}${roleRule("worker")}\n\n${untrustedRule()}${shadowRule()}`;
 }
 
 /** Session opened from a ticket: implement up to an MR into the integration branch, without merging anything. */
@@ -364,7 +448,7 @@ export function ticketPrompt(title: string, key: string, issueId: string, url: s
     agents_rule: agentsRule(),
     card_command: cardCommand(script, key, "working|closed", ["action", "decision", "question"], report, words),
   });
-  return `${prompt}${contextRule(key, script)}\n\n${untrustedRule()}${shadowRule()}`;
+  return `${prompt}${contextRule(key, script)}${roleRule("ticket")}\n\n${untrustedRule()}${shadowRule()}`;
 }
 
 /** A new message in a thread of the topic, relayed to its session: from the person served, a teammate, or someone else. */

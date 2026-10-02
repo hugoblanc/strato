@@ -28,7 +28,7 @@ import { applyUpdate, checkUpdates } from "./app/update.ts";
 import { rollbackBinary } from "./app/release.ts";
 import { installSkillCommand, UsageError } from "./commands/install-skill.ts";
 import { releaseTarget, STRATO_VERSION } from "./core/build-info.ts";
-import { EMBEDDED_DEFAULTS, POLICY_TEMPLATES, type PolicyTemplate } from "./policy/prompts.ts";
+import { EMBEDDED_DEFAULTS, EMBEDDED_ROLES, POLICY_TEMPLATES, type PolicyTemplate } from "./policy/prompts.ts";
 import itermMark from "./iterm-mark.zsh" with { type: "text" };
 
 export const USAGE = `strato: routes Slack to Claude Code work sessions, one topic per problem (one or more threads).
@@ -64,6 +64,7 @@ export const USAGE = `strato: routes Slack to Claude Code work sessions, one top
   strato version                        version, commit and install mode
   strato iterm-mark                     marks the master's iTerm2 tab (amber tab and badge)
   strato policy-default <template>      prints a default policy template, to copy into <state>/policy/
+                                        (roles/<role>: a role's fragments, to copy into <state>/policy/roles/)
   strato provider list | types | guide  external providers: where each stands, the SDK types and the guide for authors
   strato provider new <name> [--exec python] [--dir <folder>]   a provider that works as is, with fixtures and a README
   strato provider test <name | path> [--fixtures <dir>] [--trace] [--live [--account <name>]]   the offline conformance harness
@@ -224,8 +225,15 @@ switch (cmd) {
     await (await import("./commands/provider.ts")).provider(rest);
     break;
   case "policy-default": {
+    // roles/<role>: a role's shipped fragments, to copy into <state>/policy/roles/
+    const role = rest[0]?.startsWith("roles/") ? rest[0].slice("roles/".length) : null;
+    const shipped = role !== null && role in EMBEDDED_ROLES ? EMBEDDED_ROLES[role as keyof typeof EMBEDDED_ROLES] : undefined;
+    if (shipped !== undefined) {
+      process.stdout.write(shipped);
+      break;
+    }
     const name = rest[0] as PolicyTemplate;
-    if (!POLICY_TEMPLATES.includes(name)) fail(`usage: policy-default <${POLICY_TEMPLATES.join("|")}>`);
+    if (!POLICY_TEMPLATES.includes(name)) fail(`usage: policy-default <${POLICY_TEMPLATES.join("|")}|${Object.keys(EMBEDDED_ROLES).map((r) => `roles/${r}`).join("|")}>`);
     process.stdout.write(EMBEDDED_DEFAULTS[name]);
     break;
   }

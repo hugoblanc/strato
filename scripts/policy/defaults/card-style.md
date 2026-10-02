@@ -10,7 +10,8 @@ Writing the card and its tasks: {{owner}} reads them in ten seconds on the board
 - Uncertainty fits in three words, once, in unverified. Never "subject to".
 - No sentence about the card itself, no anticipated objection, no topic grafted on.
 - ask = the request of the task, proposal = what you propose for it: one sentence each. One task, one request.
-- draft = the message as it will go out, and nothing else: {{owner}} reads it on the board in a separate block and copies it as is. One line for a status, 1 to 3 lines for a question or an answer, a list only for several deliverables or a decision to frame.
+- draft = the message as it will go out, and nothing else: {{owner}} reads it on the board in a separate block and copies it as is. One line for a status, 1 to 3 lines for a question or an answer, a list only for several deliverables or a decision to frame.{{#if role_tone}}
+- Tone of every draft: {{role_tone}}{{/if}}
 - draftTo = where it goes{{#if topic_target_format}}, in one of these formats, because the board's Send button posts the draft itself on behalf of {{owner}} and guesses nothing: {{topic_target_format}}{{/if}}. If {{owner}} posted from the board, you receive the link of the message: do not post it again.
 - action, for a message: "post the draft in <draftTo>", without copying the text. An action that does more than post (merge then post) goes through the session on go: write every step in order.
 - mrs = every merge request you open or the topic depends on, "api!1042 | web!2671": the board reads their state in the forge (review, CI, integration, production) and answers "is it live?" without you. Do not copy their state into the card.

@@ -18,7 +18,8 @@ import { accountLines } from "./connect.ts";
 import { cliCommand, nextLine, short } from "./setup.ts";
 import { applyAssignments, attachThread, findSujet, parseAssignments, type Sujet, sujetKeys, type Trigger } from "../core/sujet.ts";
 import { reportFile, sessionName, truncate } from "../core/text.ts";
-import { DEFAULT_POLICY_DIR, followUpMessage, POLICY_TEMPLATES, policySource, shadowedPolicyNames, ticketPrompt, usesTopicWords, workerPrompt } from "../policy/prompts.ts";
+import { DEFAULT_POLICY_DIR, followUpMessage, POLICY_TEMPLATES, policySource, roleSource, shadowedPolicyNames, ticketPrompt, usesTopicWords, workerPrompt } from "../policy/prompts.ts";
+import { isRole, roleOf, ROLES, ticketTemplateOf } from "../core/roles.ts";
 
 // ------------------------------------------------------------------ commands
 
@@ -32,7 +33,13 @@ export async function doctor() {
   const cfg = s.slack;
   const missing = missingSettings(s);
   out(`profile  : ${short(F.config)}${missing.length ? ` · to fill in: ${missing.join(", ")}` : ""}`);
-  out(`owner    : ${s.owner.name} · workspace ${WORKSPACE}`);
+  // the role shows only when it is not the default: a developer's doctor prints what it always printed
+  const role = roleOf(s);
+  const roleNote =
+    s.owner.role !== undefined && !isRole(s.owner.role) ? t("cli.doctor.roleUnknown", { role: String(s.owner.role), roles: ROLES.join(", ") })
+    : role === "developer" ? ""
+    : t("cli.doctor.role", { role, file: roleSource(role) === F.policy ? short(join(F.policy, "roles", `${role}.md`)) : t("cli.doctor.roleShipped") });
+  out(`owner    : ${s.owner.name} · workspace ${WORKSPACE}${roleNote ? ` · ${roleNote}` : ""}`);
   const slackOk = await connectSlack(cfg);
   if (!slackOk) out(`slack    : ${NO_TOKEN(cfg)}`);
   else {
@@ -160,7 +167,8 @@ export async function open(args: string[]) {
     return;
   }
   // a ticket opened from a message (a mention, an assignment) is a request to answer; from its id alone, the implementation
-  const prompt = issueId && !kept ? ticketPrompt(title, key, issueId, permalink, SCRIPT, report) : workerPrompt(title, key, trigger, SCRIPT, report, settings().slack.teammates);
+  // for a role other than developer, a ticket is a request to handle, not code to write: the worker flow (core/roles.ts)
+  const prompt = issueId && !kept && ticketTemplateOf(roleOf()) === "ticket" ? ticketPrompt(title, key, issueId, permalink, SCRIPT, report) : workerPrompt(title, key, trigger, SCRIPT, report, settings().slack.teammates);
   // `workers.skipPermissions`: topic sessions run without permission prompts. The flag only applies at launch:
   // added to `--resume`, it creates a copy of the session; a bare resume keeps the mode.
   const permissionFlags = settings().workers.skipPermissions ? ["--dangerously-skip-permissions"] : [];

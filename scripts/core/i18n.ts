@@ -902,6 +902,52 @@ const en = {
   "cli.provider.new.test": "It works as is against its fixtures; check it now: {cmd}",
   "cli.provider.new.config": "Then add it to config.json:",
   "cli.provider.new.next": "read it and trust it in your own terminal ({trust}), then connect your account ({connect}). The guide: {guide}",
+  // board: wording without code delivery (a role other than developer, without a forge: core/roles.ts speaksCode)
+  "board.header.revue.tip.noCode": "Asks the master to go over everything you received (Slack, closed topics, tickets) and restart what was missed",
+  // cli: doctor's role
+  "cli.doctor.role": "role {role} ({file})",
+  "cli.doctor.roleShipped": "Strato's fragments",
+  "cli.doctor.roleUnknown": "owner.role \"{role}\" is not a role Strato knows ({roles}): the developer role applies",
+  // cli: setup --role
+  "cli.setup.role.list": "Roles (owner.role): what sessions do with a topic, the board's words, what the setup proposes",
+  "cli.setup.role.current": "current",
+  "cli.setup.role.usage": "usage: setup --role [<role>] ({roles})",
+  "cli.setup.role.proposals": "Proposed for this role, to accept or not (setup --write applies them):",
+  "cli.setup.role.noProposal": "Nothing to change in what Strato listens to for this role.",
+  "cli.setup.role.demo": "See it with fictional topics: {cmd}",
+  // roles (core/roles.ts): the name, what a session does, the interview's proposals, and the board words a role changes
+  "role.developer.name": "Developer",
+  "role.developer.what": "a topic is investigated in the code, a ticket implemented up to a merge request",
+  "role.support.name": "Support",
+  "role.support.what": "a topic is a customer to answer: context gathered, answer drafted, escalation to engineering as its own task",
+  "role.operations.name": "Operations",
+  "role.operations.what": "a topic is an incident or an operational task: runbook first, one go per production step",
+  "role.account-manager.name": "Account manager",
+  "role.account-manager.what": "a topic is a client request: context gathered, reply drafted, a reminder for every promise, CRM changes on your go",
+  "role.manager.name": "Manager",
+  "role.manager.what": "a topic is a decision: options with a recommendation, delegation proposed before doing the work",
+  "role.support.propose.watchChannels": "Watch your shared customer channels (slack.watchChannels): every message there becomes a topic, even without a mention.",
+  "role.operations.propose.ignoreAuthors": "Put your alert bots in slack.ignoreAuthors: their messages go to the digest instead of opening topics, even when they mention you or your group.",
+  "role.account-manager.propose.watchChannels": "Watch the channels you share with your clients (slack.watchChannels): every message there becomes a topic, even without a mention.",
+  "role.support.board.bloc.attend.empty": "No customer is waiting on your answer.",
+  "role.support.board.bloc.travail.empty": "No request being prepared.",
+  "role.support.board.bloc.quick.title": "Answers ready to send",
+  "role.support.board.bloc.quick.tip": "the answer or the action is written, one click is enough",
+  "role.support.board.gate.draft": "review the answer",
+  "role.operations.board.bloc.attend.empty": "No step is waiting on your go.",
+  "role.operations.board.bloc.travail.empty": "No incident or request in progress.",
+  "role.operations.board.bloc.quick.title": "Ready on your go",
+  "role.operations.board.bloc.quick.tip": "the update or the step is written, one click is enough",
+  "role.operations.board.gate.draft": "review the update",
+  "role.account-manager.board.bloc.attend.empty": "No client is waiting on you.",
+  "role.account-manager.board.bloc.travail.empty": "No client request being prepared.",
+  "role.account-manager.board.bloc.quick.title": "Replies ready to send",
+  "role.account-manager.board.bloc.quick.tip": "the reply or the change is written, one click is enough",
+  "role.account-manager.board.gate.draft": "review the reply",
+  "role.manager.board.bloc.attend.empty": "Nothing needs your call.",
+  "role.manager.board.bloc.quick.title": "Ready to approve",
+  "role.manager.board.bloc.decision.title": "Your calls",
+  "role.manager.board.bloc.decision.tip": "a choice framed with its options and a recommendation, or a session to unblock",
 } as const;
 
 export type MessageKey = keyof typeof en;
@@ -1757,6 +1803,48 @@ const fr: Record<MessageKey, string> = {
   "cli.provider.new.test": "Il marche tel quel avec ses fixtures ; vérifie-le tout de suite : {cmd}",
   "cli.provider.new.config": "Ajoute-le ensuite à config.json :",
   "cli.provider.new.next": "relis-le et approuve-le dans ton propre terminal ({trust}), puis connecte ton compte ({connect}). Le guide : {guide}",
+  "board.header.revue.tip.noCode": "Demande au master de repasser sur tout ce que tu as reçu (Slack, sujets fermés, tickets) et de relancer ce qui a été raté",
+  "cli.doctor.role": "rôle {role} ({file})",
+  "cli.doctor.roleShipped": "fragments de Strato",
+  "cli.doctor.roleUnknown": "owner.role « {role} » n'est pas un rôle que Strato connaît ({roles}) : le rôle developer s'applique",
+  "cli.setup.role.list": "Rôles (owner.role) : ce que les sessions font d'un sujet, les mots du board, ce que la configuration propose",
+  "cli.setup.role.current": "actuel",
+  "cli.setup.role.usage": "usage : setup --role [<rôle>] ({roles})",
+  "cli.setup.role.proposals": "Proposé pour ce rôle, à accepter ou non (setup --write les applique) :",
+  "cli.setup.role.noProposal": "Rien à changer dans ce que Strato écoute pour ce rôle.",
+  "cli.setup.role.demo": "Pour le voir avec des sujets fictifs : {cmd}",
+  "role.developer.name": "Développeur",
+  "role.developer.what": "un sujet s'enquête dans le code, un ticket s'implémente jusqu'à une merge request",
+  "role.support.name": "Support",
+  "role.support.what": "un sujet est un client à qui répondre : contexte rassemblé, réponse rédigée, escalade vers l'équipe technique en tâche à part",
+  "role.operations.name": "Opérations",
+  "role.operations.what": "un sujet est un incident ou une tâche d'exploitation : le runbook d'abord, un go par étape en production",
+  "role.account-manager.name": "Chargé de comptes",
+  "role.account-manager.what": "un sujet est une demande client : contexte rassemblé, réponse rédigée, un rappel pour chaque promesse, le CRM modifié sur ton go",
+  "role.manager.name": "Manager",
+  "role.manager.what": "un sujet est une décision : des options avec une recommandation, la délégation proposée avant de faire le travail",
+  "role.support.propose.watchChannels": "Écouter tes canaux partagés avec les clients (slack.watchChannels) : chaque message y devient un sujet, même sans mention.",
+  "role.operations.propose.ignoreAuthors": "Mettre tes bots d'alerte dans slack.ignoreAuthors : leurs messages vont au résumé au lieu d'ouvrir des sujets, même quand ils te mentionnent, toi ou ton groupe.",
+  "role.account-manager.propose.watchChannels": "Écouter les canaux partagés avec tes clients (slack.watchChannels) : chaque message y devient un sujet, même sans mention.",
+  "role.support.board.bloc.attend.empty": "Aucun client n'attend ta réponse.",
+  "role.support.board.bloc.travail.empty": "Aucune demande en préparation.",
+  "role.support.board.bloc.quick.title": "Réponses prêtes à partir",
+  "role.support.board.bloc.quick.tip": "la réponse ou l'action est écrite, un clic suffit",
+  "role.support.board.gate.draft": "relire la réponse",
+  "role.operations.board.bloc.attend.empty": "Aucune étape n'attend ton go.",
+  "role.operations.board.bloc.travail.empty": "Aucun incident ni demande en cours.",
+  "role.operations.board.bloc.quick.title": "Prêt sur ton go",
+  "role.operations.board.bloc.quick.tip": "le message ou l'étape est écrit, un clic suffit",
+  "role.operations.board.gate.draft": "relire le message",
+  "role.account-manager.board.bloc.attend.empty": "Aucun client n'attend après toi.",
+  "role.account-manager.board.bloc.travail.empty": "Aucune demande client en préparation.",
+  "role.account-manager.board.bloc.quick.title": "Réponses prêtes à partir",
+  "role.account-manager.board.bloc.quick.tip": "la réponse ou la modification est écrite, un clic suffit",
+  "role.account-manager.board.gate.draft": "relire la réponse",
+  "role.manager.board.bloc.attend.empty": "Rien n'attend ton arbitrage.",
+  "role.manager.board.bloc.quick.title": "Prêt à valider",
+  "role.manager.board.bloc.decision.title": "Tes arbitrages",
+  "role.manager.board.bloc.decision.tip": "un choix posé avec ses options et une recommandation, ou une session à débloquer",
 };
 
 export const DICTIONARIES: Record<Locale, Record<MessageKey, string>> = { en, fr };
@@ -1771,6 +1859,16 @@ export function locale(): Locale {
 export function t(key: MessageKey, vars: Record<string, string | number> = {}): string {
   const text = DICTIONARIES[locale()][key] ?? en[key];
   return text.replace(/\{(\w+)\}/g, (m, v: string) => (v in vars ? String(vars[v]) : m));
+}
+
+/**
+ * The text of `key` in the words of the person's role (`owner.role`): `role.<role>.<key>` when the role changes that
+ * word, else `key` itself. The developer role has no such key, so its board reads exactly as before roles existed.
+ */
+export function roleT(key: MessageKey, vars: Record<string, string | number> = {}): string {
+  const role = settings().owner.role;
+  const own = `role.${role}.${key}`;
+  return own in en ? t(own as MessageKey, vars) : t(key, vars);
 }
 
 /** The `board.js.*` strings of the current locale, for the board's client-side script. */

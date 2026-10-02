@@ -6,6 +6,7 @@ import { ACCOUNT_ID, PROVIDER_ID } from "../providers/api.ts";
 import type { ProviderDescriptor, SettingSpec } from "../providers/sdk.ts";
 import { locale, t } from "./i18n.ts";
 import { providerDescriptors, textOf } from "./links.ts";
+import { ROLES } from "./roles.ts";
 import { ACCOUNT_KEYS, DEFAULT_SETTINGS, TRACKER_LINK_FIELDS } from "./settings.ts";
 
 type Raw = Record<string, unknown>;
@@ -48,7 +49,7 @@ const FORGE_SHAPE = { kind: "gitlab", host: "", repos: {}, aliases: {}, iidRange
 /** Keys of the flat format older installations wrote at the root: still read, so still accepted. */
 const LEGACY_ROOT = new Set(["team", "me", "subteams", "watchChannels", "ignoreChannels", "ignoreAuthors", "teammates", "slackAppId", "interval", "skipPermissions"]);
 /** Enumerated values: anything else is a typo the code would silently ignore. */
-const ENUMS: Record<string, string[]> = { "ui.locale": ["en", "fr"], "tracker.kind": ["linear"], "forge.kind": ["gitlab"] };
+const ENUMS: Record<string, string[]> = { "ui.locale": ["en", "fr"], "tracker.kind": ["linear"], "forge.kind": ["gitlab"], "owner.role": [...ROLES] };
 
 const kindOf = (v: unknown) => (v === null ? "null" : Array.isArray(v) ? "array" : typeof v);
 

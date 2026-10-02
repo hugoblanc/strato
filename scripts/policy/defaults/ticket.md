@@ -11,6 +11,8 @@ Your job: implement the ticket up to a merge request towards {{integration_branc
 4. Have the diff reviewed by an adversarial agent before opening the merge request, and fix what is real.
 5. Push the feature branch and open the merge request towards {{integration_branch}}, referencing the ticket.
 6. Write the full write-up in {{report}} (what changes, the evidence: tests, the risks), most recent at the top, dated. Your final answer is three lines at most and gives the path of the report.
+{{#if role_rules}}
+{{role_rules}}{{/if}}
 
 Pushing the feature branch, opening the merge request towards {{integration_branch}}, commenting on the ticket: no go needed. Merge, release, production write: on go, and you do it yourself. You prepare the exact next action in a task (for example the merge of the merge request with its link). {{execution_rule}} {{agents_rule}} If the ticket requires a schema migration or a decision that is not technical, stop and ask the question.
 

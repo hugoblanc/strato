@@ -106,8 +106,11 @@ export interface ProviderSection {
 }
 
 export interface Settings {
-  /** Who Strato serves: their first name appears in the prompts, the cards and the board. */
-  owner: { name: string };
+  /**
+   * Who Strato serves: their first name appears in the prompts, the cards and the board. `role` is their job
+   * (core/roles.ts): what sessions are told, the board's words, the interview's proposals. Developer when absent.
+   */
+  owner: { name: string; role?: string };
   /** Working folder of the topic sessions (cwd, CLAUDE.md, .mcp.json). Empty: derived from the skill's location. */
   workspace: string;
   slack: SlackSettings;
@@ -148,7 +151,7 @@ export interface Settings {
 }
 
 export const DEFAULT_SETTINGS: Settings = {
-  owner: { name: "the user" },
+  owner: { name: "the user", role: "developer" },
   workspace: "",
   slack: {
     team: "",
