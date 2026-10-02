@@ -13,6 +13,8 @@
  *   setup --providers                the tools Strato can connect, their accounts and auth methods (commands/connect.ts)
  *   setup --connect [<tool>] [--account <name>] [--auth <method>] [--client-id <id>] [--print]
  *                                    connects an account in the person's own terminal (commands/connect.ts)
+ *   setup --role [<role>]            the roles and what each changes; with a role, writes owner.role and prints the
+ *                                    settings the role proposes (core/roles.ts)
  *
  * Slack is only read (auth.test, users.info, usergroups.list, search.messages). Every probe tolerates a missing scope,
  * a missing token and a missing network: `--detect` then returns what it could find, and says why the rest is missing.
@@ -28,6 +30,7 @@ import { appToken, appTokenRefusal, tokenCandidates } from "../app/slack.ts";
 import { backgroundSessionsOk, type CheckItem, checkReport, profileWarnings, type SlackFacts, tokenKindProblem, USER_TOKEN_WHERE, nextStep, type Progress, shortPath, SLACK_SCOPES, type Detected, displayNameOf, firstNameOf, linearWorkspaces, localeFromEnv, parseRemote, type Remote, type SearchMatch, slackWorkspaceFromUrl, suggestedConfig, ticketPrefixes, topChannels } from "../core/setup.ts";
 import { t } from "../core/i18n.ts";
 import { missingSettings, settings } from "../core/settings.ts";
+import { isRole, ROLE_PROPOSALS, roleOf, ROLES } from "../core/roles.ts";
 import { SLACK_APP_LINK, SLACK_TEAM_APP_LINK } from "../providers/slack/model.ts";
 import { accountCheckItems, accountDetectFields, connectCommand, listProviders, openInBrowser } from "./connect.ts";
 
@@ -45,6 +48,7 @@ export const SETUP_USAGE = [
   "  --connect [<tool>]      connect an account, in your own terminal: [--account <name>] [--auth <method>]",
   "                          [--client-id <id>] (OAuth) [--print] (show links without opening them)",
   "  --slack-app --team      create the Slack app a whole team shares, to connect with --auth oauth-pkce",
+  "  --role [<role>]         your job: developer (default), support, operations, account-manager, manager",
 ].join("\n");
 
 export const SHADOW_REFUSAL = "shadow mode: nothing is posted (`setup --live` turns it off)";
@@ -393,6 +397,30 @@ async function crossCheck() {
   for (const w of profileWarnings(s, facts)) out(`warn: ${w}`);
 }
 
+// ------------------------------------------------------------------ --role
+
+/**
+ * `--role` alone: the roles, one line each, the current one marked. `--role <role>`: writes `owner.role`, then prints
+ * the settings the role proposes, said with their consequence; the interview (SKILL.md) asks before applying any.
+ */
+function roleCommand(value: string) {
+  if (value === "true") {
+    const current = roleOf();
+    out(t("cli.setup.role.list"));
+    for (const r of ROLES) out(`  ${r.padEnd(16)} ${t(`role.${r}.name`)}: ${t(`role.${r}.what`)}${r === current ? ` (${t("cli.setup.role.current")})` : ""}`);
+    return;
+  }
+  if (!isRole(value)) fail(t("cli.setup.role.usage", { roles: ROLES.join(", ") }), 64);
+  writeProfile({ owner: { role: value } }, false, "--role");
+  const proposals = ROLE_PROPOSALS[value];
+  if (!proposals.length) out(t("cli.setup.role.noProposal"));
+  else {
+    out(t("cli.setup.role.proposals"));
+    for (const p of proposals) out(`  - ${t(p.says)}`);
+  }
+  out(t("cli.setup.role.demo", { cmd: `${cliCommand()} demo --role ${value}` }));
+}
+
 export async function setup(args: string[]) {
   const { opts } = flags(args);
   if (opts["slack-app"]) return slackApp(opts.print === "true", opts.team === "true");
@@ -403,6 +431,7 @@ export async function setup(args: string[]) {
   if (opts.check) return check();
   if (opts.detect) return detect();
   if (opts.live) return writeProfile({ workers: { shadow: false } }, false, "--live");
+  if (opts.role) return roleCommand(opts.role);
   if (opts.write && opts.write !== "true") {
     let incoming: unknown;
     try {

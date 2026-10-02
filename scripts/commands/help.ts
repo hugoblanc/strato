@@ -16,7 +16,7 @@ export function helpText(cli: string): string {
     "",
     "Getting started",
     rows([
-      ["demo", "the board with fictional topics, no Slack needed (--clean removes it)"],
+      ["demo", "the board with fictional topics, no Slack needed (--role <role> for your job, --clean removes it)"],
       ["setup --slack-app", "create the Slack app, its manifest filled in"],
       ["setup --token", "store your Slack user token (paste it, it is not shown)"],
       ["setup --providers", "the tools Strato can connect, and how each one signs in"],
