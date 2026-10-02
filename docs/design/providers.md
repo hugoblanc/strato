@@ -1897,6 +1897,8 @@ Each stage is one or more commits that leave `bun run check` green and the guard
 - **Compatibility.** Nothing loads without a `source` in the profile.
 - **Done when.** Check green; `strato provider new demo` then `strato provider test` passes with no edit, for both shapes.
 - **As built.** Where the stage departs from the text above, and why:
+  - Files: `providers/host/protocol.ts` (the pure rules of the exec protocol: framing, error mapping, timeouts, environment, restart gate), `providers/host/exec.ts`, `providers/host/module.ts`, `providers/host/trust.ts` (sources, folder hashes, the trust file), `providers/check.ts` (what is wrong in an external descriptor), `providers/external.ts` (the loader), `providers/harness/fake.ts` and `providers/harness/run.ts`, `providers/templates/` (the scaffold's texts and `scaffold.ts`), `commands/provider.ts`, and `docs/providers/authoring.md`.
+    `core/settings.ts` needed nothing: the seam already reads `source`.
   - Folders: a source's relative paths are read from `<state>/providers/<id>/`, the provider's own folder, where `provider new` writes a scaffold; `~` and absolute paths point anywhere else.
     The trust records live in one file, `<state>/providers/trusted.json` (`{ <id>: { sha256, source, descriptor, at } }`), not in `<state>/providers/<id>/trusted.json`: that folder is now the provider's code, whose hash the record pins.
     A record also keeps the source it was given for: the same folder reached by another source line is not trusted.
@@ -1929,6 +1931,8 @@ Each stage is one or more commits that leave `bun run check` green and the guard
     The scaffold's tool is `<id>.example`, a tracker with two items, a thread, and a `comment` with undo.
   - An exec provider's failed `http.fetch` (a timeout, a network failure) answers -32000 with `data: { code: "timeout" | "network", retryable: true }`, which a provider passes on as is.
   - The author guide is `docs/providers/authoring.md`, embedded in the binary for `strato provider guide`.
+  - A provider whose id is also the folder name of another tool's account (`slack-partners` next to the Slack account `partners`) is refused: both would live in `<state>/providers/slack-partners/`.
+  - Left for later: the board's Connect page with Trust; `provider record`; `setup --connect` of an external provider is wired through the same descriptor steps but not covered by a test (it needs a terminal); `doctor` and the board reading the exec processes' `health`; a revocation command for a trust (removing the entry from `trusted.json` by hand works).
 
 ### proof
 

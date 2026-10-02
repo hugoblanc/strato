@@ -220,6 +220,29 @@ What Strato does with it:
 - **Limits.** One poll costs one or two requests; Strato reads Linear's rate limit headers and waits for the reset when the hour's budget is spent.
 - **The desktop app.** Set `"desktopApp": true` on the account to open Linear links from the board in Linear's desktop app (`linear://`).
 
+## 3c. Connect another tool with a provider
+
+A tool Strato does not know (a ticket tracker, a CRM, a support desk) connects through a provider: a TypeScript module, or a program in any language speaking a small JSON-RPC protocol.
+Strato loads it from disk at runtime, without recompiling the binary.
+
+```bash
+strato provider guide                    # how a provider works, for whoever writes it
+strato provider new tickets              # a working scaffold in <state>/providers/tickets/ (--exec python for a Python one)
+strato provider test tickets-folder      # the offline conformance harness: fake answers from fixtures/, no network
+```
+
+Then, in your own terminal:
+
+1. Name it in `config.json`: `"providers": { "tickets": { "source": { "module": "provider.ts" } } }`.
+   A relative path is read from `<state>/providers/tickets/`; an executable is `{ "exec": ["python3", "provider.py"] }`.
+2. Read its code, then trust it: `strato provider trust tickets` shows its folder, its SHA-256, what it can reach and do, and records the hash on a typed `yes`.
+   A change to any file of that folder (but `fixtures/`) needs a new trust; until then Strato does not load it.
+3. Connect your account: `strato setup --connect tickets`.
+
+`strato provider list` and `strato doctor` say where each provider stands.
+A provider runs with your privileges, like any command-line tool you install; its writes still go through the board's Go, and nothing goes out in shadow mode.
+A work session can never trust, scaffold nor run provider code.
+
 ## 4. Run the setup interview
 
 From the project folder:
@@ -315,4 +338,5 @@ Strato acts with your identity. Read this before going live.
 - **The board acts in your name.** From `http://127.0.0.1:4343/board` you can post a draft as you, send a go that makes a session carry out an action, stop sessions and open terminals. It listens on 127.0.0.1 only and checks the `Host` and `Origin` of every request, but has no authentication: any process on your machine could do the same. Do not expose the port, and do not run Strato on a shared machine.
 - **Your Slack token.** It reads everything you can read and posts as you. Keep it out of git (`.claude/settings.local.json` is ignored by default; check your `.gitignore` for `.mcp.json`).
 - **`workers.skipPermissions`.** With `true`, every work session runs with `--dangerously-skip-permissions`: it can run any command and write any file in your workspace without asking, while reading text written by third parties (Slack messages, tickets). Prompt injection becomes a real risk. Keep it off unless your workspace has nothing you could not lose, and prefer `workers.allow` for the few read-only tools you want without prompts.
+- **External providers.** A provider you add runs with your privileges: your files and your network. Strato loads only the ones `config.json` names, and only once you trusted their folder as it is (`strato provider trust`, in your own terminal); their writes still go through the board's Go.
 - **What always waits for your go**, whatever the profile: a message on your behalf, and a production write.
