@@ -32,10 +32,11 @@ Type the command in full every time (`$STRATO doctor` is `strato doctor`, or `bu
 | --- | --- |
 | `$STRATO doctor` | The loaded profile, what is missing, the Slack token, the socket, `claude agents`, the state, the policy, the locale |
 | `$STRATO setup --check \| --detect \| --write <file.json> [--force] \| --live \| --slack-app [--team] \| --token \| --app-token` | The guided setup (below, "Setup"): prerequisites, what can be guessed, writing the profile, leaving shadow mode |
+| `$STRATO setup --role [<role>]` | The owner's job: alone, the roles and what each changes; with a role, writes `owner.role` and prints the settings that role proposes, each with its consequence |
 | `$STRATO setup --providers` | The tools Strato can connect, the accounts of the profile, and each tool's sign-in methods with their trade-off, the default first |
 | `$STRATO setup --connect [<tool>] [--account <name>] [--auth <method>] [--client-id <id>] [--print]` | Connects an account, **in the owner's own terminal only** (it refuses a session or a pipe): opens the pages, reads the secrets without echo or runs OAuth with PKCE in the browser, verifies, stores the secrets (600) and writes the account into `config.json` |
 | `$STRATO provider list \| guide \| new <name> \| test <name \| path> \| trust <name>` | External providers, tools Strato does not know, added by the owner: where each stands, the author guide, a working scaffold, the offline conformance harness, trusting a provider's folder. `new`, `test` and `trust` refuse a work session, and `trust` runs **in the owner's own terminal only**: suggest the command, never run it for them |
-| `$STRATO demo [--port 4394] [--locale en\|fr] \| --clean` | A board of fictional Acme topics in a throwaway folder, no Slack, no session: to show what Strato does before any setup |
+| `$STRATO demo [--port 4394] [--locale en\|fr] [--role <role>] \| --clean` | A board of fictional Acme topics in a throwaway folder, no Slack, no session: to show what Strato does before any setup. `--role` shows the topics of that job |
 | `$STRATO listen` | Socket Mode listener, to run through `Monitor`: one line per event to handle, received by WebSocket. The normal mode |
 | `$STRATO watch` | The same by polling every `slack.pollInterval` seconds. Fallback when the socket does not open |
 | `$STRATO backlog --since 12h` | Recent relevant messages, to catch up |
@@ -47,7 +48,7 @@ Type the command in full every time (`$STRATO doctor` is `strato doctor`, or `bu
 | `$STRATO dive <topic \| Slack link>` | Opens the topic's session in a new iTerm2 tab of the window the command runs from, and writes its sheet (card, full Slack threads, report) in `<state>/dive/`. `--window` uses the dive window, `--no-tab` only writes the sheet |
 | `$STRATO serve [--port N]` | Local server of the board and of the iTerm2 panel, on 127.0.0.1 only, port `ui.port` by default |
 | `$STRATO open --msg <id> --title …` | Opens a topic, gives it a letter and starts its work session |
-| `$STRATO open <TICKET-123> --title …` | Opens an implementation topic from a tracker ticket: worktree, tests, adversarial review, merge request towards the integration branch |
+| `$STRATO open <TICKET-123> --title …` | Opens a topic from a tracker ticket. For the developer role, an implementation topic: worktree, tests, adversarial review, merge request towards the integration branch. For any other role, a request to handle, like a message |
 | `$STRATO attach <topic> <Slack link \| TICKET-123>` | Attaches another thread or a ticket to the topic |
 | `$STRATO relay <topic> --kind suite\|moi --msg <id>` | Relays a message of one of the topic's threads to its session |
 | `$STRATO send <topic> <message…>` | Instruction or information from the master to the topic's session |
@@ -82,6 +83,7 @@ The state folder holds:
 | Section | What it holds |
 | --- | --- |
 | `owner.name` | The first name of the person served, read in prompts, cards and the board |
+| `owner.role` | Their job: `developer` (default, also when absent), `support`, `operations`, `account-manager` or `manager`. It changes what sessions are told (`policy/roles/<role>.md`), the board's words, and what the interview proposes; never triage, the gate or shadow mode |
 | `workspace` | The work sessions' folder (cwd, CLAUDE.md, `.mcp.json`) |
 | `slack` | `team` (name returned by `auth.test`), `workspace` (subdomain), `me`, `subteams`, `teamAlias` (the team group as written, "@support"), `watchChannels`, `ignoreChannels`, `ignoreAuthors`, `teammates`, `appId`, `appTokenFile`, `userTokenFile` (written by `setup --token` and `setup --connect slack`), `pollInterval`, `clientId` (the team's Slack app, for `--auth oauth-pkce`) |
 | `providers` | Accounts beyond the main Slack workspace (`slack`) and the Linear links (`tracker`), by tool: `providers.slack.accounts.<name>` with `auth`, `team`, `workspace`, `me`… Written by `setup --connect <tool> --account <name>`; secrets never go there. An external provider also has `source` (`{ "module": "provider.ts" }` or `{ "exec": [...] }`, relative to `<state>/providers/<name>/`), loaded only once the owner trusted it |
@@ -101,6 +103,8 @@ The state folder holds:
 `scripts/policy/defaults/` holds a neutral policy in English; a file with the same name in `<state>/policy/` replaces it, file by file, in any language.
 `doctor` says which templates the installation replaces.
 Variables always provided: `owner`, `team_group`, `timezone`, `integration_branch`; `d_owner` and `qu_owner` (French elided forms) stay available for French templates.
+The role's fragments are `{{role_rules}}` and `{{role_tone}}`, the `## rules` and `## tone` sections of `policy/roles/<role>.md` (shipped in `scripts/policy/defaults/roles/`, replaced by a file of the same name in `<state>/policy/roles/`); both are empty for the developer role.
+A template overridden before roles existed still gets them: the code appends them to the prompt.
 `{{#if name}}…{{/if}}` keeps a passage only when the variable is set (`{{#si}}…{{/si}}` is the same block under its former spelling).
 An unknown variable is an error.
 
@@ -119,9 +123,26 @@ The goal is the profile of `examples/profile/` (read both files once before star
 - Talk in the language the owner writes in; write `config.json`, `local.md` and every file in the language they choose for `local.md` (English by default).
 - Rerun on an existing installation: start from the current `config.json` and `local.md`, and only revisit what the owner wants to change.
 
-### 0. Your tools
+### 0. Your job, then your tools
 
-Before anything else, ask which tools requests reach the owner through, and which tools they answer in, with your guess pre-filled from what you see (a Slack MCP server in `.mcp.json`, a Linear MCP server, git remotes).
+Before anything else, ask the owner what their job is, in their own words, with your guess pre-filled when you can tell (a code repository in the workspace suggests a developer).
+Map the answer to a role, and say which one in a sentence:
+
+| Role | For | A session handles a request by |
+| --- | --- | --- |
+| `developer` (default) | Software developers | Investigating in the code; a ticket opened by id is implemented up to a merge request |
+| `support` | Customer support | Drafting the answer the customer needs; an escalation to engineering is its own task |
+| `operations` | Operations, on-call, IT | Following the runbook; every production step is its own task |
+| `account-manager` | Account management, sales | Gathering the client's history and drafting the reply; a reminder for every promise; CRM changes behind a go |
+| `manager` | Team leads, managers, generalists | Framing decisions as options with a recommendation; proposing delegation |
+
+A job that fits none takes the closest role; a developer needs nothing written.
+Run `$STRATO setup --role <role>`: it writes `owner.role` and prints the settings that role proposes, each with its consequence.
+Keep them for block e, ask about each one there, and apply only the ones the owner accepts.
+A role other than developer means no forge question in block f unless the owner names one, and the board then never mentions merge requests or branches.
+To show the owner what to expect before going further: `$STRATO demo --role <role>`.
+
+Then ask which tools requests reach the owner through, and which tools they answer in, with your guess pre-filled from what you see (a Slack MCP server in `.mcp.json`, a Linear MCP server, git remotes).
 Set up only the tools they name, and skip every question about the others: no tracker question for someone without tickets, no forge question for someone without merge requests.
 
 | Tool | What Strato does with it | Set up in |
@@ -172,11 +193,11 @@ Each block says where the answer goes.
 
 | Block | Ask | Goes to |
 | --- | --- | --- |
-| **a. Who you are** | Role, scope, what you are responsible for, what usually lands on you. Confirm the first name | `owner.name`; `local.md` "Who I am" |
+| **a. Who you are** | Scope, what you are responsible for, what usually lands on you. Confirm the first name. The job is already set (step 0) | `owner.name`; `local.md` "Who I am" |
 | **b. Your team** | Teammates and their role; the team's Slack group (confirm the detected one, or pick among `candidates`). Is a mention of the group a mention of you, or "someone from the team"? | `slack.subteams`, `slack.teamAlias`, `slack.teammates` (display names as Slack shows them); `local.md` "My team" |
 | **c. Who owns what around you** | The neighbouring areas and their owner, so a session can say "not for you, it's X". Propose a skeleton from the channels and groups found; the owner fills names | `local.md` "Ownership map" (a table: area, owner, where to send people) |
 | **d. Never without your go** | Two things are always behind a go (a message on your behalf, a production write). Anything else? Customers, partners, executive channels, access grants, closing other people's tickets | `local.md` "Never without my go" |
-| **e. What to listen to** | Which of the active channels are requests for you (every message counts)? Channels never to raise? Bots that post in your channels and are noise? | `slack.watchChannels`, `slack.ignoreChannels` (channel IDs from `candidates`), `slack.ignoreAuthors` (display names) |
+| **e. What to listen to** | Which of the active channels are requests for you (every message counts)? Channels never to raise? Bots that post in your channels and are noise? Ask here about each setting `setup --role` proposed (support and account-manager: the channels shared with customers; operations: the alert bots, whose mentions then go to the digest too) | `slack.watchChannels`, `slack.ignoreChannels` (channel IDs from `candidates`), `slack.ignoreAuthors` (display names) |
 | **f. Your other tools** | Only for the tools named in step 0. Linear: confirm workspace and prefixes, then offer to connect it (the owner runs `$STRATO setup --connect linear` in their own terminal: an API key, or OAuth with PKCE), and ask which teams' new issues are requests for them (`watchTeams`) and which integrations are noise (`ignoreAuthors`). GitLab: confirm repositories, short names, integration and release branches (GitHub: not wired, `forge: null`). A tool not named stays `null`, without a question | `tracker`, `providers.linear.accounts.default`, `forge` |
 | **g. Session permissions** | Which read-only tools sessions may use without asking (tracker reads, read-only database). Then explain `skipPermissions` in two sentences: sessions would run any command and write any file without asking, while reading text written by third parties, so a hostile message could steer them. Recommend `false` | `workers.allow`, `workers.skipPermissions` |
 | **h. Language and tone** | Language of the board and of your messages (`en` or `fr`). Tone of drafts in a sentence or two. A voice file (how you write)? | `ui.locale`; `local.md` "Notes"; voice file: see below |

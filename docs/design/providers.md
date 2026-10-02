@@ -30,7 +30,7 @@ Two audiences share the same loop.
 | Audience | Typical topic | Where it ends |
 | --- | --- | --- |
 | Developers | a question in a channel, a bug report, a ticket to implement | a reply, a ticket comment, a merge request towards the integration branch, a merge on Go |
-| Non-developers: support, operations, managers, and later account managers and recruiters | a customer question, an incident, an approval, a follow-up, a candidate | a reply, a ticket update, a status change, a decision recorded |
+| Non-developers: support, operations, account managers, managers, and later recruiters | a customer question, an incident, an approval, a follow-up, a candidate | a reply, a ticket update, a status change, a decision recorded |
 
 Section 14 says which of them the built-in providers serve, and which wait for a mail provider.
 
@@ -83,7 +83,7 @@ Claude Cowork and any other host are out of scope for this design.
 | **Gate** | The single function in the core that every action goes through, plus the checks the command line makes on who calls it. It checks shadow mode, the caller, the Go, the exact content and the task, then calls the provider, logs the result and offers the undo. |
 | **Go** | The person's approval of one task's exact content: a click on the board, or, when `workers.goFrom` allows it, a "go" to the master that the master turns into `strato act` with the content hash. A Go on a task the session carries out is recorded on the task. |
 | **Strict and legacy** | The two gate modes (`workers.gate`): strict enforces the invariant in code for every path; legacy keeps an older installation's behavior until the person turns strict on. Section 8.8. |
-| **Role** | The kind of work the person does (developer, support, operations, manager; later account manager and recruiter). It selects template fragments, board vocabulary, the interview's proposals and the demo. |
+| **Role** | The kind of work the person does (developer, support, operations, account manager, manager; later recruiter). It selects template fragments, board vocabulary, the interview's proposals and the demo. |
 
 ## 3. Current state
 
@@ -1635,7 +1635,7 @@ A role is worth shipping only when the tools its people work in are providers: a
 | `support` | answer first, in the customer's tone; after each settled answer, the done marker in the same plan; an escalation to engineering is a separate task with its own Go | Slack; Linear for escalations | roles stage |
 | `operations` | runbook first; every production step a separate task; settling an incident is one plan: the reply, the done marker and the status change on the incident ticket | Slack and Linear | roles stage |
 | `manager` | decisions framed as options with a recommendation; delegation proposed before doing it | Slack | roles stage |
-| `account-manager` | every draft that promises something gets a follow-up task with a `due`; a CRM stage change is a `setStatus` behind a Go | a mail provider, then a CRM provider | after a mail provider |
+| `account-manager` | every draft that promises something gets a `due` entry for the promise; a CRM change is a task behind a Go (an action the session carries out today, a `setStatus` once a CRM provider exists) | Slack; a mail provider, then a CRM provider | roles stage |
 | `recruiter` | candidate messages as drafts, internal notes never in a draft; scheduling questions as tasks | a mail provider, then an applicant tracking provider | after a mail provider |
 
 Until a role ships, the interview does not offer it and it has no demo.
@@ -1975,11 +1975,28 @@ Each stage is one or more commits that leave `bun run check` green and the guard
 ### roles
 
 - **Scope.** `owner.role`, role fragments, board vocabulary, the interview's proposals per role, the demo per role, the interview's role question, for the roles the built-in providers serve: `developer`, `support`, `operations`, `manager`.
-- **Files.** New: `policy/roles/support.md`, `policy/roles/operations.md`, `policy/roles/manager.md`.
+- **Files.** New: `policy/roles/support.md`, `policy/roles/operations.md`, `policy/roles/manager.md` (built as `policy/defaults/roles/`, see As built).
   Changed: `policy/prompts.ts` (`role_rules`, `role_tone`, the template of `open <ticket>` per role), `core/settings.ts`, `core/setup.ts` (enum), `core/i18n.ts` (`role.*`), `board.ts`, `commands/demo.ts`, `SKILL.md`, `SETUP.md`.
 - **Tests.** The developer role renders byte-identical prompts to the shipped defaults; every shipped role renders every template; a role override in `<state>/policy/roles/` wins; i18n parity in both locales; a classifier test per role on its proposed settings; `demo --role support` serves its topics; block titles follow the role.
 - **Compatibility.** A profile without `owner.role` is a developer profile, unchanged.
 - **Done when.** Check green; the demo of each shipped role shows on the board in English and French.
+- **As built.** Where the stage departs from the text above, and why:
+  - `account-manager` ships with the four others (`core/roles.ts` `ROLES`): account managers receive most requests in Slack (shared customer channels, colleagues asking about a client), the proof stage gave a mail provider to start from, and a CRM change is already expressible as a `kind=action` task the session carries out on the Go, as a merge is today.
+    It becomes a `setStatus` behind the gate once a CRM provider exists. `recruiter` stays unshipped.
+  - The shipped role files live in `policy/defaults/roles/<role>.md`, so that `<state>/policy/roles/<role>.md` mirrors the layout of the defaults it replaces; they are embedded in the binary like the templates (`EMBEDDED_ROLES`), and `policy-default roles/<role>` prints one.
+    The developer role has no file, so its prompts are the shipped ones byte for byte; a person may still write `<state>/policy/roles/developer.md`, which is read the same way.
+  - A role file is rendered with the base variables (`{{owner}}`…), and an unknown variable in it is an error, as in a template.
+    Only `## rules` and `## tone` are read, headings case-insensitive; the rest of the file is for its reader.
+  - `worker.md` and `ticket.md` read `{{role_rules}}` after their numbered steps, and `card-style.md` reads `{{role_tone}}` as a last bullet of the draft rule, each inside `{{#if}}` so an empty fragment leaves the text unchanged.
+    A worker or ticket override that does not read them, or a card-style override that does not read `role_tone`, gets them appended by the code after the context rule (`roleRule`): the person's job applies whatever template they kept.
+  - Board vocabulary: `roleT` (`core/i18n.ts`) reads `role.<role>.<key>` when the role changes that word, else the shared key; only the words a role changes have a key (the quick and decision sub-blocks, the empty states of the waiting and working blocks, the draft task label).
+    The developer role has none, so its board renders as before.
+  - "No delivery words without a forge" applies to the roles other than developer (`speaksCode`): a developer without a forge kept "merge requests" in the review button's tip and the session's branch before roles existed, and keeps them.
+    For the other roles without a forge: the review tip drops merge requests, a session's branch is not shown, and the `merge` and `release` gates read as a plain go.
+  - The interview's proposals are data (`ROLE_PROPOSALS`), printed with their consequence by the new `setup --role <role>`, which also writes `owner.role`; `setup --role` alone lists the roles. SKILL.md step 0 asks the job before the tools, and block e asks about each proposal.
+  - Validation refuses an unknown `owner.role`; a hand-edited one reads as developer and `doctor` warns. `doctor` names a role other than developer on its owner line, and prints nothing new for a developer.
+  - The demo of each role serves Slack topics only, with the role's profile and proposals (`demo --role <role>`); the developer's demo is unchanged.
+  - Left for later: a role other than developer still reads the card command's `mrs=` field and card-style's `mrs` bullet, which are harmless without a forge but are developer words in its prompts.
 
 ## 16. Risks and open questions
 

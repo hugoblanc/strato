@@ -14,6 +14,21 @@ At the end, your project holds a state folder `.strato/` with:
 A complete fictional profile lives in [`examples/profile/`](examples/profile/): Alice, lead of the Platform team at Acme.
 It is the shape the interview aims at.
 
+### Not a developer?
+
+You do not need git, GitLab, Bun or a code repository.
+The short path:
+
+1. Install the binary (section 2) and Claude Code.
+2. See what Strato would do for your job, with fictional topics: `strato demo --role support` (or `operations`, `account-manager`, `manager`).
+3. Connect Slack (section 3). If someone on your team already set up a Strato Slack app, ask them for its Client ID and use the OAuth option: no app to create.
+4. Run the interview (section 4). Its first question is your job; skip every question about trackers and code forges.
+5. Read the cards for a day in shadow mode, then go live (section 6).
+
+Your job sets `owner.role` in your profile; `strato setup --role` lists the roles and what each one changes, and `strato setup --role <role>` sets it.
+It changes what sessions do with a request (draft an answer, follow a runbook, frame a decision) and the words of the board.
+It never changes what needs your go: nothing leaves without your click.
+
 ## 1. Prerequisites
 
 | Tool | Needed for | Required |
@@ -256,14 +271,15 @@ claude -n strato "/strato setup"
 The master runs `setup --check`, then `setup --detect`, which guesses what it can without asking: your name, Slack ID and workspace, your Slack groups and their members, the channels you write in most, your git remotes and branches, the ticket prefixes in your commit messages, a Linear MCP server.
 It shows what it found, then asks only what is missing, in short blocks:
 
-1. who you are: role, scope, what you are responsible for;
-2. your team: teammates, their roles, the team's Slack group;
-3. the ownership map around you, so sessions can say "not for you, it's X";
-4. what never goes out without your go;
-5. channels to watch, bots to ignore;
-6. tracker and forge;
-7. session permissions, and the risk of `skipPermissions`;
-8. language of the board and tone of drafts.
+1. your job (developer, support, operations, account manager, manager), which sets `owner.role`, and what each role proposes for what Strato listens to;
+2. who you are: scope, what you are responsible for;
+3. your team: teammates, their roles, the team's Slack group;
+4. the ownership map around you, so sessions can say "not for you, it's X";
+5. what never goes out without your go;
+6. channels to watch, bots to ignore;
+7. tracker and forge;
+8. session permissions, and the risk of `skipPermissions`;
+9. language of the board and tone of drafts.
 
 It writes `config.json` with `setup --write`, drafts `local.md` for you to reread, then rehearses on the last 24 hours (`backlog --since 24h`, read only) to show what Strato would have raised, and tunes the filters with you.
 Finally it starts the board and the listener in **shadow mode**.
@@ -285,6 +301,7 @@ The example's Slack ids (`U_EXAMPLE_ALICE`, `C_EXAMPLE_REQUESTS`…) are placeho
 | Field | Effect |
 | --- | --- |
 | `owner.name` | Your first name, in prompts, cards and the board |
+| `owner.role` | Your job: `developer` (default), `support`, `operations`, `account-manager` or `manager`. What sessions do with a request, and the board's words |
 | `slack.me`, `slack.subteams` | What counts as "for you": a mention of you or of one of these groups |
 | `slack.teamAlias`, `slack.teammates` | A mention of the group means "someone from the team"; if a teammate answers in a thread, the topic leaves your queue |
 | `slack.watchChannels` | Channels where every message is a request for you |
@@ -306,6 +323,7 @@ The master uses it to triage: a request that belongs to someone on your ownershi
 A file with the same name in `.strato/policy/` replaces the default, for this installation only.
 An overridden template no longer follows upstream improvements of that file: override as few as you can.
 A common one: `worker.md`, to tell sessions to read a voice file before writing a draft.
+What your role adds lives in `scripts/policy/defaults/roles/<role>.md` (`strato policy-default roles/<role>` prints it); a file with the same name in `.strato/policy/roles/` replaces it.
 
 ## 6. Shadow mode, then live
 

@@ -34,6 +34,27 @@ bun scripts/strato.ts demo
 
 It opens `http://127.0.0.1:4394/board` with four fictional topics (Acme, Alice, Bob…): a draft ready to send, a decision, a session at work, a topic waiting on a teammate.
 Nothing is connected to Slack, no Claude session runs, and nothing can be posted; the demo lives in a temporary folder that `demo --clean` removes.
+`demo --role support` (or `operations`, `account-manager`, `manager`) shows the topics of that job instead.
+
+## Not a developer?
+
+Strato is not only for people who write code.
+You tell it your job once, and the work sessions behave accordingly:
+
+| Your job | Role | What a session does with a request |
+| --- | --- | --- |
+| Customer support | `support` | Finds what the customer needs to hear, drafts the answer in their tone, and prepares any escalation to engineering as a separate step |
+| Operations | `operations` | Follows the runbook, writes every production step as its own action, and drafts the incident update |
+| Account management, sales | `account-manager` | Gathers the client's history, drafts the reply, sets a reminder for every promise, and prepares CRM changes for your go |
+| Team lead, manager | `manager` | Frames each decision as options with a recommendation, and proposes who to delegate to |
+| Software developer | `developer` (the default) | Investigates in the code, implements tickets up to a merge request |
+
+Whatever the role, nothing is sent and nothing is changed without your click on the board.
+Without a code forge configured, the board never talks about merge requests, branches or production.
+
+To try it: `strato demo --role support`.
+To set it up: run the setup interview (`claude -n strato "/strato setup"`), whose first question is your job, or `strato setup --role support`.
+`SETUP.md` has a short path for you, with no developer tools to install.
 
 ## Installation
 
@@ -85,8 +106,8 @@ One codebase serves every installation; each installation is a profile.
 
 | File | Role |
 | --- | --- |
-| `config.json` | Written by `setup --write`. The profile: who is served (`owner.name`), the workspace, Slack (`team`, `workspace`, `me`, `subteams`, `teamAlias`, `watchChannels`, `teammates`…), the tracker, the forge, other accounts (`providers`, written by `setup --connect`), the work sessions' permissions, the board's port and language (`ui.locale`: `en` or `fr`) |
-| `policy/*.md` | Optional. Replaces a shipped template of `scripts/policy/defaults/` file by file: how sessions handle a message, write a card, what waits for a go |
+| `config.json` | Written by `setup --write`. The profile: who is served (`owner.name`) and their job (`owner.role`), the workspace, Slack (`team`, `workspace`, `me`, `subteams`, `teamAlias`, `watchChannels`, `teammates`…), the tracker, the forge, other accounts (`providers`, written by `setup --connect`), the work sessions' permissions, the board's port and language (`ui.locale`: `en` or `fr`) |
+| `policy/*.md` | Optional. Replaces a shipped template of `scripts/policy/defaults/` file by file: how sessions handle a message, write a card, what waits for a go. `policy/roles/<role>.md` replaces what a role adds |
 | `local.md` | Notes read by the master at startup: who you are, your team, the ownership map around you, what never goes out without your go |
 | `providers/` | One folder per connected account (its cursors and small state), the code of the providers you add (`providers/<name>/`), and `trusted.json`, the folders you trusted (`strato provider trust`) |
 
