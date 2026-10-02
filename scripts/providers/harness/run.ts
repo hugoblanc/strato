@@ -23,7 +23,7 @@ import { linkOfNative, parseLink, pureOf } from "../../core/links.ts";
 import { type ScopeRule, typedScope } from "../../core/targets.ts";
 import { resolveSettings, useSettings } from "../../core/settings.ts";
 import { STRATO_VERSION } from "../../core/build-info.ts";
-import { classifyItem, type Kind, triageRules } from "../../core/triage.ts";
+import { classifyItem, effectiveIdentity, type Kind, triageRules } from "../../core/triage.ts";
 import { findTask } from "../../core/tasks.ts";
 import { maskSecrets, oneLine, truncate } from "../../core/text.ts";
 import { effectiveCapabilities, providerError } from "../api.ts";
@@ -31,7 +31,7 @@ import { descriptorProblems } from "../check.ts";
 import { describeExec, type ExecProvider, execProvider } from "../host/exec.ts";
 import { importModule, LoadError } from "../host/module.ts";
 import { accountContext, accountOf, addProvider, type AccountEntry, useBaseFetch } from "../registry.ts";
-import type { ActionKind, AccountContext, Item, PollResult, Provider, ProviderDescriptor } from "../sdk.ts";
+import type { ActionKind, AccountContext, Identity, Item, PollResult, Provider, ProviderDescriptor } from "../sdk.ts";
 import { type Exchange, FakeTool, type Fixture, type Recorded } from "./fake.ts";
 
 /** What `provider test` hands its harness process, in `<state>/harness.json`. */
@@ -219,7 +219,9 @@ async function runFixture(spec: HarnessSpec, provider: Provider, exec: ExecProvi
     const masked = (v: string) => maskSecrets(v, Object.values(fx.secrets ?? {}));
     fake.onRequest = (r) => report.line("trace", `http ${r.method} ${masked(r.url)}${r.body ? ` ${masked(r.body)}` : ""}`);
   }
-  const ctx = (o: { signal?: AbortSignal } = {}): AccountContext => accountContext(entry, { ...o, log: () => {} });
+  // the identity `connect` returned, as Strato hands it to the provider's later calls (a `me` setting wins)
+  let identity: Identity | null = null;
+  const ctx = (o: { signal?: AbortSignal } = {}): AccountContext => accountContext(entry, { ...o, identity, log: () => {} });
   const caps = effectiveCapabilities(d, auth);
   const live = !!spec.live;
 
@@ -237,9 +239,12 @@ async function runFixture(spec: HarnessSpec, provider: Provider, exec: ExecProvi
   // ---- connect
   let mark = fake.since();
   try {
-    const identity = checkedIdentity(await provider.connect(ctx()));
-    if (!identity?.me) report.line("fail", "connect", t("cli.provider.test.noIdentity"));
-    else report.line("ok", "connect", t("cli.provider.test.identity", { me: identity.me, workspace: identity.workspace }));
+    const got = checkedIdentity(await provider.connect(ctx()));
+    if (!got?.me) report.line("fail", "connect", t("cli.provider.test.noIdentity"));
+    else {
+      report.line("ok", "connect", t("cli.provider.test.identity", { me: got.me, workspace: got.workspace }));
+      identity = effectiveIdentity(got, entry.account.settings, d.settings);
+    }
   } catch (e) {
     report.line("fail", "connect", reason(e));
   }
