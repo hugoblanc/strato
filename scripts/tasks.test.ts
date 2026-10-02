@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { applyAssignments, normalizeSujets, type StoredSujet, type Sujet } from "./core/sujet.ts";
-import { addTask, closeTask, editTask, legacyTasks, openTasks, reopenTask, staleCardAction, taskDraftText, tasksOf } from "./core/tasks.ts";
+import { addTask, closeTask, editTask, legacyTasks, openTasks, reopenTask, rollbackHazards, staleCardAction, taskDraftText, tasksOf } from "./core/tasks.ts";
 
 const T0 = "2026-10-01T08:00:00Z";
 const at = (min: number) => new Date(Date.parse(T0) + min * 60_000).toISOString();
@@ -71,6 +71,18 @@ describe("migration of a stored card", () => {
   test("an already migrated topic keeps its tasks", () => {
     const s = card({ status: "gate", gate: "draft", draft: "x", tasks: [] });
     expect(normalizeSujets([s], dayOf)[0].tasks).toEqual([]);
+  });
+});
+
+describe("rolling back to a binary without typed targets", () => {
+  test("open tasks with a typed target, a tool action or an audience are named; free-text drafts are not", () => {
+    let s = card({ letter: "A" });
+    s = addTask(s, DRAFT, at(1)).sujet;
+    s = addTask(s, { kind: "draft", ask: "Comment?", draft: "Internal note", to: "linear:ENG-12" }, at(2)).sujet;
+    s = addTask(s, { kind: "action", ask: "Close?", act: "setStatus", value: "Done", to: "linear:ENG-12" }, at(3)).sujet;
+    expect(rollbackHazards([s])).toEqual(["A t2: to=linear:ENG-12", "A t3: to=linear:ENG-12 act=setStatus"]);
+    expect(rollbackHazards([closeTask(closeTask(s, "t2", "dropped", at(4)), "t3", "done", at(5))])).toEqual([]);
+    expect(rollbackHazards([{ ...s, status: "closed" }])).toEqual([]);
   });
 });
 

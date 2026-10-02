@@ -7,7 +7,9 @@
  */
 import { agentsBySession, hookSession } from "./app/claude.ts";
 import { CorruptState, F, fail, flags, nowIso, out, readJson, writeJson } from "./app/env.ts";
-import { LockTimeout, requireSujet, withLock } from "./app/store.ts";
+import { LockTimeout, loadSujets, requireSujet, withLock } from "./app/store.ts";
+import { t } from "./core/i18n.ts";
+import { rollbackHazards } from "./core/tasks.ts";
 import { context } from "./commands/context.ts";
 import { dive, term } from "./commands/dive.ts";
 import { gc } from "./commands/gc.ts";
@@ -61,6 +63,7 @@ export const USAGE = `strato: routes Slack to Claude Code work sessions, one top
   strato serve [--port N]               board and iTerm2 panel on 127.0.0.1, port ui.port by default
   strato install-skill [--project <dir>] [--global] [--force] [--refresh]   writes the skill for Claude Code
   strato update [--check] [--rollback]  installs the latest release (binary) or pulls the clone (git)
+  strato update --rollback --force      goes back even while open tasks carry a typed target the previous binary does not read
   strato version                        version, commit and install mode
   strato iterm-mark                     marks the master's iTerm2 tab (amber tab and badge)
   strato policy-default <template>      prints a default policy template, to copy into <state>/policy/
@@ -254,6 +257,9 @@ async function updateCommand(args: string[]) {
   const { opts } = flags(args);
   if (opts.rollback === "true") {
     if (!COMPILED) fail("--rollback is for a binary install; a clone goes back with git");
+    // the previous binary reads a task's typed target as "no destination", i.e. the topic's Slack thread
+    const hazards = rollbackHazards(loadSujets());
+    if (hazards.length && opts.force !== "true") fail(t("cli.update.rollbackHazards", { tasks: hazards.join("\n  ") }));
     if (!rollbackBinary(process.execPath)) fail(`no previous binary next to ${process.execPath}`);
     out(`[strato] back on the previous binary: ${process.execPath}`);
     return;

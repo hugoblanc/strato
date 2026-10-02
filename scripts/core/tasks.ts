@@ -192,6 +192,21 @@ export function openTasks(s: TaskHost): Task[] {
     .sort((a, b) => a.createdAt.localeCompare(b.createdAt));
 }
 
+/**
+ * The open tasks an older binary would carry out elsewhere than meant: a typed target (`to`), a tool action (`act`)
+ * or an audience. Before providers, a task only had a free-text `draftTo`, and an empty one meant the topic's own
+ * Slack thread: a ticket comment or a mail reply would be posted there after `update --rollback`. One line each.
+ */
+export function rollbackHazards(list: (TaskHost & { key: string; letter?: string })[]): string[] {
+  return list
+    .filter((s) => s.status !== "closed")
+    .flatMap((s) =>
+      openTasks(s)
+        .filter((x) => x.to || x.act || x.audience || x.subject)
+        .map((x) => `${s.letter ?? s.key} ${x.id}: ${[x.to ? `to=${x.to}` : "", x.act ? `act=${x.act}` : "", x.audience || x.subject ? "audience" : ""].filter(Boolean).join(" ")}`),
+    );
+}
+
 export function findTask(s: TaskHost, id: string): Task | undefined {
   return tasksOf(s).find((x) => x.id === id);
 }

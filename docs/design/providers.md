@@ -2018,6 +2018,9 @@ Each stage is one or more commits that leave `bun run check` green and the guard
 8. **Rollback with new keys.** After `update --rollback`, an older binary meets keys of providers it does not know.
    It skips `linear:` keys in its catch-up but would try to read other qualified keys as Slack channels and get `channel_not_found`, which it already tolerates.
    A note in the release is enough, or a key prefix check backported in a patch release.
+   **Rollback with typed targets.** An older binary also ignores a task's `to`, `act` and audience: a draft with an empty `draftTo` goes to the topic's own Slack thread, so a ticket comment (an internal one included) or a reply meant for another channel would be posted there.
+   `strato update --rollback` therefore refuses while an open task carries one of them, names the topics and tasks, and goes back only with `--force`.
+   A clone that goes back with git has no such check: the release notes say so.
 9. **External modules and packages.** Package resolution from a module imported by a compiled binary is not guaranteed; the design pushes such providers to the exec shape.
    Worth a spike before the external stage.
 10. **Unknown outcomes.** A timed-out act of a provider without idempotency may or may not have written; the person is asked to check.
@@ -2035,6 +2038,9 @@ Each stage is one or more commits that leave `bun run check` green and the guard
 16. **Providers with their own connections.** A push or IMAP provider that does not use `http.fetch` cannot be checked offline; how much should `doctor` and the board flag it?
 17. **Prompt injection remains.** Neutralization, the untrusted rule and the gate reduce it; they do not remove it.
     More sources mean more third-party text in sessions and in the master.
+18. **The second act stage is a release blocker.** Sessions and the master still carry out a Go themselves, through MCP write tools (Slack's `conversations_add_message`, the Linear MCP for ticket topics), outside `core/gate.ts`: nothing hashes what they send.
+    What this branch closes: in shadow mode, sessions get a permission `deny` rule for every configured account's `mcp.writeTools` on its server, which holds without permission prompts too; and an external descriptor never pre-approves an MCP tool (its `mcp.readTools` are ignored, and a tool any descriptor declares as a write is never a read).
+    What stays open, and must ship before a release that adds sources: `strato act` for the master with `workers.goFrom`, `workers.gate` strict and legacy, the board as the only writer for post-only tasks, sessions spawned without provider secrets, and the check that a resumed session keeps the settings (and so the deny rules) it was started with; a session started live and resumed after the switch to shadow mode relies on the prompt alone until then.
 
 ## 17. Review notes
 
