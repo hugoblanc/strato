@@ -28,6 +28,22 @@ export interface ContextHead {
 }
 
 /**
+ * What is wrong with a provider's answer to `context`, or null when it has the shape of a ContextResult. Checked before
+ * anything renders it: an external provider's answer is whatever its process wrote. The detail names a field.
+ */
+export function contextProblem(r: unknown): string | null {
+  const c = r as Partial<ContextResult> | null;
+  if (!c || typeof c !== "object") return "not an object";
+  if (!c.conversation || typeof c.conversation !== "object" || typeof c.conversation.label !== "string") return "conversation.label";
+  if (c.title !== undefined && typeof c.title !== "string") return "title";
+  if (c.fields !== undefined && (!c.fields || typeof c.fields !== "object" || Object.values(c.fields).some((v) => typeof v !== "string"))) return "fields";
+  if (typeof c.complete !== "boolean") return "complete";
+  if (!Array.isArray(c.items)) return "items";
+  const bad = c.items.findIndex((x) => !x || typeof x.id !== "string" || typeof x.author !== "string" || typeof x.time !== "number" || typeof x.text !== "string");
+  return bad >= 0 ? `items[${bad}]` : null;
+}
+
+/**
  * The lines of one thread: a header with the tool, the conversation, the title, the link and the key; the ticket's
  * fields; one block per item, oldest first, `[time] author: text`, the text's lines indented; a line when the read
  * stopped at its cap; an end line.

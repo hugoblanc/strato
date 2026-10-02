@@ -33,6 +33,8 @@ export interface Fixture {
     items?: { id: string; kind: string | null; rules?: { watch?: string[]; ignore?: string[]; ignoreAuthors?: string[] } }[];
     /** Destinations a module's `parseTarget` reads: the target it must give, or an error. */
     targets?: { draftTo: string; target?: { scope: string; native: string }; error?: true }[];
+    /** The ids of the items a subscription delivers while the push check listens, in order. */
+    push?: string[];
   };
   /** What the act checks write: on which thread (the first thread a poll returns by default), which text, which values. */
   act?: { thread?: string; text?: string; status?: string; assignee?: string };

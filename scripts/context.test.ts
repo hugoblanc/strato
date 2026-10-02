@@ -6,7 +6,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { contextLines } from "./core/context.ts";
+import { contextLines, contextProblem } from "./core/context.ts";
 import type { ContextResult } from "./providers/sdk.ts";
 import { CLI, cleanupRigs, KEY, LINK, type Rig, rig, run, SCRIPTS, sujet, writeSujets } from "./test-rig.ts";
 
@@ -53,6 +53,19 @@ describe("the printed thread", () => {
       "(no item)",
       "== end of tickets:PLAT-12",
     ]);
+  });
+});
+
+describe("a provider's answer is checked before it is printed", () => {
+  test("a thread has a conversation, items with their fields, and says whether it is complete", () => {
+    expect(contextProblem(ticket())).toBeNull();
+    expect(contextProblem(null)).toBe("not an object");
+    expect(contextProblem({ ...ticket(), conversation: undefined })).toBe("conversation.label");
+    expect(contextProblem({ ...ticket(), title: 12 })).toBe("title");
+    expect(contextProblem({ ...ticket(), fields: { status: 1 } })).toBe("fields");
+    expect(contextProblem({ ...ticket(), complete: "yes" })).toBe("complete");
+    expect(contextProblem({ ...ticket(), items: "none" })).toBe("items");
+    expect(contextProblem({ ...ticket(), items: [ticket().items[0], { id: "x", author: null, time: 1, text: "" }] })).toBe("items[1]");
   });
 });
 

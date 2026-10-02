@@ -16,8 +16,9 @@ import { F, writeJson } from "../../app/env.ts";
 import { checkedIdentity, isItem } from "../../app/ingest.ts";
 import { loadSujets } from "../../app/store.ts";
 import { planOfTask, planSha } from "../../core/gate.ts";
+import { contextProblem } from "../../core/context.ts";
 import { t } from "../../core/i18n.ts";
-import { formatKey } from "../../core/keys.ts";
+import { canonicalKey, formatKey, parseKey } from "../../core/keys.ts";
 import { linkOfNative, parseLink, pureOf } from "../../core/links.ts";
 import { resolveSettings, useSettings } from "../../core/settings.ts";
 import { STRATO_VERSION } from "../../core/build-info.ts";
@@ -178,6 +179,7 @@ async function runFixture(spec: HarnessSpec, provider: Provider, exec: ExecProvi
   // ---- poll
   let items: Item[] = [];
   let pollOffline = false;
+  let pollRequests = 0;
   if (caps.ingest.poll && provider.poll) {
     mark = fake.since();
     const poll = provider.poll.bind(provider);
@@ -199,7 +201,8 @@ async function runFixture(spec: HarnessSpec, provider: Provider, exec: ExecProvi
           }
         }
       }
-      pollOffline = !live && items.length > 0 && fake.madeSince(mark).length === 0;
+      pollRequests = fake.madeSince(mark).length;
+      pollOffline = !live && items.length > 0 && pollRequests === 0;
       if (problems.length) report.line("fail", "poll", problems.join("; "));
       else if (pollOffline) report.line("offline", "poll", t("cli.provider.test.noRequest"));
       else report.line("ok", "poll", t("cli.provider.test.items", { n: items.length }));
@@ -217,6 +220,18 @@ async function runFixture(spec: HarnessSpec, provider: Provider, exec: ExecProvi
       return !link || parseLink(link)?.thread !== th;
     });
     report.line(broken.length ? "fail" : "ok", "links", broken.length ? t("cli.provider.test.links", { threads: broken.join(", ") }) : "");
+  }
+
+  // ---- keys: each thread's key reads back as the same thread, in its one stored form
+  if (!threads.length) report.line("skip", "keys", t("cli.provider.test.noThread"));
+  else {
+    const broken = threads.filter((th) => {
+      const key = formatKey(d.id, "default", th);
+      const p = key ? parseKey(key) : null;
+      // a long native id becomes a hash the registry maps back: the key only has to be its own canonical form
+      return !key || !p || p.provider !== d.id || p.account !== "default" || (!p.long && p.native !== th) || canonicalKey(key) !== key;
+    });
+    report.line(broken.length ? "fail" : "ok", "keys", broken.length ? t("cli.provider.test.keys", { threads: broken.join(", ") }) : "");
   }
 
   // ---- triage
@@ -244,8 +259,9 @@ async function runFixture(spec: HarnessSpec, provider: Provider, exec: ExecProvi
       const c = await provider.context(ctx(), thread, { max: 50 });
       const list = Array.isArray(c?.items) ? c.items : null;
       const ordered = !!list && list.every((x, i) => i === 0 || x.time >= list[i - 1].time);
-      const shaped = !!list && list.every((x) => typeof x.id === "string" && typeof x.author === "string" && typeof x.time === "number" && typeof x.text === "string");
-      report.line(ordered && shaped && typeof c.complete === "boolean" ? "ok" : "fail", "context", ordered && shaped ? t("cli.provider.test.items", { n: list?.length ?? 0 }) : t("cli.provider.test.contextShape"));
+      // the check `strato context` makes before printing a thread
+      const shaped = contextProblem(c) === null;
+      report.line(ordered && shaped ? "ok" : "fail", "context", ordered && shaped ? t("cli.provider.test.items", { n: list?.length ?? 0 }) : t("cli.provider.test.contextShape"));
       if (shaped && list) texts.push(...list.map((x) => ({ id: x.id, author: { name: x.author }, text: x.text })));
     } catch (e) {
       report.line("fail", "context", reason(e));
@@ -268,7 +284,8 @@ async function runFixture(spec: HarnessSpec, provider: Provider, exec: ExecProvi
 
   // ---- acts, through the gate
   if (live) report.line("skip", "act", t("cli.provider.test.liveNoAct"));
-  else await actChecks(provider, d, caps.actions, caps.undo, caps.idempotent, fx, thread, fake, report, pollOffline);
+  // a real write runs only for a provider seen talking through the fake, and never when items came without a request
+  else await actChecks(provider, d, caps.actions, caps.undo, caps.idempotent, fx, thread, fake, report, pollOffline || (connectRequests === 0 && pollRequests === 0));
 
   // ---- errors: a 401 needs setup, a 429 says when, a timeout is retried
   if (live) report.line("skip", "errors", t("cli.provider.test.liveNoAct"));
@@ -308,7 +325,13 @@ async function runFixture(spec: HarnessSpec, provider: Provider, exec: ExecProvi
         if (Array.isArray(batch)) got.push(...batch.filter(isItem));
       });
       const offline = !live && fake.madeSince(mark).length === 0;
-      report.line(offline ? "offline" : "ok", "push", `${t("cli.provider.test.items", { n: got.length })}, ${end?.end ?? "?"}`);
+      const want = live ? undefined : fx.expect?.push;
+      const ids = got.map((i) => i.id);
+      const problems: string[] = [];
+      if (!end || !["clean", "cut", "fatal"].includes(end.end)) problems.push(t("cli.provider.test.pushEnd"));
+      if (want && ids.join("\n") !== want.join("\n")) problems.push(t("cli.provider.test.pushItems", { got: ids.join(", ") || "-", want: want.join(", ") || "-" }));
+      if (problems.length) report.line("fail", "push", problems.join("; "));
+      else report.line(offline ? "offline" : "ok", "push", `${t("cli.provider.test.items", { n: got.length })}, ${end.end}`);
     } catch (e) {
       report.line("fail", "push", reason(e));
     } finally {
@@ -379,9 +402,10 @@ function planOf(key: string, taskId: string): { sha: string; kind: ActionKind } 
 }
 
 /**
- * Every action kind a task can carry, dry first, then for real against the fake when every request went through it:
- * the write must carry the text and, for an idempotent kind, the idempotency key; an undoable kind is then undone; a
- * write that times out must never say it surely did not happen.
+ * Every action kind a task can carry, dry first, then for real against the fake once the provider was seen talking
+ * through it (its connect or its poll made requests there, and no poll gave items without one): the write must carry
+ * the text and, for an idempotent kind, the idempotency key; an undoable kind is then undone; a write that times out
+ * must never say it surely did not happen. `offline`: no such evidence, the real write is reported not verifiable.
  */
 async function actChecks(provider: Provider, d: ProviderDescriptor, actions: ActionKind[], undo: ActionKind[], idempotent: ActionKind[], fx: Fixture, thread: string | null, fake: FakeTool, report: Report, offline: boolean): Promise<void> {
   if (!actions.length) return report.line("skip", "act", t("cli.provider.test.notDeclared"));

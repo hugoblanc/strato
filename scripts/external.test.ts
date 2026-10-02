@@ -178,6 +178,67 @@ describe("an exec provider is loaded the same way", () => {
   }, 30_000);
 });
 
+/** A fetch for tickets.example installed before Strato's code loads, so the CLI's exec provider reaches no network. */
+const TICKETS_PRELOAD = `const json = (v) => new Response(JSON.stringify(v), { headers: { "content-type": "application/json" } });
+const real = globalThis.fetch;
+globalThis.fetch = async (input, init) => {
+  const url = new URL(input instanceof Request ? input.url : String(input));
+  if (url.host !== "tickets.example") return real(input, init);
+  if (url.pathname === "/api/me") return json({ id: "u-alice", workspace: "acme" });
+  if (url.pathname === "/api/notifications") return json([{ id: "n-1", ticket: "OPS-7", author: "bob", text: "please look @u-alice", at: Date.now() - 60_000 }]);
+  if (url.pathname.startsWith("/api/tickets/")) return json({ title: "Checkout fails", comments: [{ id: "c-1", author: "bob", time: 1, text: "broken" }] });
+  return json({ error: "no" });
+};`;
+
+/** The exec fixture as a trusted provider of the rig, with its preload; returns how to run a command with both. */
+async function trustedExec(r: Rig): Promise<(args: string[], limitMs?: number) => Promise<{ code: number | null; out: string; err: string; ms: number }>> {
+  const dir = join(r.state, "providers", "tickets");
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(join(dir, "provider.ts"), readFileSync(join(SCRIPTS, "test-exec-provider.ts"), "utf8").replace('from "./providers/sdk.ts"', `from ${JSON.stringify(join(SCRIPTS, "providers/sdk.ts"))}`));
+  const secrets = join(r.dir, "tickets.env");
+  writeFileSync(secrets, "TICKETS_API_KEY=tk-acme-file-000000\n");
+  config(r, { tickets: { source: { exec: [process.execPath, "provider.ts"] }, accounts: { default: { auth: "api-key", secretsFile: secrets, me: "u-alice" } } } });
+  await script(
+    r,
+    `const { describeExec } = await import(${JSON.stringify(join(SCRIPTS, "providers/host/exec.ts"))});
+     const source = settings.settings().providers.tickets.source;
+     const s = trust.trustOf("tickets", source);
+     const d = await describeExec({ id: "tickets", argv: s.resolved.argv, cwd: s.resolved.cwd });
+     trust.writeTrust("tickets", { sha256: s.sha256, source, descriptor: d.descriptor, at: "2026-10-01T00:00:00Z" });
+     return true;`,
+  );
+  const preload = join(r.dir, "tickets-preload.ts");
+  writeFileSync(preload, TICKETS_PRELOAD);
+  return async (args, limitMs = 8_000) => {
+    const started = Date.now();
+    const p = Bun.spawn([process.execPath, "--preload", preload, join(SCRIPTS, "strato.ts"), ...args], { cwd: SCRIPTS, env: r.env, stdout: "pipe", stderr: "pipe", stdin: "ignore" });
+    const timer = setTimeout(() => p.kill("SIGKILL"), limitMs);
+    const [out, err, code] = await Promise.all([new Response(p.stdout).text(), new Response(p.stderr).text(), p.exited]);
+    clearTimeout(timer);
+    return { code: p.signalCode ? null : code, out, err, ms: Date.now() - started };
+  };
+}
+
+describe("a one-shot command that started an exec provider ends", () => {
+  test("context, backlog and doctor stop the provider's process and exit", async () => {
+    const r = rig();
+    const strato = await trustedExec(r);
+    const context = await strato(["context", "tickets:OPS-7"]);
+    expect(context.out).toContain("Checkout fails");
+    expect(context.code).toBe(0);
+    const backlog = await strato(["backlog", "--since", "1h"]);
+    expect(backlog.out).toContain("key=tickets:OPS-7");
+    expect(backlog.code).toBe(0);
+    const doctor = await strato(["doctor"]);
+    expect(doctor.out).toContain("you are u-alice on acme");
+    expect(doctor.code).not.toBeNull();
+    // each process was asked to stop, not found dead: no crash in the account's log
+    const log = readFileSync(join(r.state, "providers", "tickets-default", "provider.log"), "utf8");
+    expect(log).toContain("started for default");
+    expect(log).not.toContain("the process stopped");
+  }, 60_000);
+});
+
 describe("the parts of a module that run inside the board", () => {
   test("its rendering is plain text escaped by Strato, and a pure function that throws reads as nothing to say", async () => {
     const r = rig();
@@ -225,6 +286,18 @@ describe("provider commands and the caller", () => {
     expect(pipe.code).toBe(64);
     expect(pipe.err).toContain("run it in your own terminal");
     expect(await problemOf(r)).toContain("not trusted yet");
+  }, 30_000);
+
+  test("provider test by name runs a configured provider only as trusted; its folder, given as a path, runs as it is", async () => {
+    const r = rig();
+    const imported = join(r.dir, "imported");
+    const dir = moduleProvider(r, `, sideEffect: (await import("node:fs")).writeFileSync(${JSON.stringify(imported)}, "x")`);
+    config(r, ticketsConfig());
+    const byName = await cli(r, ["provider", "test", "tickets"]);
+    expect(byName.code).toBe(1);
+    expect(byName.err).toContain("tickets: not trusted yet; read it, then run strato provider trust tickets in your own terminal. To test its code before trusting it, give its folder: ");
+    expect(byName.err).toContain(`provider test ${dir}`);
+    expect(existsSync(imported)).toBe(false);
   }, 30_000);
 
   test("provider types prints the SDK file as it is in the source", async () => {

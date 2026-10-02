@@ -4,7 +4,7 @@
  * run is a real `strato` process on a throwaway state, the harness answering from the fixtures, offline.
  */
 import { afterEach, describe, expect, test } from "bun:test";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { canonicalJson, FakeTool, matches } from "./providers/harness/fake.ts";
 import { cleanupRigs, cli, type Rig, rig, SCRIPTS } from "./test-rig.ts";
@@ -117,6 +117,45 @@ describe("provider test fails a broken provider on the check it breaks", () => {
     expect(h.out).toContain("not verifiable offline poll");
     expect(h.out).toContain("not verifiable offline act comment:");
     expect(h.out).not.toContain("ok      act comment:");
+  }, 60_000);
+
+  test("a provider never seen talking through the fake is not written to for real, even with a thread to act on", async () => {
+    const r = rig();
+    const folder = await scaffold(r);
+    // no request from connect nor poll: the fixture's act thread alone would otherwise lead to a real write
+    patch(folder, 'const me = await api(ctx, "GET", "/api/me");', 'const me = { id: "u-alice", name: "Alice", workspace: "acme" };');
+    patch(folder, 'const all: Activity[] = await api(ctx, "GET", "/api/activity");', "const all: Activity[] = [];");
+    const h = await harness(r, folder);
+    expect(h.out).toContain("ok      act comment, dry");
+    expect(h.out).toContain("not verifiable offline act comment:");
+    expect(h.out).not.toContain("ok      act comment:");
+  }, 60_000);
+
+  test("an exec provider's pushed items are compared with the fixture's, and its keys read back as its threads", async () => {
+    const r = rig();
+    const folder = join(r.dir, "exec");
+    mkdirSync(join(folder, "fixtures"), { recursive: true });
+    writeFileSync(join(folder, "provider.ts"), readFileSync(join(SCRIPTS, "test-exec-provider.ts"), "utf8").replace('from "./providers/sdk.ts"', `from ${JSON.stringify(join(SCRIPTS, "providers/sdk.ts"))}`));
+    const wrapper = join(folder, "provider");
+    writeFileSync(wrapper, `#!/bin/sh\nexec ${JSON.stringify(process.execPath)} ${JSON.stringify(join(folder, "provider.ts"))} "$@"\n`);
+    chmodSync(wrapper, 0o755);
+    const fixture = (push: string[]) => ({
+      secrets: { TICKETS_API_KEY: "test-key-not-a-real-one" },
+      settings: { me: "u-alice" },
+      exchanges: [
+        { request: { method: "GET", url: "https://tickets.example/api/me" }, response: { body: { id: "u-alice", workspace: "acme" } }, repeat: true },
+        { request: { method: "GET", url: "https://tickets.example/api/notifications" }, response: { body: [{ id: "n-1", ticket: "OPS-7", author: "bob", text: "please look @u-alice", at: 1_790_000_100_000 }] }, repeat: true },
+      ],
+      expect: { push },
+      push: { waitMs: 500 },
+    });
+    writeFileSync(join(folder, "fixtures", "sample.json"), JSON.stringify(fixture(["n-9"])));
+    const good = await harness(r, wrapper);
+    expect(good.out).toContain("ok      keys");
+    expect(good.out).toMatch(/(ok|not verifiable offline) +push: 1 item\(s\), clean/);
+    writeFileSync(join(folder, "fixtures", "sample.json"), JSON.stringify(fixture(["n-1"])));
+    const bad = await harness(r, wrapper);
+    expect(line(bad, "push")).toBe("fail    push: pushed n-9 where the fixture expects n-1");
   }, 60_000);
 
   test("the process's own fetch is refused: a provider reaches its tool through ctx.fetch only", async () => {

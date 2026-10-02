@@ -168,3 +168,18 @@ export function startGate(crashes: number[], now: number): { ok: true } | { ok: 
   const wait = last + backoffMs(recent.length) - now;
   return wait > 0 ? { ok: false, down: false, retryAfterMs: wait } : { ok: true };
 }
+
+/**
+ * What `p` gives within `ms`, or that it did not. The timer is cleared either way: a pending sleep would keep a
+ * command that is done alive until it fires.
+ */
+export async function within<T>(p: Promise<T>, ms: number): Promise<{ ok: true; value: T } | { ok: false }> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([p.then((value) => ({ ok: true as const, value })), new Promise<{ ok: false }>((resolve) => {
+      timer = setTimeout(() => resolve({ ok: false }), ms);
+    })]);
+  } finally {
+    clearTimeout(timer);
+  }
+}

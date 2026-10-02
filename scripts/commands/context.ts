@@ -9,7 +9,7 @@
 import { fail, flags, out } from "../app/env.ts";
 import { selfCommand } from "../app/self.ts";
 import { loadSujets } from "../app/store.ts";
-import { contextLines } from "../core/context.ts";
+import { contextLines, contextProblem } from "../core/context.ts";
 import { t } from "../core/i18n.ts";
 import { canonicalKey, formatKey, parseKey } from "../core/keys.ts";
 import { checkedLink, claimTicketId, descriptorOf, parseLink, readsThreads } from "../core/links.ts";
@@ -82,6 +82,8 @@ async function readOne(w: Wanted, opts: { since?: number; max: number }): Promis
   try {
     const identity = await provider.connect(accountContext(entry));
     const r = await provider.context(accountContext(entry, { identity }), w.native, opts);
+    const problem = contextProblem(r);
+    if (problem) return { error: t("cli.context.failed", { key: w.key, reason: t("cli.context.malformed", { tool: toolLabel(w.provider, w.account), detail: problem }) }) };
     const link = typeof r.link === "string" ? checkedLink(r.link, w.provider) : null;
     return { lines: contextLines({ key: w.key, tool: toolLabel(w.provider, w.account), link }, r, opts.max) };
   } catch (e) {

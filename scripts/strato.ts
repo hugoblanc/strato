@@ -17,7 +17,7 @@ import { backlog, digest, listen, watch } from "./commands/watch.ts";
 import { cardLines } from "./core/cards.ts";
 import { type MasterRequest } from "./core/master.ts";
 import { serve } from "./server/serve.ts";
-import { loadExternalProviders } from "./providers/external.ts";
+import { loadExternalProviders, stopExternalProviders } from "./providers/external.ts";
 import { setup } from "./commands/setup.ts";
 import { task } from "./commands/tasks.ts";
 import { mkdirSync, writeFileSync } from "node:fs";
@@ -84,6 +84,9 @@ process.on("uncaughtException", (e) => {
   process.stderr.write(`${e.stack ?? e}\n`);
   process.exit(1);
 });
+
+/** Commands that keep running after their function returns or never return: their providers stay up with them. */
+const LONG_RUNNING = new Set(["listen", "watch", "serve"]);
 
 const [cmd, ...rest] = process.argv.slice(2);
 // the trusted external providers of the profile, before any command reads keys, links or accounts; a hook never needs
@@ -230,6 +233,8 @@ switch (cmd) {
     process.exit(cmd && cmd !== "help" && cmd !== "--help" ? 64 : 0);
   }
 }
+// a one-shot command is over: the exec providers it started are stopped, or their processes would keep it alive
+if (!LONG_RUNNING.has(cmd ?? "")) await stopExternalProviders();
 
 /** `strato update`: the board's update, from a terminal. `--check` only reports, `--rollback` puts the previous binary back. */
 async function updateCommand(args: string[]) {

@@ -133,6 +133,9 @@ export function descriptorLines(d: ProviderDescriptor): string[] {
   ];
 }
 
+/** A typed yes, in either language. */
+const yes = (answer: string) => ["yes", "oui"].includes(answer.trim().toLowerCase());
+
 async function trust(args: string[]): Promise<void> {
   const id = args[0];
   if (!id) fail("usage: provider trust <id>", 64);
@@ -144,6 +147,15 @@ async function trust(args: string[]): Promise<void> {
   if (state.state !== "trusted" && state.state !== "untrusted" && state.state !== "changed") return fail(trustProblem(id, state) ?? id);
   const r = state.resolved;
   if (!state.sha256) return fail(t("cli.provider.load.missing", { id, path: r.shape === "module" ? r.file : r.argv[0] }));
+  // what the person can check without running anything comes first: reading the descriptor runs the provider's code
+  out(t("cli.provider.trust.folder", { path: short(r.folder) }));
+  if (r.shape === "exec") out(t("cli.provider.trust.command", { argv: r.argv.join(" ") }));
+  if (r.shape === "exec" && r.pinned === "executable") out(t("cli.provider.trust.executableOnly", { path: short(r.pinPath ?? r.argv[0]) }));
+  out(t("cli.provider.trust.hash", { sha256: state.sha256 }));
+  if (state.state === "trusted") out(t("cli.provider.trust.already"));
+  out(t("cli.provider.trust.privileges"));
+  out(t("cli.provider.trust.runOnce"));
+  if (!yes(await readLine(t("cli.provider.trust.confirmRun", { id })))) fail(t("cli.provider.trust.declined"));
   let d: unknown;
   try {
     d = await declaredDescriptor(id, r);
@@ -153,15 +165,8 @@ async function trust(args: string[]): Promise<void> {
   const problems = descriptorProblems(d, id);
   if (problems.length) fail(`${t("cli.provider.trust.problems", { id })}\n  ${problems.join("\n  ")}`);
   const descriptor = d as ProviderDescriptor;
-  out(t("cli.provider.trust.folder", { path: short(r.folder) }));
-  if (r.shape === "exec") out(t("cli.provider.trust.command", { argv: r.argv.join(" ") }));
-  if (r.shape === "exec" && r.pinned === "executable") out(t("cli.provider.trust.executableOnly", { path: short(r.pinPath ?? r.argv[0]) }));
-  out(t("cli.provider.trust.hash", { sha256: state.sha256 }));
-  if (state.state === "trusted") out(t("cli.provider.trust.already"));
   for (const line of descriptorLines(descriptor)) out(`  ${line}`);
-  out(t("cli.provider.trust.privileges"));
-  const answer = (await readLine(t("cli.provider.trust.confirm", { id }))).toLowerCase();
-  if (answer !== "yes" && answer !== "oui") fail(t("cli.provider.trust.declined"));
+  if (!yes(await readLine(t("cli.provider.trust.confirm", { id })))) fail(t("cli.provider.trust.declined"));
   writeTrust(id, { sha256: state.sha256, source, descriptor, at: nowIso() });
   out(t("cli.provider.trust.done", { id, cmd: `${cliCommand()} provider test ${id}` }));
 }
@@ -195,6 +200,15 @@ async function test(args: string[]): Promise<void> {
   let found: { target: HarnessSpec["target"]; folder: string } | null = null;
   if (source) {
     const r = resolveSource(ref, source);
+    // a configured provider runs by its name only as the person trusted it; its folder, given as a path, runs as it is
+    let state: ReturnType<typeof trustOf>;
+    try {
+      state = trustOf(ref, source);
+    } catch (e) {
+      state = { state: "invalid", resolved: null, detail: (e as Error).message };
+    }
+    const problem = trustProblem(ref, state);
+    if (problem) fail(r ? t("cli.provider.test.untrusted", { problem, cmd: `${cliCommand()} provider test ${short(r.folder)}` }) : problem);
     if (r) found = { target: r.shape === "module" ? { shape: "module", file: r.file } : { shape: "exec", argv: r.argv, cwd: r.cwd }, folder: r.folder };
   } else if (!live) found = targetOfPath(ref);
   if (!found) fail(t("cli.provider.test.notFound", { path: ref }));

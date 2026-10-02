@@ -20,7 +20,7 @@ import { appendFileSync, mkdirSync, renameSync, statSync } from "node:fs";
 import { dirname } from "node:path";
 import { providerError } from "../api.ts";
 import type { Account, AccountContext, ActResult, ContextResult, ExecMethods, Identity, IngestCursor, Item, PollResult, Provider, ProviderDescriptor, ProviderError } from "../sdk.ts";
-import { CANCEL_GRACE_MS, EXEC_TIMEOUTS_MS, errorOfRpc, execEnv, failure, FETCH_TIMEOUT_MS, hostError, IDLE_MS, type Incoming, notification, PROTOCOL_VERSIONS, readLine, request, result, RPC, startGate, takeLines } from "./protocol.ts";
+import { CANCEL_GRACE_MS, EXEC_TIMEOUTS_MS, errorOfRpc, execEnv, failure, FETCH_TIMEOUT_MS, hostError, IDLE_MS, type Incoming, notification, PROTOCOL_VERSIONS, readLine, request, result, RPC, startGate, takeLines, within } from "./protocol.ts";
 import { maskSecrets } from "../../core/text.ts";
 
 export interface ExecHostOptions {
@@ -139,7 +139,10 @@ class Channel {
 
   /** Starts the process when none runs, or tells why it cannot start yet. */
   private async ensure(ctx: AccountContext): Promise<void> {
-    if (this.proc && !this.stopping) return;
+    // a process on its way out ends first: its pending `shutdown` must not hold the slot of the next process, nor
+    // its timeout kill that process
+    while (this.proc && this.stopping) await this.proc.exited;
+    if (this.proc) return;
     if (this.starting) return this.starting;
     const gate = startGate(this.crashes, this.now());
     if (!gate.ok) {
@@ -236,8 +239,7 @@ class Channel {
     try {
       await this.send("shutdown", {}, this.ctx, "read", true);
     } catch {}
-    const ended = await Promise.race([p.exited.then(() => true), Bun.sleep(this.timeout("shutdown")).then(() => false)]);
-    if (!ended) await this.kill();
+    if (!(await within(p.exited, this.timeout("shutdown"))).ok) await this.kill();
   }
 
   private clearIdle(): void {
@@ -494,6 +496,23 @@ class Channel {
  * typed keys (`to=<key>`), and its text is shown as plain text.
  */
 export function execProvider(o: ExecHostOptions): ExecProvider {
+  const provider = buildExecProvider(o);
+  hosts.add(provider);
+  return provider;
+}
+
+/** Every exec provider built in this Strato process, so that a command that ends can stop their processes. */
+const hosts = new Set<ExecProvider>();
+
+/**
+ * Stops the processes of every exec provider of this Strato process, each with `shutdown` then a kill. A one-shot
+ * command calls it before it returns: a running child and its pipes would keep the command alive until the idle delay.
+ */
+export async function stopExecProviders(): Promise<void> {
+  await Promise.all([...hosts].map((h) => h.stopAll().catch(() => {})));
+}
+
+function buildExecProvider(o: ExecHostOptions): ExecProvider {
   const channels = new Map<string, Channel>();
   const channel = (ctx: AccountContext) => {
     const key = `${ctx.account.provider}-${ctx.account.id}`;
@@ -582,15 +601,20 @@ export async function describeExec(o: Pick<ExecHostOptions, "id" | "argv" | "cwd
     const last = said.trim().split("\n").at(-1) ?? "";
     return last ? `: ${last.slice(0, 300)}` : "";
   };
+  // one read at a time: a read that outlived a wait is the next wait's
+  let reading: ReturnType<typeof reader.read> | null = null;
   const answer = async (id: number, timeoutMs: number): Promise<{ result?: unknown; error?: { code: number; message: string } }> => {
     const deadline = Date.now() + timeoutMs;
     for (;;) {
       const left = deadline - Date.now();
       if (left <= 0) throw hostError("timeout", `${o.id}: no answer to describe within ${Math.round(timeoutMs / 1000)} s`);
-      const chunk = await Promise.race([reader.read(), Bun.sleep(left).then(() => null)]);
-      if (chunk === null) continue;
+      reading ??= reader.read();
+      const got = await within(reading, left);
+      if (!got.ok) continue;
+      reading = null;
+      const chunk = got.value;
       if (chunk.done) {
-        await Promise.race([proc.exited, Bun.sleep(200)]);
+        await within(proc.exited, 200);
         throw hostError("crashed", `${o.id}: the provider's process stopped before answering describe${stderrTail()}`);
       }
       const r = takeLines(rest, decoder.decode(chunk.value, { stream: true }));
@@ -611,11 +635,10 @@ export async function describeExec(o: Pick<ExecHostOptions, "id" | "argv" | "cwd
     if (typeof r.api !== "number" || !PROTOCOL_VERSIONS.includes(r.api)) throw hostError("protocol_version", `${o.id}: the provider speaks protocol ${String(r.api)}, Strato speaks ${PROTOCOL_VERSIONS.join(", ")}`, { fatal: true, retryable: false });
     proc.stdin.write(request(2, "shutdown", {}));
     proc.stdin.flush();
-    await Promise.race([answer(2, EXEC_TIMEOUTS_MS.shutdown).catch(() => null), Bun.sleep(EXEC_TIMEOUTS_MS.shutdown)]);
+    await answer(2, EXEC_TIMEOUTS_MS.shutdown).catch(() => null);
     return { api: r.api, descriptor: r.descriptor, concurrent: r.concurrent === true };
   } finally {
-    const ended = await Promise.race([proc.exited.then(() => true), Bun.sleep(1_000).then(() => false)]);
-    if (!ended) proc.kill("SIGKILL");
+    if (!(await within(proc.exited, 1_000)).ok) proc.kill("SIGKILL");
     live.delete(proc);
   }
 }

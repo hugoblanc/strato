@@ -12,7 +12,7 @@ import { oneLine, truncate } from "../core/text.ts";
 import { STRATO_VERSION } from "../core/build-info.ts";
 import { BUILTIN, accountDir, addProvider, setExternalProblem } from "./registry.ts";
 import { descriptorProblems } from "./check.ts";
-import { execProvider } from "./host/exec.ts";
+import { execProvider, stopExecProviders } from "./host/exec.ts";
 import { importModule, LoadError, missingMethods } from "./host/module.ts";
 import { type TrustRecord, type TrustState, readTrust, trustOf } from "./host/trust.ts";
 import { join } from "node:path";
@@ -100,6 +100,14 @@ export function loadExternalProviders(s: Settings = settings()): Promise<Externa
     return out;
   })();
   return loading;
+}
+
+/**
+ * Ends what external providers keep running in this process: every exec provider's processes. Called when a one-shot
+ * command returns; the long-running ones (listen, watch, serve) keep their providers until they stop.
+ */
+export function stopExternalProviders(): Promise<void> {
+  return stopExecProviders();
 }
 
 function safeTrust(): Record<string, TrustRecord> {

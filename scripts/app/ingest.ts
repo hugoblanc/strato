@@ -200,7 +200,9 @@ export async function triageItem(src: Source, item: Item, key: string, tracked: 
   let full = item;
   if (src.provider.complete) {
     const done = await src.provider.complete(src.ctx, [item]);
-    if (Array.isArray(done) && done[0]) full = done[0];
+    // the same item, completed: anything else (malformed, another id or thread) leaves the item as it came
+    const back: unknown = Array.isArray(done) ? done[0] : undefined;
+    if (isItem(back) && back.id === item.id && back.thread === item.thread) full = back;
   }
   const kind = classifyItem(full, key, src.rules, tracked, src.participated) as Kind;
   return { kind, d: triggerOf(src.account.provider, full, key), item: full };

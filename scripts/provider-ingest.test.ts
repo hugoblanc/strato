@@ -313,6 +313,37 @@ describe("a provider's strings", () => {
   });
 });
 
+describe("a provider's completed items", () => {
+  test("a malformed one, or one for another item, is dropped and the item triaged as it came", async () => {
+    const r = rig();
+    config(r, PROFILE);
+    cursorFor(r, "tickets-default", "c0", 1);
+    const out = await script(
+      r,
+      `
+      const p = fakeProvider({ id: "tickets", label: "Tickets", polls: [{ items: [
+        ticketItem({ thread: "PLAT-60", id: "PLAT-60", event: "created", text: "first" }),
+        ticketItem({ thread: "PLAT-61", id: "PLAT-61", event: "created", text: "second" }),
+        ticketItem({ thread: "PLAT-62", id: "PLAT-62", event: "created", text: "third" }),
+      ], cursor: { value: "c1", at: 2 }, complete: true }] });
+      // a broken tool: an item without author, another item, then a good completion
+      const answers = [[{ thread: "PLAT-60", id: "PLAT-60", author: null }], [ticketItem({ thread: "PLAT-99", id: "PLAT-99", text: "elsewhere" })], null];
+      p.complete = async (_ctx, items) => answers.shift() ?? items.map((i) => ({ ...i, author: { ...i.author, name: "Bob Martin" } }));
+      registry.addProvider(p);
+      const fake = registry.accountOf("tickets", "default").provider;
+      ${SOURCE}
+      await ingest.pollPass(run);
+      return run.cursor;
+    `,
+    );
+    expect(out.lines.map((l) => l.match(/key=(\S+)/)?.[1])).toEqual(["tickets:PLAT-60", "tickets:PLAT-61", "tickets:PLAT-62"]);
+    expect(out.lines[0]).toContain("« first »");
+    expect(out.lines[1]).toContain("« second »");
+    expect(out.lines[2]).toContain("· Bob Martin · ");
+    expect(out.result).toEqual({ value: "c1", at: 2 });
+  });
+});
+
 describe("an edit", () => {
   test("a tool that reports the same edit on every overlapping poll raises it once", async () => {
     const r = rig();

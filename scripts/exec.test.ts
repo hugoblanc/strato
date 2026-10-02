@@ -282,6 +282,23 @@ describe("timeouts, crashes and restarts", () => {
     expect(await errorOf(() => describeExec({ id: "tickets", argv: [process.execPath, FIXTURE, "--mode", "old-protocol"], cwd: SCRIPTS }))).toMatchObject({ code: "protocol_version" });
   }, 30_000);
 
+  test("a call that comes while the process shuts down waits for it to end, then gets a process of its own", async () => {
+    const { p } = await host("normal", { timeouts: { shutdown: 400, connect: 2_000 }, cancelGraceMs: 200 });
+    const ctx = ctxOf();
+    await p.connect(ctx);
+    const pid = p.processes()[0].pid;
+    // the shutdown is on its way (the idle delay's, or a command's end) when the next call arrives
+    const stopping = p.stopAll();
+    expect(await p.connect(ctx)).toMatchObject({ me: "u-alice" });
+    await stopping;
+    const after = p.processes()[0];
+    expect(after.pid).not.toBe(pid);
+    expect(after.crashes).toBe(0);
+    // the new process is not killed later for the old one's shutdown
+    await Bun.sleep(700);
+    expect(p.processes()[0]).toMatchObject({ pid: after.pid, crashes: 0 });
+  }, 30_000);
+
   test("setup's verify step runs a throwaway process with the candidate secret; an idle process stops by itself", async () => {
     const tool = fakeTool();
     const { p } = await host("normal", { idleMs: 100 });
