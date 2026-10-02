@@ -344,7 +344,7 @@ Then `initialize` gives `{ api, strato, locale, account: { id, label, auth, sett
 | `shutdown` | `{}` | `{ ok: true }`, then exit | 5 s |
 
 A method you do not implement answers error -32601; its capability must then be absent from the descriptor.
-`replies` and `complete` may answer -32601: Strato stops asking for that process.
+`replies`, `complete`, `setup.detect` and `setup.check` may answer -32601: Strato stops asking for that process, and a connect goes on with nothing detected and nothing to check.
 
 **Requests from the provider**, answered by Strato while its own request is pending (or while subscribed):
 

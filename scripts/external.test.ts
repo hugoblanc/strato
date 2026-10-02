@@ -287,6 +287,20 @@ describe("a one-shot command that started an exec provider ends", () => {
   }, 60_000);
 });
 
+describe("setup --connect of an exec provider", () => {
+  test("a process without setup.detect connects: an unimplemented method is a capability it lacks, not a refusal", async () => {
+    const r = rig();
+    await trustedExec(r);
+    const preload = join(r.dir, "tickets-preload.ts");
+    const res = await inTerminal(r, [process.execPath, "--preload", preload, CLI, "setup", "--connect", "tickets"], { prompt: "Paste your API key", answer: "tk-acme-new-000000", timeoutMs: 30_000 });
+    if (!res) return; // no python3 to play the terminal
+    expect(res.out).not.toContain("refused");
+    expect(res.out).toContain("u-alice");
+    expect(res.exit).toBe(0);
+    expect(readFileSync(join(r.dir, "tickets.env"), "utf8")).toContain("TICKETS_API_KEY=tk-acme-new-000000");
+  }, 60_000);
+});
+
 describe("the parts of a module that run inside the board", () => {
   test("its rendering is plain text escaped by Strato, and a pure function that throws reads as nothing to say", async () => {
     const r = rig();

@@ -533,6 +533,16 @@ function buildExecProvider(o: ExecHostOptions): ExecProvider {
   };
   const c = o.descriptor.capabilities;
   const call = <R>(ctx: AccountContext, method: keyof ExecMethods, params: unknown = {}, during: During = "read") => channel(ctx).call(method, params, ctx, during) as Promise<R>;
+  /** A method the process may not implement: null when it said it has none (now or on an earlier call). */
+  const optional = async (ctx: AccountContext, method: "setup.detect" | "setup.check"): Promise<{ fields?: unknown; items?: unknown } | null> => {
+    if (channel(ctx).unsupported.has(method)) return null;
+    try {
+      return await call<{ fields?: unknown; items?: unknown }>(ctx, method);
+    } catch (e) {
+      if (providerError(e).code === "unsupported") return null;
+      throw e;
+    }
+  };
 
   return {
     descriptor: o.descriptor,
@@ -576,9 +586,10 @@ function buildExecProvider(o: ExecHostOptions): ExecProvider {
     ...(c.context ? { context: (ctx: AccountContext, thread: string, opts: { since?: number; max: number }) => call<ContextResult>(ctx, "context", { thread, ...opts }) } : {}),
     ...(c.actions.length ? { act: (ctx: AccountContext, input: Parameters<NonNullable<Provider["act"]>>[1]) => call<ActResult>(ctx, "act", input, "write") } : {}),
     ...(c.undo.length ? { undo: (ctx: AccountContext, token: string) => call<ActResult>(ctx, "undo", { token }, "write") } : {}),
+    // both optional: a process that answers -32601 has nothing to detect or check, which never fails a connect
     setup: {
-      detect: async (ctx) => ((await call<{ fields?: unknown }>(ctx, "setup.detect"))?.fields ?? {}) as Awaited<ReturnType<NonNullable<NonNullable<Provider["setup"]>["detect"]>>>,
-      check: async (ctx) => ((await call<{ items?: unknown }>(ctx, "setup.check"))?.items ?? []) as Awaited<ReturnType<NonNullable<NonNullable<Provider["setup"]>["check"]>>>,
+      detect: async (ctx) => ((await optional(ctx, "setup.detect"))?.fields ?? {}) as Awaited<ReturnType<NonNullable<NonNullable<Provider["setup"]>["detect"]>>>,
+      check: async (ctx) => ((await optional(ctx, "setup.check"))?.items ?? []) as Awaited<ReturnType<NonNullable<NonNullable<Provider["setup"]>["check"]>>>,
     },
     async stopAll() {
       await Promise.all([...channels.values()].map((ch) => ch.shutdown()));
