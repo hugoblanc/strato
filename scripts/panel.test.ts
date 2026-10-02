@@ -173,6 +173,14 @@ describe("pane views", () => {
     expect(html).toContain('href="/?liste" data-nav>tous les sujets</a>');
   });
 
+  test("a draft's destination: the typed target the gate sends to comes first, the session's words only describe it", () => {
+    const task = { id: "t1", kind: "draft" as const, ask: "a", proposal: "", draft: "Done.", createdAt: G.createdAt, updatedAt: G.updatedAt, status: "open" as const, origin: "task" as const };
+    const both = sujetView({ ...G, tasks: [{ ...task, to: "slack:C0ACMEANN01", draftTo: "DM Grace" }] }, [], null, ctx);
+    expect(both).toContain('<dd>C0ACMEANN01, <a href="https://acme.slack.com/archives/C0ACMEANN01" data-open>https://acme.slack.com/archives/C0ACMEANN01</a> (DM Grace)</dd>');
+    const words = sujetView({ ...G, tasks: [{ ...task, draftTo: "DM Grace" }] }, [], null, ctx);
+    expect(words).toContain("<dd>DM Grace</dd>");
+  });
+
   test("without a report or Slack, the pane says so", () => {
     const html = sujetView(G, [], null, { ...ctx, slackError: "aucun token Slack" });
     expect(html).toContain("pas de rapport");

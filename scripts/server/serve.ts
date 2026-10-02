@@ -12,7 +12,7 @@ import { deliverToSujet } from "../app/deliver.ts";
 import { deliveryTracker } from "../app/gitlab.ts";
 import { pickCards, refreshCards } from "../commands/refresh.ts";
 import { SHADOW_REFUSAL, shadowNow } from "../commands/setup.ts";
-import { actDone, type ActOutcome, actOnTask, undoTask } from "../app/act.ts";
+import { actDone, type ActOutcome, actOnTask, refuseAct, undoTask } from "../app/act.ts";
 import { connectSlack, hasSlackToken, NO_TOKEN, threadDump } from "../app/slack.ts";
 import { ensureState, loadSujets, logEvent, reportOf, saveUpload, updateSujet, withLock } from "../app/store.ts";
 import { type BoardEvent, boardPage, type BoardSession, boardView, buildBoard, draftConflict, type LiveState, type VersionState, versionControl } from "../board.ts";
@@ -857,13 +857,20 @@ export async function serve(args: string[]) {
       if (route === "POST /api/post-draft") {
         // the server posts the text shown (or edited) on the board, and only if the task still carries the draft and the
         // destination that were read: otherwise 409, and the board asks to reread (see draftConflict)
+        const given = typeof body.sha === "string" && body.sha ? body.sha : null;
+        const refuseStale = (message: string, code: "sha" | "task") => {
+          refuseAct({ key: s.key, taskId, by: "board", ...(given ? { sha: given } : {}) }, { code, message });
+          return Response.json({ error: message, code: "draft-changed" }, { status: 409 });
+        };
         const conflict = draftConflict(s, body);
-        if (conflict) return Response.json({ error: conflict, code: "draft-changed" }, { status: 409 });
+        if (conflict) return refuseStale(conflict, findTask(s, taskId)?.status === "open" ? "sha" : "task");
         const task = findTask(s, taskId) as Task;
         const text = typeof body.text === "string" ? body.text : "";
+        // a page older than the hash knew nothing of typed targets: it cannot have shown a task's `to`
+        if (!given && task.to) return refuseStale(t("board.api.draftOldPage"), "sha");
         // the hash of the plan the page showed; a page older than the hash showed the draft and destination it sent back
         const shown = planOfTask(s, { ...task, draft: typeof body.draft === "string" ? body.draft : "", draftTo: typeof body.draftTo === "string" ? body.draftTo : "" });
-        const sha = typeof body.sha === "string" && body.sha ? body.sha : "plan" in shown ? planSha(shown.plan) : "";
+        const sha = given ?? ("plan" in shown ? planSha(shown.plan) : "");
         const r = await postDraft(s, taskId, text.replace(/\r\n/g, "\n").trim() === taskDraftText(task) ? null : text, sha, body.retry === true);
         boardChanged();
         return r.ok ? Response.json(r) : Response.json({ error: r.error, ...(r.code ? { code: r.code } : {}) }, { status: r.status });

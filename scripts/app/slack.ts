@@ -107,8 +107,11 @@ export class SlackClient {
     return body;
   }
 
-  /** A write call (chat.postMessage, chat.delete): as a POST, the text does not travel in the URL. */
-  async post(method: string, params: Record<string, string>): Promise<SlackBody> {
+  /**
+   * A write call (chat.postMessage, chat.delete): as a POST, the text does not travel in the URL. Only the Slack
+   * provider's writes (providers/slack/act.ts) call it, behind the gate: act.test.ts fails if anything else does.
+   */
+  async postWrite(method: string, params: Record<string, string>): Promise<SlackBody> {
     const res = await this.http()(`https://slack.com/api/${method}`, {
       method: "POST",
       headers: { Authorization: `Bearer ${this.token}`, "Content-Type": "application/x-www-form-urlencoded; charset=utf-8" },
@@ -293,9 +296,6 @@ export const users = defaultSlack.users;
 
 /** A token of the right workspace was already found: calls can go out without `connectSlack`. */
 export const hasSlackToken = () => defaultSlack.token !== "";
-
-/** A write call of the default account (chat.postMessage, chat.delete). */
-export const slackPost = (method: string, params: Record<string, string>): Promise<SlackBody> => defaultSlack.post(method, params);
 
 export const slack = (method: string, params: Record<string, string | number> = {}): Promise<SlackBody> => defaultSlack.call(method, params);
 

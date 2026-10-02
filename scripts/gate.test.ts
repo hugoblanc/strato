@@ -121,6 +121,13 @@ describe("refusals before any provider call", () => {
     expect(planRefusal(plan, { ...SLACK, descriptor: { ...SLACK_DESCRIPTOR, audience: { reply: { visibility: { default: "internal" } } } } })).toMatchObject({ code: "target" });
   });
 
+  test("a plan of more than one action, or of none, is refused: only what goes out is hashed and logged", () => {
+    const plan = planOf(topic(), task());
+    expect(planRefusal({ ...plan, actions: [...plan.actions, plan.actions[0]] }, SLACK)).toMatchObject({ code: "plan" });
+    expect(planRefusal({ ...plan, actions: [] }, SLACK)).toMatchObject({ code: "plan" });
+    expect(planRefusal(plan, SLACK)).toBeNull();
+  });
+
   test("a write on its way refuses a second Go; past the stale limit it may have gone out, and only a retry sends again", () => {
     const at = Date.parse(T);
     const inFlight = { at: T, by: "board" as const, sha: "x", attempt: 1 };

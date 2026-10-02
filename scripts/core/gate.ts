@@ -15,7 +15,11 @@ import { postOnlyAction, type Sujet } from "./sujet.ts";
 import { isResolved, resolveTarget, toolLabel } from "./targets.ts";
 import { sendsUnseenMessage, type Task, taskDraftText } from "./tasks.ts";
 
-/** What one Go approves: one or more actions through one account, carried out in order. */
+/**
+ * What one Go approves: actions through one account. The type allows several, carried out in order, but until ordered
+ * execution exists the gate refuses a plan of more than one action (`planRefusal`): what is hashed, logged and recorded
+ * is always exactly what went out.
+ */
 export interface ActionPlan {
   provider: string;
   account: string;
@@ -52,12 +56,15 @@ export interface SentRecord {
   link: string;
   /** How to take it back, until when (ms), and which action it takes back. */
   undo?: { token: string; until: number; kind: ActionKind };
-  /** The topic's fields before the act, put back by an Undo. */
-  restore?: { status: string; waiting: string; posted?: string };
+  /**
+   * The topic's fields before the act, put back by an Undo. Not its status: reopening the task settles it from the
+   * tasks (`reopenTask`). A record written by an earlier version may still carry a `status`, ignored.
+   */
+  restore?: { waiting: string; posted?: string };
 }
 
 /** Why the gate refuses; the board maps the code to an HTTP status. */
-export type RefusalCode = "shadow" | "missing" | "topic" | "task" | "sent" | "empty" | "target" | "tool" | "capability" | "tooLong" | "notPostOnly" | "unseen" | "sha" | "busy" | "unknown" | "nothingToUndo";
+export type RefusalCode = "shadow" | "plan" | "missing" | "topic" | "task" | "sent" | "empty" | "target" | "tool" | "capability" | "tooLong" | "notPostOnly" | "unseen" | "sha" | "busy" | "unknown" | "nothingToUndo";
 
 export interface Refusal {
   code: RefusalCode;
@@ -203,10 +210,11 @@ export function taskRefusal(input: {
   return null;
 }
 
-/** The account can carry out every action of the plan, with the audience its tool requires and within its length. */
+/** The plan is one action, and the account can carry it out, with the audience its tool requires and within its length. */
 export function planRefusal(plan: ActionPlan, account: GateAccount): Refusal | null {
   const tool = toolLabel(plan.provider, plan.account);
   if (!account.usable || !account.descriptor) return refuse("tool", t("gate.noTool", { tool }));
+  if (plan.actions.length !== 1) return refuse("plan", t("gate.oneAction", { n: plan.actions.length }));
   const missing = plan.actions.map((a) => a.kind).filter((k) => !account.actions.includes(k));
   if (missing.length) return refuse("capability", t("gate.cannot", { tool, kinds: missing.join(", ") }));
   for (const a of plan.actions) {

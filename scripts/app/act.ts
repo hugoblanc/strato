@@ -45,6 +45,15 @@ function logRefusal(by: ActOrigin, key: string, task: string | null, r: Refusal,
   logEvent({ type: "act-refused", by, key, task, reason: r.code, ...(sha ? { sha: short(sha) } : {}) });
 }
 
+/**
+ * A Go the caller refuses before the gate runs (the board: the page that sent it no longer shows what is on disk):
+ * logged like the gate's own refusals, so that every refused Go is in the event log.
+ */
+export function refuseAct(req: { key: string; taskId: string | null; by: ActOrigin; sha?: string }, r: Refusal): ActOutcome {
+  logRefusal(req.by, req.key, req.taskId, r, req.sha);
+  return { ok: false, refused: r };
+}
+
 /** Rewrites one task of a topic. */
 function patchTask(s: Sujet, id: string, fn: (x: Task) => Task): Sujet {
   return { ...s, tasks: tasksOf(s).map((x) => (x.id === id ? fn(x) : x)) };
@@ -112,7 +121,7 @@ export async function actOnTask(req: { key: string; taskId: string; sha: string;
   const p = prepared as { plan: ActionPlan; sha: string; attempt: number; entry: AccountEntry } | null;
   if (!p) {
     const r = (refused ?? { code: "missing", message: t("board.api.topicMissing") }) as Refusal;
-    logRefusal(req.by, req.key, req.taskId, r);
+    logRefusal(req.by, req.key, req.taskId, r, req.sha);
     return { ok: false, refused: r };
   }
   const actor = actorOf(p.entry);
@@ -125,7 +134,7 @@ export async function actOnTask(req: { key: string; taskId: string; sha: string;
   if (result.ok) {
     const sent: SentRecord = { plan: p.plan, sha: p.sha, at, by: req.by, ref: result.ref, link: result.link, ...(result.undo ? { undo: { ...result.undo, kind: action.kind } } : {}) };
     const topic = await updateSujet(req.key, (s) => {
-      const restore = { status: s.status, waiting: s.waiting, ...(s.posted !== undefined ? { posted: s.posted } : {}) };
+      const restore = { waiting: s.waiting, ...(s.posted !== undefined ? { posted: s.posted } : {}) };
       let next = patchTask(s, req.taskId, (x) => ({ ...settled(x), sent: { ...sent, restore } }));
       // the task may have been closed meanwhile (the session, another tab): the message is out, the record stays
       if (findTask(next, req.taskId)?.status === "open") next = closeTask(next, req.taskId, "done", at, t("task.note.posted", { permalink: result.link }));
@@ -182,8 +191,9 @@ export async function actDone(req: { key: string; by: ActOrigin; after?: (s: Suj
 
 /**
  * Undo of a task's write within the provider's window: the click is the person's Go on taking it back. On success the
- * task reopens without its sent record, its attempt grows (a resend gets a new idempotency key), and the topic's
- * fields come back as they were before the act; `after` adds the caller's own changes in the same write.
+ * task reopens without its sent record, its attempt grows (a resend gets a new idempotency key), the topic's `waiting`
+ * and `posted` come back as they were before the act, and its status is settled again from its tasks (`reopenTask`);
+ * `after` adds the caller's own changes in the same write.
  */
 export async function undoTask(req: { key: string; taskId: string; by: ActOrigin; after?: (s: Sujet) => Sujet }): Promise<ActOutcome> {
   const shadow = shadowNow();

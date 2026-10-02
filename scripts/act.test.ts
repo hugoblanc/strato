@@ -6,12 +6,15 @@
  */
 import { afterEach, describe, expect, test } from "bun:test";
 import { readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
-import { join, relative } from "node:path";
+import { join, posix, relative } from "node:path";
 import { cleanupRigs, cli, KEY, LINK, lines, postBoard, readSujets, type Rig, rig, SCRIPTS, startServe, sujet, writeSujets } from "./test-rig.ts";
 
 afterEach(cleanupRigs);
 
-/** Slack replaced in the serve process: each call is logged with its form body; FAKE_POST_FAIL=network makes the first chat.postMessage fail without an answer. */
+/**
+ * Slack replaced in the serve process: each call is logged with its form body; FAKE_POST_FAIL=network makes the first
+ * chat.postMessage fail without an answer, FAKE_DELETE_FAIL=refused makes Slack refuse every chat.delete.
+ */
 const FAKE_SLACK = `import { appendFileSync, existsSync, writeFileSync } from "node:fs";
 const real = globalThis.fetch;
 globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -26,7 +29,8 @@ globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
     throw new TypeError("fetch failed: socket hang up");
   }
   const reply =
-    method === "auth.test" ? { ok: true, team: "Acme", user_id: "UALICE", url: "https://acme.slack.com/" }
+    method === "chat.delete" && process.env.FAKE_DELETE_FAIL === "refused" ? { ok: false, error: "cant_delete_message" }
+    : method === "auth.test" ? { ok: true, team: "Acme", user_id: "UALICE", url: "https://acme.slack.com/" }
     : method === "chat.postMessage" ? { ok: true, ts: "1759219400.000300" }
     : method === "conversations.replies" ? { ok: true, messages: [{ ts: "1759219200.000100" }] }
     : { ok: true };
@@ -165,8 +169,12 @@ describe("the board's writes go through the gate", () => {
       expect(((await first.json()) as { code: string }).code).toBe("unknown");
       expect(taskOf(r)).toMatchObject({ status: "open", unknown: { sha, attempt: 1 } });
       expect(events(r).find((e) => e.type === "act")).toMatchObject({ ok: false, outcome: "unknown" });
-      // the board says so before any new click
-      expect(await (await fetch(`http://127.0.0.1:${serve.port}/board`)).text()).toContain("may have gone out");
+      // the board says so before any new click, and a reloaded page's Send is already "Send again"
+      const page = await (await fetch(`http://127.0.0.1:${serve.port}/board`)).text();
+      expect(page).toContain("may have gone out");
+      const form = page.match(/<form[^>]*data-task="t1"[^>]*>/)?.[0] ?? "";
+      expect(form).toContain(" data-retry");
+      expect(page.slice(page.indexOf(form))).toMatch(/data-post[^>]*><span data-label>Send again<\/span>/);
       const again = await send(serve.port, sha);
       expect(again.status).toBe(409);
       expect(((await again.json()) as { code: string }).code).toBe("unknown");
@@ -174,6 +182,92 @@ describe("the board's writes go through the gate", () => {
       expect(posts(r)).toHaveLength(2);
       expect(taskOf(r)).toMatchObject({ status: "done" });
       expect(taskOf(r).unknown).toBeUndefined();
+    } finally {
+      await serve.stop();
+    }
+  }, 30_000);
+
+  test("Slack refuses the Undo: 502, the refusal logged, the task stays done, the note to the session stays pending", async () => {
+    const r = rig();
+    writeSujets(r, [draftTopic()]);
+    const serve = await serveWithSlack(r, { FAKE_DELETE_FAIL: "refused" });
+    try {
+      expect((await send(serve.port, await shownSha(serve.port))).status).toBe(200);
+      const res = await postBoard(serve.port, "/api/unpost", { key: KEY, taskId: "t1" });
+      expect(res.status).toBe(502);
+      expect(((await res.json()) as { error: string }).error).toContain("cant_delete_message");
+      expect(events(r).find((e) => e.type === "act-undo")).toMatchObject({ by: "board", key: KEY, task: "t1", ok: false, error: "cant_delete_message" });
+      expect(taskOf(r).status).toBe("done");
+      // the message is still in the thread: the session learns about it when the window ends, as after any post
+      expect(readSujets(r)[0].notify?.byTask).toHaveProperty("t1");
+      // the undo token was used by that attempt: nothing is deleted twice
+      expect((await postBoard(serve.port, "/api/unpost", { key: KEY, taskId: "t1" })).status).toBe(409);
+      expect(slackCalls(r).filter((l) => l.startsWith("chat.delete "))).toHaveLength(1);
+    } finally {
+      await serve.stop();
+    }
+  }, 30_000);
+
+  test("Undo of an action the provider cannot take back: refused before any call, logged", async () => {
+    const r = rig();
+    const sent = { plan: { provider: "slack", account: "default", actions: [{ kind: "comment", target: { scope: "item", native: KEY }, text: "x" }] }, sha: "a".repeat(64), at: T, by: "board", ref: KEY, link: LINK, undo: { token: `message:${KEY}`, until: Date.now() + 60_000, kind: "comment" } };
+    writeSujets(r, [draftTopic({ status: "done", closedAt: T, sent })]);
+    const serve = await serveWithSlack(r);
+    try {
+      expect((await postBoard(serve.port, "/api/unpost", { key: KEY, taskId: "t1" })).status).toBe(409);
+      expect(slackCalls(r).filter((l) => l.startsWith("chat.delete ") || l.startsWith("reactions.remove "))).toEqual([]);
+      expect(events(r).find((e) => e.type === "act-refused")).toMatchObject({ task: "t1", reason: "capability" });
+    } finally {
+      await serve.stop();
+    }
+  }, 30_000);
+
+  test("a double click on Send: two Goes at once, one message", async () => {
+    const r = rig();
+    writeSujets(r, [draftTopic()]);
+    const serve = await serveWithSlack(r);
+    try {
+      const sha = await shownSha(serve.port);
+      const codes = (await Promise.all([send(serve.port, sha), send(serve.port, sha)])).map((x) => x.status).sort();
+      expect(codes).toEqual([200, 409]);
+      expect(posts(r)).toHaveLength(1);
+      expect(taskOf(r).status).toBe("done");
+    } finally {
+      await serve.stop();
+    }
+  }, 30_000);
+
+  test("a page that no longer shows what is on disk: refused before the gate, and still logged with the hash it sent", async () => {
+    const r = rig();
+    writeSujets(r, [draftTopic()]);
+    const serve = await serveWithSlack(r);
+    try {
+      const sha = await shownSha(serve.port);
+      writeSujets(r, [draftTopic({ draft: "A rewritten answer." })]);
+      const res = await send(serve.port, sha);
+      expect(res.status).toBe(409);
+      expect(((await res.json()) as { code: string }).code).toBe("draft-changed");
+      expect(events(r).find((e) => e.type === "act-refused")).toMatchObject({ by: "board", key: KEY, task: "t1", reason: "sha", sha: sha.slice(0, 12) });
+      expect(posts(r)).toEqual([]);
+    } finally {
+      await serve.stop();
+    }
+  }, 30_000);
+
+  test("a page older than the hash cannot have shown a typed target: no hash and a `to` is refused", async () => {
+    const r = rig();
+    writeSujets(r, [draftTopic({ to: "C0ACME0001:1759219300.000200" })]);
+    const serve = await serveWithSlack(r);
+    try {
+      const res = await send(serve.port, "");
+      expect(res.status).toBe(409);
+      expect(((await res.json()) as { code: string }).code).toBe("draft-changed");
+      expect(posts(r)).toEqual([]);
+      expect(events(r).find((e) => e.type === "act-refused")).toMatchObject({ task: "t1", reason: "sha" });
+      // without a `to`, an old page's draft and destination still stand for the hash, as before
+      writeSujets(r, [draftTopic()]);
+      expect((await send(serve.port, "")).status).toBe(200);
+      expect(posts(r)).toHaveLength(1);
     } finally {
       await serve.stop();
     }
@@ -228,23 +322,78 @@ function sources(dir = SCRIPTS): string[] {
   });
 }
 
+/** One source file as the scan reads it: its relative imports resolved to paths of the program, its code without comments nor types. */
+interface Scanned {
+  file: string;
+  imports: string[];
+  code: string;
+}
+
+const transpiler = new Bun.Transpiler({ loader: "ts" });
+
+/** A source file read by Bun's own parser: an import is found whatever its form (static, dynamic, re-export, alias). */
+function scan(file: string, raw: string): Scanned {
+  const src = raw.replace(/^#!.*/, "");
+  const imports = transpiler
+    .scanImports(src)
+    .map((i) => i.path)
+    .filter((p) => p.startsWith("."))
+    .map((p) => posix.normalize(posix.join(posix.dirname(file), p)));
+  return { file, imports, code: transpiler.transformSync(src) };
+}
+
+const WRITES = /^providers\/[^/]+\/act\.ts$/;
+
+/**
+ * What breaks the one act path in a set of source files; empty when only app/act.ts reaches a provider's writes:
+ * - a provider's writes module (providers/<id>/act.ts) is imported by the registry only, a sibling module included;
+ * - `actorOf`, the registry's door to the writes, is named by app/act.ts and the registry only;
+ * - Slack's write transport (`SlackClient.postWrite`) and Slack's write methods (chat.*, reactions.*, pins.*) are named
+ *   in a provider's writes module only, and GraphQL mutations likewise;
+ * - Slack's API host is named where the client and setup's own reads live, not anywhere a write could be built by hand.
+ */
+function actPathViolations(files: Scanned[]): string[] {
+  const out: string[] = [];
+  for (const f of files) {
+    const writer = WRITES.test(f.file);
+    for (const i of f.imports) if (WRITES.test(i) && f.file !== "providers/registry.ts") out.push(`${f.file} imports ${i}`);
+    if (/\bactorOf\b/.test(f.code) && f.file !== "app/act.ts" && f.file !== "providers/registry.ts") out.push(`${f.file} names actorOf`);
+    if (/\bpostWrite\b/.test(f.code) && !writer && f.file !== "app/slack.ts") out.push(`${f.file} names Slack's write transport`);
+    if (/["'`](chat|reactions|pins)\./.test(f.code) && !writer) out.push(`${f.file} names a Slack write method`);
+    if (/\bmutation\b/.test(f.code) && !writer) out.push(`${f.file} names a GraphQL mutation`);
+    if (/slack\.com\/api/.test(f.code) && f.file !== "app/slack.ts" && f.file !== "commands/setup.ts") out.push(`${f.file} names Slack's API host`);
+  }
+  return out;
+}
+
+const program = () => sources().map((f) => scan(f, readFileSync(join(SCRIPTS, f), "utf8")));
+
 describe("one act path", () => {
-  test("only app/act.ts calls a provider's act or undo, and only it imports the registry's actorOf", () => {
-    const files = sources();
-    expect(files).toContain("app/act.ts");
-    const calls = files.filter((f) => /\.(act|undo)\s*\(|\bactor\??\.(act|undo)\b/.test(readFileSync(join(SCRIPTS, f), "utf8")));
-    expect(calls).toEqual(["app/act.ts"]);
-    const actorOf = files.filter((f) => /\bactorOf\b/.test(readFileSync(join(SCRIPTS, f), "utf8")));
-    expect(actorOf.sort()).toEqual(["app/act.ts", "providers/registry.ts"]);
+  test("only app/act.ts reaches a provider's writes, through the registry's actorOf", () => {
+    const files = program();
+    expect(files.map((f) => f.file)).toContain("app/act.ts");
+    expect(files.filter((f) => WRITES.test(f.file)).map((f) => f.file)).toEqual(["providers/slack/act.ts"]);
+    expect(files.filter((f) => f.imports.includes("providers/slack/act.ts")).map((f) => f.file)).toEqual(["providers/registry.ts"]);
+    expect(actPathViolations(files)).toEqual([]);
   });
 
-  test("a provider's writes live in a module only the registry imports", () => {
-    const writes = sources().filter((f) => /^providers\/[^/]+\/act\.ts$/.test(f));
-    expect(writes).toEqual(["providers/slack/act.ts"]);
-    for (const w of writes) {
-      const name = w.split("/").slice(1).join("/").replace(/\.ts$/, "");
-      const importers = sources().filter((f) => f !== w && readFileSync(join(SCRIPTS, f), "utf8").includes(`${name}.ts"`));
-      expect(importers).toEqual(["providers/registry.ts"]);
+  test("the scan catches every way around it", () => {
+    const files = program();
+    const reg = "../providers/registry.ts";
+    // each one, added to the program alone, must be reported
+    const sneaky: Record<string, string> = {
+      "providers/slack/index.ts": `${readFileSync(join(SCRIPTS, "providers/slack/index.ts"), "utf8")}\nimport { slackWrites as w } from "./act.ts";\nexport const go = (c: never) => { const f = w.act; return f(c, c); };\n`,
+      "app/sneaky-alias.ts": `import { defaultSlack } from "./slack.ts";\nexport const go = () => { const p = defaultSlack["postWrite"]; return p.call(defaultSlack, "x", {}); };\n`,
+      "app/sneaky-method.ts": `import { slack } from "./slack.ts";\nexport const go = () => slack("chat.postMessage", { channel: "C1", text: "hi" });\n`,
+      "app/sneaky-actor.ts": `import * as r from ${JSON.stringify(reg)};\nexport const go = (e: never) => r.actorOf(e);\n`,
+      "server/sneaky-reexport.ts": `export { slackWrites } from "../providers/slack/act.ts";\n`,
+      "server/sneaky-dynamic.ts": `export const go = async () => (await import("../providers/slack/act.ts")).slackWrites;\n`,
+      "core/sneaky-fetch.ts": `export const go = (m: string) => fetch("https://slack.com/api/" + m, { method: "POST" });\n`,
+      "providers/tickets/index.ts": `export const go = (q: (s: string) => void) => q("mutation { issueDelete(id: 1) { success } }");\n`,
+    };
+    for (const [file, src] of Object.entries(sneaky)) {
+      const patched = [...files.filter((f) => f.file !== file), scan(file, src)];
+      expect(actPathViolations(patched).some((v) => v.startsWith(`${file} `))).toBe(true);
     }
   });
 

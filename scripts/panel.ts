@@ -185,13 +185,17 @@ function threadLabel(key: string, channel: string | undefined, ctx: PanelContext
   return `${thread.tool} ${channel ?? thread.conversation}${when}`;
 }
 
-/** Where a draft goes, for the card: the session's words, or the typed target as its tool names it, with its link. */
+/**
+ * Where a draft goes, for the card. A typed target (`to`) is what the gate sends to, so it comes first, as its tool
+ * names it, with its link; the session's words (`draftTo`) follow only as a description. Without one, the words.
+ */
 function destinationText(s: Sujet, x: Task): string | undefined {
-  if (x.draftTo?.trim() || !x.to) return x.draftTo;
+  if (!x.to) return x.draftTo;
   const r = resolveTarget(s, x);
-  if (!isResolved(r)) return x.to;
-  const url = targetLink(r);
-  return url ? `${r.target.label}, ${url}` : r.target.label;
+  const url = isResolved(r) ? targetLink(r) : null;
+  const target = isResolved(r) ? (url ? `${r.target.label}, ${url}` : r.target.label) : x.to;
+  const words = x.draftTo?.trim();
+  return words ? `${target} (${words})` : target;
 }
 
 function messageItem(m: ThreadDump["messages"][number]): string {

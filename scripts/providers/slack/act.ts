@@ -59,7 +59,7 @@ export const slackWrites: Required<Pick<Provider, "act" | "undo">> = {
           } catch {}
         }
         sent = true;
-        const r = await client.post("chat.postMessage", root ? { channel, thread_ts: root, text: a.text } : { channel, text: a.text });
+        const r = await client.postWrite("chat.postMessage", root ? { channel, thread_ts: root, text: a.text } : { channel, text: a.text });
         return { ok: true, ref: `${channel}:${r.ts}`, link: permalinkFor(base, channel, r.ts, root), undo: { token: `message:${channel}:${r.ts}`, until: undoUntil() } };
       }
       const item = split(a.target.native);
@@ -68,7 +68,7 @@ export const slackWrites: Required<Pick<Provider, "act" | "undo">> = {
       if (a.kind === "react") {
         sent = true;
         try {
-          await client.post("reactions.add", { channel: item.channel, timestamp: item.ts, name: a.emoji });
+          await client.postWrite("reactions.add", { channel: item.channel, timestamp: item.ts, name: a.emoji });
         } catch (e) {
           // already added by hand: that is the intended result, and there is nothing of ours to take back
           if (e instanceof SlackError && e.code === "already_reacted") return { ok: true, ref: a.target.native, link };
@@ -78,7 +78,7 @@ export const slackWrites: Required<Pick<Provider, "act" | "undo">> = {
       }
       if (a.kind === "delete") {
         sent = true;
-        await client.post("chat.delete", { channel: item.channel, ts: item.ts });
+        await client.postWrite("chat.delete", { channel: item.channel, ts: item.ts });
         return { ok: true, ref: a.target.native, link };
       }
       return failed({ code: "unsupported", message: `Slack cannot ${a.kind}`, retryable: false, fatal: false, outcome: "none" });
@@ -94,8 +94,8 @@ export const slackWrites: Required<Pick<Provider, "act" | "undo">> = {
     const client = await readyClient(ctx);
     if (!client) return failed({ code: "no_token", message: NO_TOKEN(settings().slack), retryable: false, fatal: true, outcome: "none" });
     try {
-      if (m[1] === "message") await client.post("chat.delete", { channel: m[2], ts: m[3] });
-      else await client.post("reactions.remove", { channel: m[2], timestamp: m[3], name: m[4] });
+      if (m[1] === "message") await client.postWrite("chat.delete", { channel: m[2], ts: m[3] });
+      else await client.postWrite("reactions.remove", { channel: m[2], timestamp: m[3], name: m[4] });
       return { ok: true, ref: `${m[2]}:${m[3]}`, link: "" };
     } catch (e) {
       return failed(writeError(e, true));
