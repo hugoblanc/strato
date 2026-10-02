@@ -39,6 +39,7 @@ Type the command in full every time (`$STRATO doctor` is `strato doctor`, or `bu
 | `$STRATO digest [--since 6h]` | Messages set aside (third parties, bots) since the last digest, grouped by channel, without any Slack call |
 | `$STRATO gates` | One line per open topic: `A · asker (channel) · request → proposal · [gate]` |
 | `$STRATO card <topic>` | The card: why it is for the owner, what is not checked, the exact action, the report, `claude attach` |
+| `$STRATO context <topic \| key \| link> [--since 2h] [--max 200]` | Prints a thread as plain text, read through its tool with the account Strato already uses: a key or a link names one thread, a letter or a session id every thread of the topic. Third-party text is neutralized and framed as data. Sessions read their topic this way; MCP servers stay optional |
 | `$STRATO term <topic>` | Joins the topic's session in the current terminal (`claude attach`), or resumes it if stopped (`claude --resume`). This is what the board's terminal drawer runs |
 | `$STRATO dive <topic \| Slack link>` | Opens the topic's session in a new iTerm2 tab of the window the command runs from, and writes its sheet (card, full Slack threads, report) in `<state>/dive/`. `--window` uses the dive window, `--no-tab` only writes the sheet |
 | `$STRATO serve [--port N]` | Local server of the board and of the iTerm2 panel, on 127.0.0.1 only, port `ui.port` by default |
@@ -418,7 +419,7 @@ Decide, in this order:
 3. **Doubtful attachment**: ask the owner in one line, with the most likely hypothesis.
 4. **Work request**: `$STRATO open --msg <id> --title "<4 to 6 words>"`, no line to the owner: the topic shows up on the board.
 
-To triage, the master may reread the thread (Slack MCP, `conversations_replies`), within its three-read budget.
+To triage, the master may reread the thread with `$STRATO context <key or link>` (or the Slack MCP's `conversations_replies`), within its three-read budget.
 
 ### `session`: a work session finished its turn or is blocked
 

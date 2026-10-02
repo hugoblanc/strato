@@ -9,14 +9,14 @@ import { appToken, connectSlack, NO_TOKEN } from "../app/slack.ts";
 import { claimResume, createSujet, dropSujet, endResume, ensureState, loadSujets, logEvent, messageOf, mutateSujets, requireSujet, reserveLetter, updateSujet } from "../app/store.ts";
 import { attention, inboundNote, isStuck, routeDecision } from "../claude/model.ts";
 import { gateLine } from "../core/cards.ts";
-import { locale } from "../core/i18n.ts";
+import { locale, t } from "../core/i18n.ts";
 import { canonicalKey, conversationOfKey, parseKey, sujetKey, threadOfKey, ticketUrl } from "../core/keys.ts";
 import { providerLabel } from "../core/links.ts";
 import { missingSettings, settings } from "../core/settings.ts";
 import { nextLine, short } from "./setup.ts";
 import { applyAssignments, attachThread, findSujet, parseAssignments, type Sujet, sujetKeys, type Trigger } from "../core/sujet.ts";
 import { reportFile, sessionName, truncate } from "../core/text.ts";
-import { DEFAULT_POLICY_DIR, followUpMessage, POLICY_TEMPLATES, policySource, ticketPrompt, workerPrompt } from "../policy/prompts.ts";
+import { DEFAULT_POLICY_DIR, followUpMessage, POLICY_TEMPLATES, policySource, shadowedPolicyNames, ticketPrompt, usesTopicWords, workerPrompt } from "../policy/prompts.ts";
 
 // ------------------------------------------------------------------ commands
 
@@ -50,7 +50,13 @@ export async function doctor() {
   out(`forge    : ${s.forge ? `${s.forge.host}, repositories ${Object.keys(s.forge.repos).join(", ") || "none"}, release ${s.forge.integrationBranch} -> ${s.forge.releaseBranch}` : "none: no delivery line on the board"}`);
   out(`sessions : ${s.workers.skipPermissions ? "without permission prompts (workers.skipPermissions)" : "with permission prompts"} · ${s.workers.allow.length} permission(s) added by the profile${s.workers.shadow ? " · shadow mode: nothing is posted (setup --live)" : ""}`);
   const overridden = POLICY_TEMPLATES.filter((t) => policySource(t) === F.policy);
-  out(`policy   : ${overridden.length ? `${overridden.join(", ")} from ${F.policy}, the rest by default` : `skill defaults (${DEFAULT_POLICY_DIR})`}`);
+  const wordless = overridden.filter((name) => !usesTopicWords(name));
+  const shadowed = shadowedPolicyNames(s.policy);
+  const policyNotes = [
+    ...(wordless.length ? [t("cli.doctor.policyWithoutWords", { names: wordless.join(", ") })] : []),
+    ...(shadowed.length ? [t("cli.doctor.policyReserved", { names: shadowed.map((n) => `policy.${n}`).join(", ") })] : []),
+  ];
+  out(`policy   : ${overridden.length ? `${overridden.join(", ")} from ${F.policy}, the rest by default` : `skill defaults (${DEFAULT_POLICY_DIR})`}${policyNotes.map((n) => ` · ${n}`).join("")}`);
   out(`board    : http://127.0.0.1:${s.ui.port}/board${s.ui.iterm ? " · iTerm2 integration on" : ""}`);
   out(`locale   : ${locale()} (ui.locale: the language of the board and of the master's messages to ${s.owner.name})`);
   out(`notes    : ${existsSync(join(STATE, "local.md")) ? `${join(STATE, "local.md")}, to read at startup` : "none (no local.md)"}`);

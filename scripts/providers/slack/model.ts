@@ -83,8 +83,9 @@ export const SLACK_DESCRIPTOR: ProviderDescriptor = {
     thread: key("word.thread"),
     conversation: key("word.conversation"),
     targetFormat:
-      'a reply in a thread = the channel and the Slack link of the thread ("#support, https://…"); a separate message in a channel = the name, the channel ID and "new message" ("#announcements (C0123456789), new message")',
-    doneMarker: "the ✅ reaction on the original message",
+      'a reply in a thread = the channel AND the Slack link of the thread ("#support, https://…"); a separate message in a channel = the name, the channel ID and "new message" ("#announcements (C0123456789), new message"). For a DM, the link of a message of the conversation',
+    targetHint: "channel and thread link, or channel id and new message",
+    doneMarker: "✅ (white_check_mark) to the original message of the thread with the Slack MCP",
   },
   links: SLACK_LINKS,
   hosts: ["slack.com", "*.slack.com"],

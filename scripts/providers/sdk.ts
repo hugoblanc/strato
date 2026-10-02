@@ -102,7 +102,9 @@ export interface Vocabulary {
   conversation: Text;
   /** Prompt sentence: how a draft destination is written (`to=`), with an example. English. */
   targetFormat: string;
-  /** Prompt sentence: the marker that tells everyone a thread is settled, if the tool has one. English. */
+  /** Prompt words: the placeholder of a draft's destination in the card command (`draftTo="<…>"`). English. Default: "destination". */
+  targetHint?: string;
+  /** Prompt words: the marker that tells everyone a thread is settled, and how a session puts it, if the tool has one. English. */
   doneMarker?: string;
 }
 

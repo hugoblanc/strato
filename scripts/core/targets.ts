@@ -62,6 +62,15 @@ function readerOf(text: string, topic: TopicView | null): { provider: string; ac
 }
 
 /**
+ * The tool that reads a topic's free-text destinations when nothing in the text names another one: the topic's own
+ * tool when it reads destinations, else the default account of the first installed tool that does. The prompts give
+ * sessions that tool's destination format, so a draft is written the way the board will read it.
+ */
+export function draftReaderOf(key: string | null): string | null {
+  return readerOf("", key ? topicView({ key, channel: "" }) : null)?.provider ?? null;
+}
+
+/**
  * A typed `to` key to a target: a thread when its tool reads it as one, a ticket for a tracker, else a conversation
  * (a separate message). Only a configured account is a target.
  */

@@ -7,7 +7,7 @@ Triggering message, from {{from}} in {{channel}}:
 Link: {{permalink}}
 
 Your job: prepare as much as possible, so that {{owner}} only has to say go.
-1. Read the whole thread before anything else (Slack MCP, conversations_replies).
+1. Read the whole {{topic_thread_word}} before anything else{{#if topic_read_thread}}: {{topic_read_thread}}{{/if}}.
 2. Ownership: if the message is not addressed to {{owner}}{{#if team_group}} nor to {{team_group}}{{/if}} and another person is explicitly targeted, do not prepare a draft. Set status=closed gate=none summary="not for {{owner}}: <who owns it>" and stop.
 {{#if teammates}}   If a teammate ({{teammates}}) already answered in the thread, they own it{{#if team_group}}: a mention of {{team_group}} means "someone from the team", not {{owner}}{{/if}}. Same thing: status=closed summary="taken by <first name>", and stop.{{/if}}
 3. If the message asks about the real state of a system (a customer, an order, a deployment, a piece of data), check it yourself with the access you have (code, read-only database, logs) before proposing an answer, and note what you could not check. Otherwise, do what saves {{owner}} the most time.

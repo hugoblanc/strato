@@ -24,7 +24,23 @@ afterAll(() => {
  * The differences a later stage makes on purpose, applied to the recorded text before the comparison: each one says
  * which renders it touches, the text before and the text after, and why.
  */
-const INTENDED: { why: string; names: RegExp; from: string; to: string }[] = [];
+const INTENDED: { why: string; names: RegExp; from: string; to: string }[] = [
+  ...[
+    { names: /^(?!compiled\/|overrides\/)[^/]*\/?worker/, command: "bun /s/strato.ts" },
+    { names: /^compiled\/worker/, command: "/opt/bin/strato" },
+  ].map(({ names, command }) => ({
+    why: "the worker reads its thread with `strato context` first, which needs no MCP server; the Slack MCP stays named as the other way",
+    names,
+    from: "1. Read the whole thread before anything else (Slack MCP, conversations_replies).",
+    to: `1. Read the whole thread before anything else: ${command} context C0ACME0001:1759219200.000100 (or the Slack MCP, conversations_replies).`,
+  })),
+  {
+    why: "the destination formats come from the tool that reads them (its vocabulary): the shared sentence no longer counts them, Slack still lists its two",
+    names: /^(?!overrides\/)/,
+    from: "- draftTo = where it goes, in one of these two formats, because",
+    to: "- draftTo = where it goes, in one of these formats, because",
+  },
+];
 
 function check(name: string, text: string): void {
   if (RECORD) {
