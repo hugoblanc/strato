@@ -23,6 +23,7 @@ import { resolveSettings, useSettings } from "../../core/settings.ts";
 import { STRATO_VERSION } from "../../core/build-info.ts";
 import { classifyItem, triageRules } from "../../core/triage.ts";
 import { findTask } from "../../core/tasks.ts";
+import { oneLine, truncate } from "../../core/text.ts";
 import { effectiveCapabilities, providerError } from "../api.ts";
 import { descriptorProblems } from "../check.ts";
 import { describeExec, type ExecProvider, execProvider } from "../host/exec.ts";
@@ -60,7 +61,8 @@ class Report {
   line(status: Status, check: string, detail = ""): void {
     if (status === "fail") this.failed = true;
     const word = t(`cli.provider.test.${status}` as Parameters<typeof t>[0]);
-    this.say(`${word.padEnd(7)} ${check}${detail ? `: ${detail}` : ""}`);
+    // a provider's own words (its errors, its dry descriptions) stay on the line they belong to
+    this.say(`${word.padEnd(7)} ${check}${detail ? `: ${oneLine(truncate(detail, 500))}` : ""}`);
   }
 }
 

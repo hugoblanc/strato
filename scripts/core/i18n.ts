@@ -781,6 +781,7 @@ const en = {
   "cli.provider.load.changed": "{id}: changed since you trusted it; read it, then run strato provider trust {id} in your own terminal",
   "cli.provider.load.failed": "{id}: could not be loaded: {error}",
   "cli.provider.load.notLoaded": "{id}: not loaded; strato provider list says why",
+  "cli.provider.load.folderClash": "{id}: this name is also the folder of an account of another tool in <state>/providers/; give the provider another name",
   // strato provider …
   "cli.provider.session": "A work session never trusts, writes nor runs provider code; the person runs it in their own terminal: {cmd}",
   "cli.provider.list.builtin": "{id}  built in · {label} · {kinds} · accounts: {accounts}",
@@ -1593,6 +1594,7 @@ const fr: Record<MessageKey, string> = {
   "cli.provider.load.changed": "{id} : a changé depuis que tu l'as approuvé ; relis-le, puis lance strato provider trust {id} dans ton propre terminal",
   "cli.provider.load.failed": "{id} : impossible de le charger : {error}",
   "cli.provider.load.notLoaded": "{id} : pas chargé ; strato provider list dit pourquoi",
+  "cli.provider.load.folderClash": "{id} : ce nom est aussi le dossier d'un compte d'un autre outil dans <state>/providers/ ; donne un autre nom au provider",
   "cli.provider.session": "Une session de travail n'approuve, n'écrit ni ne lance jamais de code de provider ; c'est à la personne de le lancer dans son propre terminal : {cmd}",
   "cli.provider.list.builtin": "{id}  intégré · {label} · {kinds} · comptes : {accounts}",
   "cli.provider.list.external": "{id}  {shape} · {where} · comptes : {accounts}",

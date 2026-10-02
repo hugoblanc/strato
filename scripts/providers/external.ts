@@ -7,7 +7,8 @@
  */
 import { t } from "../core/i18n.ts";
 import type { ExternalProviders } from "../core/setup.ts";
-import { type ProviderSource, type Settings, settings } from "../core/settings.ts";
+import { type ProviderSource, resolveAccounts, type Settings, settings } from "../core/settings.ts";
+import { oneLine, truncate } from "../core/text.ts";
 import { STRATO_VERSION } from "../core/build-info.ts";
 import { BUILTIN, accountDir, addProvider, setExternalProblem } from "./registry.ts";
 import { descriptorProblems } from "./check.ts";
@@ -67,7 +68,15 @@ export function loadExternalProviders(s: Settings = settings()): Promise<Externa
   loading ??= (async () => {
     const trust = safeTrust();
     const out: ExternalStatus[] = [];
+    // `<state>/providers/<provider>-<account>/` is an account's folder: a provider named like one would share it
+    const accountFolders = new Set(resolveAccounts(s).map((a) => `${a.account.provider}-${a.account.id}`));
     for (const { id, source } of configuredExternal(s)) {
+      if (accountFolders.has(id)) {
+        const problem = t("cli.provider.load.folderClash", { id });
+        setExternalProblem(id, problem);
+        out.push({ id, source, trust: { state: "invalid", resolved: null, detail: problem }, loaded: false, problem });
+        continue;
+      }
       let state: TrustState;
       try {
         state = trustOf(id, source, trust);
@@ -82,7 +91,7 @@ export function loadExternalProviders(s: Settings = settings()): Promise<Externa
           if (missing.length) throw new LoadError(missing);
           addProvider(p);
         } catch (e) {
-          problem = t("cli.provider.load.failed", { id, error: e instanceof LoadError ? e.problems.join("; ") : ((e as Error)?.message ?? String(e)) });
+          problem = t("cli.provider.load.failed", { id, error: oneLine(truncate(e instanceof LoadError ? e.problems.join("; ") : String((e as Error)?.message ?? e), 500)) });
         }
       }
       setExternalProblem(id, problem);

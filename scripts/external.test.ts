@@ -139,6 +139,15 @@ describe("a module provider is loaded only once trusted as it is", () => {
   }, 30_000);
 });
 
+describe("a provider never shares an account's folder", () => {
+  test("a provider named like another tool's account folder is refused", async () => {
+    const r = rig();
+    config(r, { slack: { accounts: { partners: { workspace: "acme-partners" } } }, "slack-partners": { source: { module: "provider.ts" }, accounts: { default: {} } } });
+    const out = await script(r, `await external.loadExternalProviders(); return registry.accounts().find((a) => a.account.provider === "slack-partners").problem;`);
+    expect(out).toBe("slack-partners: this name is also the folder of an account of another tool in <state>/providers/; give the provider another name");
+  }, 30_000);
+});
+
 describe("an exec provider is loaded the same way", () => {
   test("trusted from its describe, it connects with the secret of its account's file, given at initialize", async () => {
     const r = rig();
