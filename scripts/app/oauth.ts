@@ -7,7 +7,7 @@
  */
 import { randomBytes } from "node:crypto";
 import { t } from "../core/i18n.ts";
-import { authorizeUrlOf, CALLBACK_PATH, endpointProblem, oauthPortProblem, pkceChallenge, redirectUriOf, base64url, tokenOf, tokenRequestBody } from "../core/oauth.ts";
+import { authorizeUrlOf, CALLBACK_PATH, endpointProblem, oauthPortProblem, pkceChallenge, REDIRECT_HOSTS, redirectUriOf, base64url, tokenOf, tokenRequestBody } from "../core/oauth.ts";
 import type { OAuthStep } from "../providers/sdk.ts";
 import { escapeHtml } from "../core/text.ts";
 
@@ -54,6 +54,7 @@ export async function runOAuth(step: OAuthStep, o: OAuthOptions): Promise<OAuthT
     const problem = endpointProblem(url);
     if (problem) throw new OAuthError(t("cli.oauth.endpoint", { problem }));
   }
+  if (step.redirectHost !== undefined && !(REDIRECT_HOSTS as readonly string[]).includes(step.redirectHost)) throw new OAuthError(t("cli.oauth.redirectHost", { host: String(step.redirectHost) }));
   const verifier = step.pkce ? base64url(randomBytes(32)) : undefined;
   const state = base64url(randomBytes(16));
   const redirectUri = redirectUriOf(step, o.port);

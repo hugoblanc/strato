@@ -444,6 +444,20 @@ describe("provider commands and the caller", () => {
   }, 30_000);
 });
 
+describe("the trust screen", () => {
+  test("names the secrets a provider is handed, and the variables one may come from", async () => {
+    const r = rig();
+    const lines = await inProcess(
+      r,
+      { provider: "commands/provider.ts", fake: "test-provider.ts" },
+      `const d = fake.fakeDescriptor("tickets", "Tickets");
+       d.auth[0].stores = [{ name: "FAKE_API_KEY", env: ["STRATO_TICKETS_API_KEY"] }];
+       return provider.descriptorLines(d);`,
+    );
+    expect(lines.at(-1)).toBe("is handed the secrets: FAKE_API_KEY (for the default account, also from $STRATO_TICKETS_API_KEY)");
+  }, 20_000);
+});
+
 describe("descriptor checks", () => {
   beforeEach(() => useSettings(resolveSettings({ ...TEST_SETTINGS, ui: { locale: "en" } })));
   afterEach(() => useSettings(TEST_SETTINGS));
@@ -482,6 +496,24 @@ describe("descriptor checks", () => {
       "links.of[0].url: expected an https link",
       "hosts[0]: a host name, without scheme nor path, such as tickets.example",
       "done: the done marker is a reaction, and react must be among the actions",
+    ]);
+  }, 30_000);
+
+  test("secret names, environment variables, OAuth redirects and reserved setting keys", () => {
+    const d = fakeDescriptor("tickets", "Tickets") as unknown as Record<string, any>;
+    const oauth = { kind: "oauth", authorizeUrl: "https://tickets.example/oauth", tokenUrl: "https://tickets.example/token", clientId: "setting", pkce: false, scopes: [], redirectHost: "evil.example", secret: "TICKETS_TOKEN" };
+    const bad = {
+      ...d,
+      auth: [{ ...d.auth[0], steps: [oauth], stores: [{ name: "TICKETS_TOKEN", env: ["SLACK_USER_TOKEN", "STRATO_TICKETS_TOKEN"] }, { name: "A.B" }] }],
+      settings: [...d.settings, { key: "label", type: "string", label: { en: "Ticket label" } }, { key: "alias", type: "string", label: { en: "Alias" }, ask: { en: "?" }, triage: "groupAlias" }],
+    };
+    expect(descriptorProblems(bad, "tickets")).toEqual([
+      'auth[0].stores[0].env: "SLACK_USER_TOKEN" is not one of this provider\'s own variables: an external provider reads only variables named STRATO_TICKETS_…',
+      "auth[0].stores[1].name: a secret's name is upper-case letters, digits and underscores, starting with a letter, at most 64 characters, such as TICKETS_API_KEY",
+      'auth[0].steps[0].redirectHost: "evil.example" is not one of "127.0.0.1", "localhost"',
+      "auth[0].steps[0].pkce: an OAuth step uses PKCE (pkce: true), unless the service requires a client secret (clientSecret)",
+      'settings[3].key: "label" is a field of every account in config.json, so the provider would never receive it; reserved: auth, secretsFile, ingest, enabled, label, pollInterval, mcpServer',
+      'settings[4].triage: "groupAlias" is not one of "me", "groups", "watch", "ignore", "ignoreAuthors", "teammates"',
     ]);
   }, 30_000);
 

@@ -6,6 +6,8 @@
  */
 import { t } from "../core/i18n.ts";
 import { LINK_INPUT_MAX } from "../core/links.ts";
+import { REDIRECT_HOSTS } from "../core/oauth.ts";
+import { ACCOUNT_KEYS } from "../core/settings.ts";
 import { apiSupported, PROVIDER_API, PROVIDER_ID } from "./api.ts";
 import type { ActionKind, ProviderDescriptor } from "./sdk.ts";
 
@@ -14,7 +16,12 @@ export const ACTION_KINDS: readonly ActionKind[] = ["post", "reply", "comment", 
 /** The official kinds of sign-in (section 11.2): never a cookie or a token read out of another application. */
 export const AUTH_KINDS = ["user-token", "api-key", "app-password", "oauth2"] as const;
 const SETTING_TYPES = ["string", "string[]", "number", "boolean", "map"] as const;
-const TRIAGE_ROLES = ["me", "groups", "groupAlias", "watch", "ignore", "ignoreAuthors", "teammates"] as const;
+/** The triage roles an external provider may give a setting; `groupAlias` (Slack's team alias) is read by Slack only. */
+const TRIAGE_ROLES = ["me", "groups", "watch", "ignore", "ignoreAuthors", "teammates"] as const;
+/** A secret's name, and an environment variable's: written as `NAME=value` and found again by name. */
+const SECRET_NAME = /^[A-Z][A-Z0-9_]{0,63}$/;
+/** The prefix of the environment variables an external provider may read a default account's secret from. */
+export const envPrefix = (id: string): string => `STRATO_${id.toUpperCase().replace(/-/g, "_")}_`;
 const STEP_KINDS = ["open", "paste", "oauth", "verify"] as const;
 /** The longest a link pattern may take on a long input before it counts as a stall. */
 export const PATTERN_BUDGET_MS = 50;
@@ -92,6 +99,14 @@ export function descriptorProblems(raw: unknown, expectedId?: string, opts: { no
       if (!isHttps(m.docs)) say("cli.provider.check.https", { path: `${at}.docs` });
       const stores = Array.isArray(m.stores) ? m.stores.filter(isObject) : null;
       if (!stores) expected(`${at}.stores`, "array");
+      // names written as `NAME=value` lines and read back by name: a plain upper-case name only
+      (stores ?? []).forEach((x, k) => {
+        if (typeof x.name !== "string" || !SECRET_NAME.test(x.name)) say("cli.provider.check.secretName", { path: `${at}.stores[${k}].name` });
+        if (x.env !== undefined) {
+          if (!isStrings(x.env)) expected(`${at}.stores[${k}].env`, "string[]");
+          else for (const v of x.env) if (!SECRET_NAME.test(v) || (typeof d.id === "string" && !v.startsWith(envPrefix(d.id)))) say("cli.provider.check.envName", { path: `${at}.stores[${k}].env`, name: v, prefix: typeof d.id === "string" ? envPrefix(d.id) : "STRATO_<ID>_" });
+        }
+      });
       const names = new Set((stores ?? []).map((x) => x.name).filter((x): x is string => typeof x === "string"));
       if (!Array.isArray(m.steps)) return expected(`${at}.steps`, "array");
       m.steps.forEach((s, j) => {
@@ -101,6 +116,8 @@ export function descriptorProblems(raw: unknown, expectedId?: string, opts: { no
         if (s.kind === "paste" && (typeof s.secret !== "string" || !names.has(s.secret))) say("cli.provider.check.secret", { path: `${sp}.secret`, name: String(s.secret) });
         if (s.kind === "oauth") {
           for (const k of ["authorizeUrl", "tokenUrl"]) if (!isHttps(s[k])) say("cli.provider.check.https", { path: `${sp}.${k}` });
+          if (s.redirectHost !== undefined && !(REDIRECT_HOSTS as readonly unknown[]).includes(s.redirectHost)) say("cli.provider.check.oneOf", { path: `${sp}.redirectHost`, value: String(s.redirectHost), allowed: oneOf(REDIRECT_HOSTS) });
+          if (s.pkce !== true && typeof s.clientSecret !== "string") say("cli.provider.check.pkce", { path: `${sp}.pkce` });
           if (typeof s.secret !== "string" || !names.has(s.secret)) say("cli.provider.check.secret", { path: `${sp}.secret`, name: String(s.secret) });
         }
       });
@@ -113,6 +130,7 @@ export function descriptorProblems(raw: unknown, expectedId?: string, opts: { no
       const at = `settings[${i}]`;
       if (!isObject(s)) return expected(at, "object");
       if (typeof s.key !== "string" || !/^[A-Za-z][A-Za-z0-9_]{0,63}$/.test(s.key)) expected(`${at}.key`, "string");
+      else if ((ACCOUNT_KEYS as readonly string[]).includes(s.key)) say("cli.provider.check.reservedKey", { path: `${at}.key`, key: s.key, reserved: ACCOUNT_KEYS.join(", ") });
       if (!(SETTING_TYPES as readonly unknown[]).includes(s.type)) say("cli.provider.check.oneOf", { path: `${at}.type`, value: String(s.type), allowed: oneOf(SETTING_TYPES) });
       text(s.label, `${at}.label`);
       if (s.triage !== undefined) {

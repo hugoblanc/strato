@@ -16,7 +16,10 @@ export const pkceChallenge = (verifier: string): string => base64url(createHash(
 export const CALLBACK_PATH = "/oauth/callback";
 
 /** The redirect URI of a step on a port: what the OAuth application declares and both requests repeat. */
-export const redirectUriOf = (step: Pick<OAuthStep, "redirectHost">, port: number): string => `http://${step.redirectHost ?? "127.0.0.1"}:${port}${CALLBACK_PATH}`;
+export const redirectUriOf = (step: Pick<OAuthStep, "redirectHost">, port: number): string => `http://${step.redirectHost === "localhost" ? "localhost" : "127.0.0.1"}:${port}${CALLBACK_PATH}`;
+
+/** The loopback hosts a redirect may name: the code never goes anywhere else, whatever a descriptor says. */
+export const REDIRECT_HOSTS = ["127.0.0.1", "localhost"] as const;
 
 const LOOPBACK = new Set(["127.0.0.1", "localhost", "[::1]"]);
 

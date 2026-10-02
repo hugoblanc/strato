@@ -23,6 +23,7 @@ import { linearProvider } from "./linear/index.ts";
 import type { Account, AccountContext, Identity, Provider, ProviderDescriptor } from "./sdk.ts";
 import { slackWrites } from "./slack/act.ts";
 import { slackProvider } from "./slack/index.ts";
+import { envPrefix } from "./check.ts";
 import { maskSecrets } from "../core/text.ts";
 
 /** A provider as the registry hands it out: everything but its writes. */
@@ -235,7 +236,9 @@ export function accountContext(entry: AccountEntry, opts: { identity?: Identity 
     const spec = declared(name);
     if (!spec) return null;
     if (candidates) return candidates[name] || null;
-    const env = entry.account.id === "default" ? (spec.env ?? []) : [];
+    // the default account only; an external provider only its own STRATO_<ID>_ variables, never the rest of the environment
+    const external = Boolean(settings().providers[entry.account.provider]?.source);
+    const env = entry.account.id === "default" ? (spec.env ?? []).filter((v) => !external || v.startsWith(envPrefix(entry.account.provider))) : [];
     const value = secretFiles(entry).map((file) => envFileValue(file, name)).find(Boolean) ?? env.map((v) => process.env[v]).find(Boolean) ?? null;
     if (value) known.push(value);
     return value;

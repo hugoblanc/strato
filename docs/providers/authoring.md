@@ -124,6 +124,14 @@ Every user-facing text is `{ "en": "…", "fr": "…" }`, English required.
 | `maxText` | The longest text an action may carry. |
 | `audience` | For a mail or support tool, per text action kind: `{ "reply": { "to": true, "cc": true, "subject": true } }`, or `{ "comment": { "visibility": { "default": "internal" } } }`. A session writes them on its draft task (`audience.to="carol@acme.example, dan@acme.example"`, `audience.cc=…`, `subject=…`, `visibility=public\|internal`), Strato keeps the fields you declare, the board shows them under the draft, the Go covers them, and your `act` receives them in `action.audience` and `action.subject`. A declared `to` or `visibility` is required: a plan without it is refused before your provider is called. |
 | `ticketIds` | `{ "prefixesFrom": "<setting>" }` to claim bare ids such as `OPS-7` typed by the person. |
+| `done` | The marker that tells everyone a thread is settled, put by the board's check mark: `{ "kind": "react", "emoji": "white_check_mark" }`, with `react` among the actions. Without it, the board shows no check mark for your topics. |
+| `mcp` | `{ "server", "readTools", "writeTools" }`: the tool's MCP server as sessions see it. Built-in providers only pre-approve their `readTools` for sessions; an external provider's `readTools` are ignored (the person lists the tools they want in `workers.allow`), and its `writeTools` are denied to sessions in shadow mode. |
+| `vocabulary.targetHint`, `vocabulary.doneMarker` | Optional prompt words: the placeholder of a destination in the card command (`owner/repo#number`), and how a session puts your `done` marker. English. |
+| `auth[].tradeoff` | Optional: one sentence `setup --providers` shows next to the method, such as "no real time". |
+| `settings[].candidatesFrom` | Optional: a field your `setup.detect` returns whose values the interview offers as choices for this setting. |
+
+Settings are named freely, except the fields every account has in `config.json`: `auth`, `secretsFile`, `ingest`, `enabled`, `label`, `pollInterval`, `mcpServer`; the check refuses them.
+To report an edit that adds a mention of the person (`capabilities.edits`), give the item `edited: { before: { mentionsMe, targetsOther } }`, the facts of the version before the edit: Strato raises the item only when that version would not have been raised.
 
 ## 6. The methods
 
@@ -397,10 +405,14 @@ An auth method lists its `steps` (`open` a documented page, `paste` a secret wit
 | `user-token` | a token issued to an app the person creates in the tool | a Slack app's user token |
 | `oauth2` | the authorization code flow on a loopback redirect, with PKCE where supported | Linear's OAuth |
 
+An `oauth` step sets `pkce: true`, unless the service requires a client secret (`clientSecret`); its `redirectHost` is `127.0.0.1` (the default) or `localhost`, and nothing else: the authorization code only ever comes back to the person's own machine.
+A secret's name in `stores` is upper-case letters, digits and underscores (`TICKETS_API_KEY`).
+
 `scopes` are informative: setup prints them, and Strato does not check them, since many tools do not say which scopes a token holds.
 A provider that can tell reports a missing scope from `setup.check`, as a `missing` line.
 
 A secret in `stores` may name `env`, environment variables Strato also reads it from, for the account named `default` only and only when its secret file does not hold it.
+They must be the provider's own, named `STRATO_<ID>_…` (`STRATO_TICKETS_API_KEY` for the provider `tickets`): Strato never hands an external provider any other variable of its environment, and `provider trust` lists every secret and variable.
 Strato reads them in its own environment and hands the value over like any secret (`ctx.secret`, or `initialize` for an executable): your provider never reads its environment, which Strato keeps minimal for an executable.
 
 ## 12. Testing

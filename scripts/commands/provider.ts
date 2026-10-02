@@ -133,6 +133,11 @@ export function descriptorLines(d: ProviderDescriptor): string[] {
     t("cli.provider.trust.actions", { actions: c.actions.join(", ") || "-", undo: c.undo.join(", ") || "-" }),
     t("cli.provider.trust.reads", { ingest, context: c.context ? "context" : "-" }),
     t("cli.provider.trust.hosts", { api: d.apiHosts.join(", ") || "-", links: d.hosts.join(", ") || "-" }),
+    // the secrets it is handed, and the variables of Strato's environment it may be handed one from
+    t("cli.provider.trust.secrets", {
+      secrets:
+        [...new Map(d.auth.flatMap((m) => m.stores).map((x) => [x.name, x])).values()].map((x) => (x.env?.length ? `${x.name} (${t("cli.provider.trust.secretEnv", { env: x.env.map((v) => `$${v}`).join(", ") })})` : x.name)).join(", ") || "-",
+    }),
   ];
 }
 
