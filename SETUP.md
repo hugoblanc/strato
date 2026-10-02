@@ -23,7 +23,8 @@ It is the shape the interview aims at.
 | A Slack user token (`xoxp-…`) | Reading Slack as you, and posting your approved drafts | Yes |
 | A Slack app-level token (`xapp-…`) | Socket Mode: messages within a second instead of polling every minute | No |
 | `glab` and `GITLAB_TOKEN` | Following merge requests on the board | Only with a GitLab forge |
-| Linear MCP server | Tickets | Only with Linear |
+| A Linear personal API key, or an OAuth application in your Linear workspace | Reading tickets, and commenting, changing a status or an assignee on your Go | Only with Linear |
+| Linear MCP server | Extra ticket reads for sessions | No |
 | `ttyd` | A terminal attached to a session, inside the board | No |
 | iTerm2 | Sidebar panel and `dive` (macOS) | No |
 
@@ -184,6 +185,40 @@ Rate limits, from Slack's documentation:
 `strato setup --connect slack --account partners` connects another workspace as a named account: `providers.slack.accounts.partners` in `config.json`, its tokens in `~/.config/strato/slack-partners.env`.
 Your main workspace stays the `slack` section.
 `doctor` and `setup --check` print one line per named account, with the command that fixes it when it cannot connect.
+
+## 3b. Connect Linear
+
+Without a Linear account, the `tracker` section keeps doing what it always did: Strato recognizes ticket links and ids (`PLAT-12`), opens ticket topics, and sessions read tickets through the Linear MCP server.
+Connecting Linear lets Strato read your notifications, give sessions the ticket as plain text, and carry out a comment, a status change or an assignment on your Go.
+
+Run it in your own terminal:
+
+```bash
+strato setup --connect linear
+```
+
+| Method | `--auth` | What you do | Trade-off |
+| --- | --- | --- | --- |
+| Personal API key (default) | `api-key` | Create a key in Linear's **Security & access** settings, and paste it | The quickest; the key acts as you until you revoke it |
+| OAuth with PKCE | `oauth-pkce` | Create an OAuth application in your workspace once, then approve Strato in your browser | Nothing pasted, and a token renewed every day; someone creates the application and shares its client id |
+
+For OAuth, whoever creates the application in Linear ([the OAuth application page](https://linear.app/settings/api/applications/new)) gives it the callback URL `http://localhost:4353/oauth/callback` (the port is `ui.oauthPort`), and shares its **Client ID**, which is not a secret.
+Each person then runs `strato setup --connect linear --auth oauth-pkce --client-id <Client ID>`.
+Strato sends a PKCE challenge (S256) and no client secret, as [Linear's OAuth documentation](https://linear.app/developers/oauth-2-0-authentication) allows, and renews the access token with its refresh token when Linear refuses it.
+
+The key or the tokens go to `~/.config/strato/linear-default.env`, readable by you only, never to `config.json`.
+Without a `tracker` section, `--connect` also writes the workspace and the team prefixes Linear reports; with one, the links keep coming from `tracker` and only the account is added under `providers.linear.accounts.default`.
+
+What Strato does with it:
+
+- **Requests.** Every minute it reads your Linear notifications: an issue assigned to you or a comment that mentions you is a request; a new comment on an issue you follow is a follow-up of that thread; a status change says nothing unless a topic follows the issue; a comment or an issue written by a bot or an integration goes to the digest.
+  `watchTeams` (team keys) makes every new issue of those teams a request, `ignoreTeams` silences teams, `ignoreAuthors` sets people or integrations aside.
+- **Context.** `strato context linear:PLAT-12` prints the issue's status, assignee, labels and priority, its description, then its comments, threaded.
+- **Actions, on your Go.** A session prepares a comment as a draft task (`to=linear:PLAT-12`), or a status change or an assignment as an action task (`act=setStatus value="In Progress"`, `act=assign value=bob@acme.example`).
+  The board shows each with the ticket's link; Go carries it out, and Undo takes it back for 30 seconds (the comment is deleted, the previous status or assignee comes back).
+  A comment is created with an id derived from your Go, so a retry after a cut connection cannot post it twice.
+- **Limits.** One poll costs one or two requests; Strato reads Linear's rate limit headers and waits for the reset when the hour's budget is spent.
+- **The desktop app.** Set `"desktopApp": true` on the account to open Linear links from the board in Linear's desktop app (`linear://`).
 
 ## 4. Run the setup interview
 

@@ -909,10 +909,10 @@ An item with a `title` puts it at the start of the quoted text (`« PLAT-12 Chec
 | `dm` | DM, or group DM not targeting someone else | not used |
 | `mention` | `<@me>` or a group of `subteams`, in text, attachments or blocks | an `assigned` event to the person, or a `comment` or `created` event that mentions the person (notifications) |
 | `canal` | any message in `watchChannels` | a `created` event in `watchTeams` (or a watched project) |
-| `fil` | a reply in a thread the person wrote in during the last 7 days | a `comment` event on an issue the person created, commented or subscribed to |
+| `fil` | a reply in a thread the person wrote in during the last 7 days | a `comment` event on an issue the person created, is assigned, or follows (Linear's `issueNewComment`, reason `subscribed`) |
 | `suite` / `moi` | a message in a tracked thread | a `comment` or `status` event on a tracked issue; the person's own comment is `moi` |
 | `tiers` | explicitly targets someone else | a comment that mentions someone else only, on a watched or subscribed issue |
-| `bot` | author in `ignoreAuthors` | author in `ignoreAuthors` (integrations, automations) |
+| `bot` | author in `ignoreAuthors` | author in `ignoreAuthors`, or a bot or an integration that does not target the person |
 | ignored | `ignoreChannels`, edits that add nothing | `ignoreTeams`, `status` events on untracked issues |
 
 The event line names the conversation with its label (`#support`, `Linear PLAT`), so the master reads the same line shape for every provider.
@@ -1341,9 +1341,9 @@ New: today Linear is only recognized in links.
 | Participation | issues the person created, commented on or subscribed to |
 | Context | the issue (title, description, status, assignee, labels, priority) and its comments, threaded |
 | Identity | the `viewer` query |
-| Actions | `comment`, `reply` (in a comment thread), `react`, `setStatus`, `assign`, `create`, `delete` (own comment) |
-| Undo | `comment` and `reply` (delete), `setStatus` and `assign` (previous value), `react` (remove) |
-| Idempotent | `comment`, `reply` and `create`, through an id derived from the key |
+| Actions | `comment` (an answer in a comment's thread when the target is a comment), `setStatus`, `assign` (as built; `react`, `create` and `delete` are not) |
+| Undo | `comment` (delete), `setStatus` and `assign` (previous value) |
+| Idempotent | `comment`, through an id derived from the key |
 | Edits | no |
 | Events | `message` is never used; `comment`, `created`, `status`, `assigned` from the notification and issue history types |
 | Links | `https://linear.app/<workspace>/issue/<ID>[/<slug>][#comment-<id>]` as patterns; thread `<ID>`, comment item `<ID>/comment/<id>`; keys `linear:<ID>` and `linear:<ID>/comment/<id>` |
@@ -1863,6 +1863,29 @@ Each stage is one or more commits that leave `bun run check` green and the guard
 - **Compatibility.** `linear:ABC-123` keys; `open ABC-123` still opens the implementation topic; the Linear MCP stays usable by sessions for reads.
   The descriptor declares `context` again once the provider reads tickets (the prompts stage turned it off), and `ticket.md`'s first step reads the ticket with `{{topic_read_thread}}`.
 - **Done when.** Check green; the full loop runs on the rig against the fake server: a mention becomes a line, `open --msg` opens a topic, a comment task goes out on a board Go and is undone.
+- **As built.** Where the stage departs from the text above, and why:
+  - Files: `providers/linear/model.ts` (descriptor, the read queries, Linear's answers to items, context and identity, the pure parts of writes), `providers/linear/client.ts` (the GraphQL request, the authorization header per method, the rate limit, the token renewal), `providers/linear/index.ts` (connect, poll, replies, participated, context, setup's detect), `providers/linear/act.ts` (the writes, imported by the registry only, like Slack's).
+    There is no `providers/linear/setup.ts`: `setup.detect` is a few lines in `index.ts`, and the generic `setup --connect` of the setup stage needed nothing else; `connectRefusal` is gone.
+  - The fake is a fetch, not a server on port 0 (`test-linear.ts`): the account's fetch reaches `https` API hosts only, so a loopback server could not stand in for `api.linear.app` without loosening that rule.
+    The same fake is installed as a preload for the rig's processes (`linear-loop.test.ts`), with its state in a file they share.
+  - Actions: `comment`, `setStatus` and `assign`, each with Undo (30 s); `comment` is idempotent.
+    A reply in a comment's thread is a `comment` whose target is the comment (`to=linear:PLAT-12/comment/<id>`, the full id or the short one a link carries), because a typed `to` on a tracker resolves to the `ticket` scope and its text action is `comment` (section 8, `textKind`); `react`, `create` and `delete` are not built, so the descriptor no longer declares them.
+  - Structured tasks: `act=setStatus|assign` and `value` are new optional task fields; a kind=action task with `act` has its plan built by the gate (`planOfTask`), on its `to` or the topic's own ticket, and the board shows it in its own box with the ticket's link and a Go to `/api/act-task`, the same act path as Send.
+    The audience fields and `act=react|create` of section 10.2 wait for a provider that needs them.
+  - Polling: the cursor is Linear's own times, `{ n, w }` (the newest notification read, the newest issue creation read in `watchTeams`), each pass reading a minute before them again, `seen` dropping the repeats.
+    Notifications are read newest first (`orderBy: createdAt`) page by page down to the cursor, without a server-side filter; issues of the watched teams with `filter: { team: { key: { in } }, createdAt: { gt } }`.
+    The shapes are pinned in the fake from Linear's public schema and documentation (notification types `issueAssignedToYou`, `issueMention`, `issueCommentMention`, `issueNewComment`, `issueStatusChanged`; `issue(id:)` taking an identifier; `CommentCreateInput.id` in UUID v4 format), not from recordings of the real API: a run against a real workspace is still to be done.
+  - Item ids: a comment's is `<ID>/comment/<uuid>`, so the same comment reached by two notifications is one item; any other event is `<ID>/event/<notification id>`, and a new issue of a watched team `<ID>/event/created`.
+  - Triage, two rules in the core, both inert for Slack, whose items carry neither: on a `ticket` conversation an item by a bot or an integration (`author.isBot`) goes to the digest unless it targets the person (an automation that assigns them); an item whose `reason` is `subscribed` (Linear notifies the issue's followers) counts as a thread the person takes part in (`fil`), since participation is read only when the listener starts.
+  - Identity: `me` is the viewer's id, `workspace` the organization's name, `tenant` its URL key; a key of another workspace than the account's `workspace` setting is refused (`wrong_workspace`).
+  - Auth: a key Linear refuses is fatal; an OAuth access token it refuses is renewed once (`grant_type=refresh_token` with the client id, both tokens stored again), then fatal.
+    Linear's OAuth redirect host is `localhost`, the host its documentation shows; scopes `read,write`, comma separated.
+  - Links-only: an account whose `auth` is not one of its tool's methods (the `tracker` section alone says `none`) is never read, polled nor acted on (`authUsable`, used by `readsThreads`, the gate and `connect`, which refuses with `links_only`); `strato context` says how to connect it.
+  - Ticket ids: `ticketPattern` (transcript citations) reads the default Linear account's prefixes, the tracker's when it is set, so a Linear connected without `tracker` is recognized too.
+    `open` names the tools when a bare id is claimed by several accounts and asks for the link; a ticket opened with `--msg` uses `worker.md`, as section 10.2 says.
+  - Prompts: `ticket.md` reads the ticket with `{{topic_read_thread}}` (for a links-only Linear: "the Linear MCP, get_issue", in place of "tracker MCP"; the golden test lists the change); the context rule of a ticket whose tool acts adds the tool's own format for a comment, a status and an assignee.
+  - Deep links: `linear://` followed by the rest of the URL, as Linear documents it, only when the account sets `desktopApp: true`, so the board keeps opening Linear in the browser by default.
+  - Left for later: the rate limit in `doctor`'s line (the client knows the requests left); a recorded run against a real workspace; refreshing the token before it expires rather than on refusal; resolving a moved issue's new identifier (section 16, question 7).
 
 ### external
 

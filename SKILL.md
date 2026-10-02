@@ -127,10 +127,10 @@ Set up only the tools they name, and skip every question about the others: no tr
 | --- | --- | --- |
 | Slack, the main workspace | Reads requests, posts approved drafts | 1 (connection), then blocks b and e |
 | Slack, another workspace | The same, as a named account | 1, `--connect slack --account <name>` |
-| Linear | Recognizes ticket links and ids, opens ticket topics (sessions read tickets through the Linear MCP) | Block f, the `tracker` section |
+| Linear | Recognizes ticket links and ids and opens ticket topics; once connected, reads notifications, gives sessions the ticket (`strato context`), and comments, changes a status or an assignee on the owner's Go | Block f: the `tracker` section, then `--connect linear` |
 | GitLab | Follows merge requests to production on the board | Block f, the `forge` section |
 
-`$STRATO setup --providers` lists the tools Strato can connect and their sign-in methods; Linear says there that it is links only in this version.
+`$STRATO setup --providers` lists the tools Strato can connect and their sign-in methods.
 
 ### 1. Prerequisites
 
@@ -176,7 +176,7 @@ Each block says where the answer goes.
 | **c. Who owns what around you** | The neighbouring areas and their owner, so a session can say "not for you, it's X". Propose a skeleton from the channels and groups found; the owner fills names | `local.md` "Ownership map" (a table: area, owner, where to send people) |
 | **d. Never without your go** | Two things are always behind a go (a message on your behalf, a production write). Anything else? Customers, partners, executive channels, access grants, closing other people's tickets | `local.md` "Never without my go" |
 | **e. What to listen to** | Which of the active channels are requests for you (every message counts)? Channels never to raise? Bots that post in your channels and are noise? | `slack.watchChannels`, `slack.ignoreChannels` (channel IDs from `candidates`), `slack.ignoreAuthors` (display names) |
-| **f. Your other tools** | Only for the tools named in step 0. Linear: confirm workspace and prefixes. GitLab: confirm repositories, short names, integration and release branches (GitHub: not wired, `forge: null`). A tool not named stays `null`, without a question | `tracker`, `forge` |
+| **f. Your other tools** | Only for the tools named in step 0. Linear: confirm workspace and prefixes, then offer to connect it (the owner runs `$STRATO setup --connect linear` in their own terminal: an API key, or OAuth with PKCE), and ask which teams' new issues are requests for them (`watchTeams`) and which integrations are noise (`ignoreAuthors`). GitLab: confirm repositories, short names, integration and release branches (GitHub: not wired, `forge: null`). A tool not named stays `null`, without a question | `tracker`, `providers.linear.accounts.default`, `forge` |
 | **g. Session permissions** | Which read-only tools sessions may use without asking (tracker reads, read-only database). Then explain `skipPermissions` in two sentences: sessions would run any command and write any file without asking, while reading text written by third parties, so a hostile message could steer them. Recommend `false` | `workers.allow`, `workers.skipPermissions` |
 | **h. Language and tone** | Language of the board and of your messages (`en` or `fr`). Tone of drafts in a sentence or two. A voice file (how you write)? | `ui.locale`; `local.md` "Notes"; voice file: see below |
 
