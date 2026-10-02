@@ -7,7 +7,7 @@
  * Every visible word goes through core/i18n.ts: t() on the server, tr() in the page's script.
  */
 import { faviconHref, stratoMark } from "./core/brand.ts";
-import { isItemEvent, postOnlyAction, truncate, t, clientMessages, locale, type MessageKey, type ActivityStep, type AgentNode, agentCounts, type Due, type MasterRequest, type MrStage, MR_STAGE_ORDER, parseDue, REVUE_STALE_MS, REVUE_WINDOWS, draftText, isSnoozed, type Snooze, parseSteps, permalinkOfKey, providerKeyLabel, providerLabel, repoLabel, isResolved, maxTextOf, planOfTask, planSha, providerOfKey, unknownOf, renderHtml, resolveTarget, type ResolvedTarget, targetLink, threadInfoOfKey, type UnresolvedTarget, type SessionContext, settings, shellQuote, ticketIdOfKey, ticketUrl, type SocketHealth, socketDeaf, type Sujet, sujetKeys, takenBy, freshness, gateSince, checkable, openTasks, tasksOf, taskDraftText, taskReady, sendsUnseenMessage, type Task, type TaskKind } from "./lib.ts";
+import { isItemEvent, postOnlyAction, truncate, t, clientMessages, locale, type MessageKey, type ActivityStep, type AgentNode, agentCounts, type Due, type MasterRequest, type MrStage, MR_STAGE_ORDER, parseDue, REVUE_STALE_MS, REVUE_WINDOWS, draftText, isSnoozed, type Snooze, parseSteps, permalinkOfKey, providerKeyLabel, providerLabel, repoLabel, isResolved, maxTextOf, planOfTask, planSha, providerOfKey, unknownOf, renderHtml, resolveTarget, type ResolvedTarget, targetLink, threadInfoOfKey, type UnresolvedTarget, type SessionContext, settings, shellQuote, ticketIdOfKey, ticketUrl, type SocketHealth, socketDeaf, type Sujet, sujetKeys, takenBy, freshness, gateSince, checkable, descriptorOf, openTasks, tasksOf, taskDraftText, taskReady, sendsUnseenMessage, type Task, type TaskKind } from "./lib.ts";
 import { type StaleSignal, staleSignals } from "./core/refresh.ts";
 import { escapeHtml, textToHtml } from "./panel.ts";
 import { slackEventsPage } from "./providers/slack/model.ts";
@@ -727,28 +727,32 @@ export function draftMissing(s: Sujet): string {
 }
 
 /**
- * The draft's destination, as a link to the exact place where Send will post: the thread, or the conversation for a
- * separate message, as the provider resolved it. The person served no longer has to ask the session for the thread's
- * exact link before a post. Its words are the provider's (Slack: the channel named in draftTo, else the topic's).
- */
-/**
  * Who receives a draft, from the plan the Go covers: its recipients, copies, subject and visibility, on a tool that
  * declares them (mail, support desks). Empty for a plan without them, so a Slack draft renders as it always did.
  */
 function audienceLine(plan: ReturnType<typeof planOfTask>): string {
-  const a = "plan" in plan ? plan.plan.actions[0] : undefined;
-  if (!a || (a.kind !== "post" && a.kind !== "reply" && a.kind !== "comment")) return "";
+  const p = "plan" in plan ? plan.plan : null;
+  const a = p?.actions[0];
+  if (!p || !a || (a.kind !== "post" && a.kind !== "reply" && a.kind !== "comment")) return "";
   const audience = a.audience ?? {};
   const subject = a.kind !== "comment" ? a.subject : undefined;
+  // a tool that has subjects and a task that names none: the person still sees, before the Go, which one goes out
+  const ownSubject = a.kind !== "comment" && !subject && descriptorOf(p.provider)?.audience?.[a.kind]?.subject;
   const parts = [
     ...(audience.to?.length ? [t("board.draft.to", { list: audience.to.join(", ") })] : []),
     ...(audience.cc?.length ? [t("board.draft.cc", { list: audience.cc.join(", ") })] : []),
     ...(subject ? [t("board.draft.subject", { subject })] : []),
+    ...(ownSubject ? [t(a.kind === "reply" ? "board.draft.subjectThread" : "board.draft.subjectNone")] : []),
     ...(audience.visibility ? [t(audience.visibility === "internal" ? "board.draft.visibility.internal" : "board.draft.visibility.public")] : []),
   ];
   return parts.length ? `\n<p class="mt-1 break-words text-[12.5px] leading-snug text-muted" data-draft-audience>${parts.map(escapeHtml).join(" · ")}</p>` : "";
 }
 
+/**
+ * The draft's destination, as a link to the exact place where Send will post: the thread, or the conversation for a
+ * separate message, as the provider resolved it. The person served no longer has to ask the session for the thread's
+ * exact link before a post. Its words are the provider's (Slack: the channel named in draftTo, else the topic's).
+ */
 function draftToLink(x: Pick<Task, "draftTo" | "to">, dest: ResolvedTarget | UnresolvedTarget): string {
   const label = `→ ${escapeHtml(clip((isResolved(dest) ? dest.target.label : dest.label) || "?", 44))}`;
   const href = isResolved(dest) ? targetLink(dest) : null;

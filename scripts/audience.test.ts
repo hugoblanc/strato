@@ -103,13 +103,21 @@ describe("the plan of a draft with an audience", () => {
     expect(planRefusal(planOf(topic([named]), named), account)).toBeNull();
   });
 
-  test("the board shows who receives it before the Go, escaped; nothing more on a draft without them", () => {
+  test("the board shows who receives it before the Go, escaped; nothing more on a Slack draft", () => {
     withTools();
     const x = draft({ "audience.to": "carol@acme.example", "audience.cc": "dan@acme.example", subject: "Re: <Invoice>" });
     const html = actionCard(classify(topic([x]), [], null, "idle", (i: string) => i));
     // the test profile speaks French
     expect(html).toContain("data-draft-audience>À : carol@acme.example · Cc : dan@acme.example · Objet : Re: &lt;Invoice&gt;</p>");
-    expect(actionCard(classify(topic([draft({})]), [], null, "idle", (i: string) => i))).not.toContain("data-draft-audience");
+    const key = "C0ACMEREQ01:1790000000.000100";
+    const slack = addTask(card, { kind: "draft", ask: "Reply", draft: "Fixed.", to: key }, T).task;
+    expect(actionCard(classify(topic([slack], key), [], null, "idle", (i: string) => i))).not.toContain("data-draft-audience");
+  });
+
+  test("a mail reply that names no subject says, before the Go, that it keeps the thread's", () => {
+    withTools();
+    const html = actionCard(classify(topic([draft({ "audience.to": "carol@acme.example" })]), [], null, "idle", (i: string) => i));
+    expect(html).toContain("data-draft-audience>À : carol@acme.example · Objet : celui du fil (Re: …)</p>");
   });
 
   test("the prompts name the fields of a tool that has them, and nothing for Slack", () => {
