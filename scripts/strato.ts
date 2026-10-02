@@ -8,6 +8,7 @@
 import { agentsBySession, hookSession } from "./app/claude.ts";
 import { CorruptState, F, fail, flags, nowIso, out, readJson, writeJson } from "./app/env.ts";
 import { LockTimeout, requireSujet, withLock } from "./app/store.ts";
+import { context } from "./commands/context.ts";
 import { dive, term } from "./commands/dive.ts";
 import { gc } from "./commands/gc.ts";
 import { refresh } from "./commands/refresh.ts";
@@ -51,6 +52,7 @@ export const USAGE = `strato: routes Slack to Claude Code work sessions, one top
   strato gc [--dry]                     stops the sessions of closed topics and those idle for gc.idleHours
   strato refresh [<topic>…] [--stale] [--dry]   each session revalidates its card (all, or the late ones)
   strato list [--all] | gates | card <topic> | get <topic>
+  strato context <topic | key | link> [--since 2h] [--max 200]   a thread, or every thread of a topic, as plain text
   strato dive <topic | Slack link> [--no-tab] [--window]   opens the topic's session in a tab of the current window
   strato serve [--port N]               board and iTerm2 panel on 127.0.0.1, port ui.port by default
   strato install-skill [--project <dir>] [--global] [--force] [--refresh]   writes the skill for Claude Code
@@ -168,6 +170,9 @@ switch (cmd) {
     break;
   case "card":
     for (const line of cardLines(requireSujet(rest[0]))) out(line);
+    break;
+  case "context":
+    await context(rest);
     break;
   case "dive":
     await dive(rest);

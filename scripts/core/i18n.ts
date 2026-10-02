@@ -676,6 +676,14 @@ const en = {
   "cli.setup.provider.source": "An external provider's source is {\"module\": path} or {\"exec\": [command, …]}, with the \"sha256\" you trusted; a built-in tool has none ({path})",
   "cli.setup.provider.field": "A tool's entry holds \"source\" and \"accounts\" only ({path})",
   "cli.setup.provider.expected": "Expected {expected} here, got {got} ({path})",
+  "cli.context.usage": "usage: context <topic | key | link> [--since 2h] [--max 200]",
+  "cli.context.max": "--max is a whole number of items, from 1 to {limit}",
+  "cli.context.unknown": "{ref}: no topic, key or link of a connected tool",
+  "cli.context.noAccount": "{key}: {tool} is not connected in this profile",
+  "cli.context.unreadable": "{key}: Strato cannot read {tool} threads yet",
+  "cli.context.unreadableMcp": "{key}: Strato cannot read {tool} threads yet; read it through the {server} MCP server ({read})",
+  "cli.context.failed": "{key}: could not be read: {reason}",
+  "cli.context.lostLongKey": "its long id is no longer in the account's map",
 } as const;
 
 export type MessageKey = keyof typeof en;
@@ -1308,6 +1316,14 @@ const fr: Record<MessageKey, string> = {
   "cli.setup.provider.source": "La source d'un provider externe est {\"module\": chemin} ou {\"exec\": [commande, …]}, avec le « sha256 » approuvé ; un outil intégré n'en a pas ({path})",
   "cli.setup.provider.field": "L'entrée d'un outil ne contient que « source » et « accounts » ({path})",
   "cli.setup.provider.expected": "Attendu ici : {expected}, reçu : {got} ({path})",
+  "cli.context.usage": "usage : context <sujet | clé | lien> [--since 2h] [--max 200]",
+  "cli.context.max": "--max est un nombre entier d'éléments, de 1 à {limit}",
+  "cli.context.unknown": "{ref} : ni un sujet, ni une clé, ni un lien d'un outil connecté",
+  "cli.context.noAccount": "{key} : {tool} n'est pas connecté dans ce profil",
+  "cli.context.unreadable": "{key} : Strato ne sait pas encore lire les fils de {tool}",
+  "cli.context.unreadableMcp": "{key} : Strato ne sait pas encore lire les fils de {tool} ; lis-le avec le serveur MCP {server} ({read})",
+  "cli.context.failed": "{key} : lecture impossible : {reason}",
+  "cli.context.lostLongKey": "son identifiant long n'est plus dans la table du compte",
 };
 
 export const DICTIONARIES: Record<Locale, Record<MessageKey, string>> = { en, fr };

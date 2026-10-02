@@ -6,8 +6,9 @@
  * The descriptors are installed at startup with `useProviders`, the way `useSettings` installs the profile (app/env.ts,
  * and test-setup.ts for the tests), so this module stays pure. Native ids only: core/keys.ts turns them into keys.
  */
+import { effectiveCapabilities } from "../providers/api.ts";
 import type { Account, LinkSpec, ProviderDescriptor, ProviderPure, Text } from "../providers/sdk.ts";
-import { locale, type MessageKey, t } from "./i18n.ts";
+import { DICTIONARIES, locale, type MessageKey, t } from "./i18n.ts";
 import { resolveAccounts, type Settings, settings } from "./settings.ts";
 
 let installed: ProviderDescriptor[] = [];
@@ -46,6 +47,21 @@ export const descriptorOf = (id: string): ProviderDescriptor | null => installed
 export function textOf(x: Text): string {
   if ("key" in x) return t(x.key as MessageKey);
   return locale() === "fr" && x.fr ? x.fr : x.en;
+}
+
+/**
+ * True when Strato reads this account's threads itself (`strato context`): the account is configured, and its tool
+ * declares `context` with an auth method that keeps it. A tool declares only what it does in this version.
+ */
+export function readsThreads(provider: string, account: string): boolean {
+  const d = descriptorOf(provider);
+  const a = linkAccount(provider, account);
+  return !!d && !!a && effectiveCapabilities(d, a.auth).context;
+}
+
+/** A provider string in English, whatever the person's language: the words a prompt reads (prompts are English). */
+export function englishOf(x: Text): string {
+  return "key" in x ? (DICTIONARIES.en[x.key as MessageKey] ?? x.key) : x.en;
 }
 
 /** The name of a tool ("Slack", "Linear"), or its id when it is not installed. */

@@ -31,7 +31,8 @@ export const LINEAR_DESCRIPTOR: ProviderDescriptor = {
   capabilities: {
     ingest: { push: false, poll: true },
     participation: true,
-    context: true,
+    // reading a ticket comes with the linear stage: until then sessions read tickets through the Linear MCP
+    context: false,
     actions: ["comment", "reply", "react", "setStatus", "assign", "create", "delete"],
     undo: ["comment", "reply", "setStatus", "assign", "react"],
     idempotent: ["comment", "reply", "create"],

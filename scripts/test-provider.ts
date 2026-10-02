@@ -4,7 +4,7 @@
  * hostile strings. Pure: the test script adds it to the registry (`addProvider`) in its own process.
  */
 import { PROVIDER_API } from "./providers/api.ts";
-import type { Identity, IngestCursor, Item, PollResult, Provider, ProviderDescriptor, ProviderError } from "./providers/sdk.ts";
+import type { ContextResult, Identity, IngestCursor, Item, PollResult, Provider, ProviderDescriptor, ProviderError } from "./providers/sdk.ts";
 
 /** An answer, or the error the call throws. */
 type Answer<T> = T | { error: Partial<ProviderError> & { code: string } };
@@ -22,6 +22,8 @@ export interface FakeSpec {
   identity?: unknown;
   /** Threads the person took part in. */
   participated?: string[];
+  /** Makes the tool read threads (`context`): what it returns for each native thread id, or the error it throws. */
+  context?: Record<string, Answer<ContextResult>> | ((thread: string, opts: { since?: number; max: number }) => Answer<ContextResult>);
   /**
    * Gives the tool a `complete` (the second step of triage) that throws "names service down" on its first
    * `completeFails` calls, then returns the items unchanged: a triage error.
@@ -37,14 +39,14 @@ export interface FakeSpec {
 }
 
 /** A ticket tool on `tickets.example`, its links `https://tickets.example/t/PLAT-12`. */
-export function fakeDescriptor(id: string, label: string, push = false): ProviderDescriptor {
+export function fakeDescriptor(id: string, label: string, push = false, context = false): ProviderDescriptor {
   const text = (en: string) => ({ en });
   return {
     id,
     label: text(label),
     api: { min: PROVIDER_API, max: PROVIDER_API },
     kinds: ["tracker"],
-    capabilities: { ingest: { push, poll: true }, participation: true, context: false, actions: [], undo: [], idempotent: [], edits: false, identity: false },
+    capabilities: { ingest: { push, poll: true }, participation: true, context, actions: [], undo: [], idempotent: [], edits: false, identity: false },
     auth: [{ id: "api-key", kind: "api-key", label: text("API key"), docs: "https://tickets.example/docs/api-keys", steps: [{ kind: "paste", secret: "FAKE_API_KEY", say: text("Paste your API key") }], stores: [{ name: "FAKE_API_KEY" }] }],
     settings: [
       { key: "me", type: "string", label: text("Your user id"), ask: text("Your user id?"), triage: "me" },
@@ -71,7 +73,17 @@ export function fakeProvider(spec: FakeSpec): Provider & { calls: string[] } {
   let completions = 0;
   return {
     calls,
-    descriptor: fakeDescriptor(spec.id, spec.label, !!spec.pushes),
+    descriptor: fakeDescriptor(spec.id, spec.label, !!spec.pushes, !!spec.context),
+    ...(spec.context
+      ? {
+          async context(_ctx, thread, opts) {
+            calls.push(`context ${thread} ${opts.max}${opts.since ? ` since ${opts.since}` : ""}`);
+            const a = typeof spec.context === "function" ? spec.context(thread, opts) : spec.context?.[thread];
+            if (!a) throw { code: "not_found", message: `no ticket ${thread}`, retryable: false, fatal: false };
+            return answer(a);
+          },
+        }
+      : {}),
     ...(spec.pushes
       ? {
           async subscribe(ctx, onItems, events) {
