@@ -77,7 +77,7 @@ export const LINEAR_DESCRIPTOR: ProviderDescriptor = {
       tradeoff: key("auth.oauth.tradeoff"),
       docs: "https://linear.app/developers/oauth-2-0-authentication",
       steps: [
-        { kind: "oauth", authorizeUrl: "https://linear.app/oauth/authorize", tokenUrl: LINEAR_TOKEN_URL, clientId: "setting", pkce: true, scopes: ["read", "write"], scopeSeparator: ",", secret: LINEAR_SECRETS.access, refreshSecret: LINEAR_SECRETS.refresh },
+        { kind: "oauth", authorizeUrl: "https://linear.app/oauth/authorize", tokenUrl: LINEAR_TOKEN_URL, clientId: "setting", pkce: true, scopes: ["read", "write"], scopeSeparator: ",", redirectHost: "localhost", secret: LINEAR_SECRETS.access, refreshSecret: LINEAR_SECRETS.refresh },
         { kind: "verify" },
       ],
       stores: [{ name: LINEAR_SECRETS.access, refreshable: true }, { name: LINEAR_SECRETS.refresh, refreshable: true }],
