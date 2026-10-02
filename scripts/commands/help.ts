@@ -22,6 +22,7 @@ export function helpText(cli: string): string {
       ["setup --providers", "the tools Strato can connect, and how each one signs in"],
       ["setup --connect slack", "connect a Slack workspace: your own app, a token you have, or your team's app (OAuth)"],
       ["setup --check", "what is missing, and the one command to run next"],
+      ["provider list", "the tools Strato connects, built in and your own (provider guide: how to write one)"],
       ['claude -n strato "/strato setup"', "the guided setup interview (run as is, not after the prefix)"],
       ["doctor", "what is wired and what is missing, one line each"],
     ]),

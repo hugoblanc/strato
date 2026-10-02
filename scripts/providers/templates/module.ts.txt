@@ -1,0 +1,157 @@
+/**
+ * {{label}}: a Strato provider, written as a TypeScript module that Strato imports at runtime.
+ *
+ * It works as is against the fixtures in fixtures/, so `strato provider test` passes before you change anything.
+ * To connect your tool, change the descriptor (what the tool is, how a person signs in, which links are its own) and
+ * the few functions that turn your tool's API answers into items. Every request goes through `ctx.fetch`, which only
+ * reaches the descriptor's `apiHosts` and lets the harness check your provider offline.
+ *
+ * The guide: `strato provider guide`. The types: strato-provider.d.ts (`strato provider types` prints it again).
+ */
+import type { AccountContext, ActInput, ActResult, ContextResult, Identity, IngestCursor, Item, PollResult, Provider, ProviderDescriptor } from "./strato-provider.d.ts";
+
+const HOST = "{{host}}";
+const API = `https://${HOST}`;
+const SECRET = "{{SECRET}}";
+const UNDO_MS = 30_000;
+const text = (en: string) => ({ en });
+
+const descriptor: ProviderDescriptor = {
+  id: "{{id}}",
+  label: text("{{label}}"),
+  api: { min: 1, max: 1 },
+  kinds: ["tracker"],
+  capabilities: {
+    ingest: { push: false, poll: true },
+    participation: false,
+    context: true,
+    actions: ["comment"],
+    undo: ["comment"],
+    idempotent: ["comment"],
+    edits: false,
+    identity: false,
+  },
+  auth: [
+    {
+      id: "api-key",
+      kind: "api-key",
+      label: text("Personal API key"),
+      docs: `https://${HOST}/docs/api-keys`,
+      steps: [{ kind: "open", url: `https://${HOST}/settings/api`, say: text("Create a personal API key") }, { kind: "paste", secret: SECRET, say: text("Paste the API key (it is not shown)") }, { kind: "verify" }],
+      stores: [{ name: SECRET }],
+    },
+  ],
+  settings: [
+    { key: "me", type: "string", label: text("Your user id"), ask: text("What is your user id in {{label}}?"), triage: "me" },
+    { key: "watch", type: "string[]", label: text("Watched projects"), default: [], ask: text("In which projects is every new item a request for you?"), triage: "watch" },
+    { key: "ignoreAuthors", type: "string[]", label: text("Bots to set aside"), default: [], ask: text("Which bots post there that you do not need to read?"), triage: "ignoreAuthors" },
+  ],
+  vocabulary: { item: text("comment"), thread: text("item"), conversation: text("project"), targetFormat: "the item's key, such as {{id}}:OPS-7" },
+  links: {
+    parse: [{ host: HOST, pattern: "^/t/([A-Za-z0-9_-]+)", thread: "$1" }],
+    of: [{ match: "^([A-Za-z0-9_-]+)$", url: `https://${HOST}/t/$1` }],
+  },
+  hosts: [HOST],
+  apiHosts: [HOST],
+  undoMs: UNDO_MS,
+};
+
+/** A request to the tool's API; its errors say what Strato should do about them. */
+async function api(ctx: AccountContext, method: string, path: string, body?: unknown): Promise<any> {
+  let res: Response;
+  try {
+    res = await ctx.fetch(`${API}${path}`, { method, headers: { authorization: `Bearer ${ctx.secret(SECRET) ?? ""}`, "content-type": "application/json" }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
+  } catch (e) {
+    // a timeout or a network failure: worth retrying
+    throw { code: "network", message: String((e as Error)?.message ?? e), retryable: true };
+  }
+  if (res.status === 401 || res.status === 403) throw { code: "invalid_auth", message: "the API key was refused", fatal: true };
+  if (res.status === 429) throw { code: "rate_limited", message: "rate limited", retryable: true, retryAfterMs: Number(res.headers.get("retry-after") ?? 1) * 1000 };
+  if (res.status === 404) throw { code: "not_found", message: `${method} ${path}: not found` };
+  if (res.status >= 400) throw { code: "http", message: `${method} ${path}: HTTP ${res.status}`, retryable: res.status >= 500 };
+  const raw = await res.text();
+  return raw ? JSON.parse(raw) : null;
+}
+
+/** One entry of the tool's activity, as its API returns it. */
+interface Activity {
+  id: string;
+  thread: string;
+  author: { id: string; name: string; bot?: boolean };
+  text: string;
+  at: number;
+  mentions?: string[];
+}
+
+/** An activity entry as an item: the native ids, the facts triage needs, the text as plain text. */
+function itemOf(ctx: AccountContext, a: Activity): Item {
+  const me = String(ctx.account.settings.me ?? ctx.identity?.me ?? "");
+  const project = a.thread.split("-")[0];
+  const mentions = a.mentions ?? [];
+  return {
+    thread: a.thread,
+    id: a.id,
+    event: "comment",
+    author: { id: a.author.id, name: a.author.name, isMe: a.author.id === me, isBot: !!a.author.bot },
+    conversation: { id: project, label: project, kind: "ticket" },
+    text: a.text,
+    time: a.at,
+    link: `https://${HOST}/t/${a.thread}`,
+    mentionsMe: mentions.includes(me),
+    targetsOther: mentions.some((m) => m !== me),
+  };
+}
+
+const provider: Provider = {
+  descriptor,
+
+  async connect(ctx): Promise<Identity> {
+    const me = await api(ctx, "GET", "/api/me");
+    return { me: me.id, name: me.name, workspace: me.workspace };
+  },
+
+  /** Everything newer than the cursor, oldest first; when there is more than `maxItems`, the newest ones. */
+  async poll(ctx, cursor: IngestCursor | null, opts): Promise<PollResult> {
+    const since = cursor ? Number(cursor.value) : opts.since;
+    const all: Activity[] = await api(ctx, "GET", "/api/activity");
+    const fresh = all.filter((a) => a.at > since).sort((a, b) => a.at - b.at);
+    const kept = fresh.slice(-opts.maxItems);
+    const complete = kept.length === fresh.length;
+    const newest = kept.length ? kept[kept.length - 1].at : since;
+    // a capped pass hands back the oldest item it read: what is older than it is dropped on purpose
+    const at = complete ? newest : kept[0].at;
+    return { items: kept.map((a) => itemOf(ctx, a)), cursor: { value: String(at), at }, complete };
+  },
+
+  /** A thread for a work session, oldest first. */
+  async context(ctx, thread, opts): Promise<ContextResult> {
+    const t = await api(ctx, "GET", `/api/threads/${encodeURIComponent(thread)}`);
+    const items = (t.items as Activity[]).sort((a, b) => a.at - b.at).slice(-opts.max);
+    return {
+      thread,
+      link: `https://${HOST}/t/${thread}`,
+      conversation: { id: thread.split("-")[0], label: thread.split("-")[0], kind: "ticket" },
+      title: t.title,
+      items: items.map((a) => ({ id: a.id, author: a.author.name, time: a.at, text: a.text })),
+      complete: items.length === (t.items as Activity[]).length,
+      fetchedAt: Date.now(),
+    };
+  },
+
+  /** A comment, only ever called by Strato after the person's Go on this exact text. */
+  async act(ctx, input: ActInput): Promise<ActResult> {
+    const a = input.action;
+    if (a.kind !== "comment") return { ok: false, error: { code: "unsupported", message: `${a.kind} is not supported`, retryable: false, fatal: false, outcome: "none" } };
+    if (input.dryRun) return { ok: true, ref: "", link: `https://${HOST}/t/${a.target.native}`, dry: `comment on ${a.target.native}` };
+    // the idempotency key goes to the tool, so a replay of the same Go never comments twice
+    const c = await api(ctx, "POST", `/api/threads/${encodeURIComponent(a.target.native)}/comments`, { text: a.text, idempotencyKey: input.idempotencyKey });
+    return { ok: true, ref: c.id, link: `https://${HOST}/t/${a.target.native}#${c.id}`, undo: { token: c.id, until: Date.now() + UNDO_MS } };
+  },
+
+  async undo(ctx, token): Promise<ActResult> {
+    await api(ctx, "DELETE", `/api/comments/${encodeURIComponent(token)}`);
+    return { ok: true, ref: token, link: "" };
+  },
+};
+
+export default provider;

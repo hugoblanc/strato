@@ -1915,6 +1915,20 @@ Each stage is one or more commits that leave `bun run check` green and the guard
   - The caller: sessions are started with `STRATO_CALLER=session` in their settings' environment, and `provider trust`, `provider new` and `provider test` refuse that caller (exit 77); trust needs a TTY on top.
     The rest of section 8.6 (the allowlist of subcommands, the switches) stays with the second act stage.
   - `strato provider types` prints the SDK file; `strato provider sdk` is the same command.
+  - The harness runs in a process of its own on a throwaway state folder (`provider test` starts `provider _harness`, which refuses any state folder that does not hold the nonce `provider test` put in its environment), so the gate, the topics and the event log it uses are its own.
+    Writes go through the gate: dry runs through a new `dryRunTask` in `app/act.ts` (every check of a real Go, then `act` with `dryRun: true`, logged as `act-dry`, the topic untouched), real acts and undos through `actOnTask` and `undoTask`.
+    Every account context of that process answers from the fake (`useBaseFetch` in the registry), and its global `fetch` refuses everything before the provider is loaded.
+  - Fixtures: besides `secrets`, `exchanges` and `expect`, a file may give the account's `settings` and `auth`, `act` (the thread, text and values the act checks use) and `push.waitMs`; an `expect.items` entry may override the rules and expect `null` (ignored).
+    The idempotency key is checked by the harness itself (in the write's body or a header), so a fixture never spells a hash.
+    A GET is safe without saying so, like an exchange marked `"safe": true`.
+    The error checks need no fixture: the fake answers every request with a 401, a 429 (`Retry-After: 7`) or a timeout in turn.
+    A write that times out must not say `outcome: "none"`.
+  - Not built: the `$/cancel` check of the harness (the exec host's own tests cover cancellation), the one-request-at-a-time check (the host enforces it), `provider record`, and the Connect page's Trust button.
+  - Action kinds no task carries yet (`react`, `delete`, `create`) are reported as skipped: Strato never calls them.
+  - `--exec` scaffolds Python only; any other language follows the guide's protocol section.
+    The scaffold's tool is `<id>.example`, a tracker with two items, a thread, and a `comment` with undo.
+  - An exec provider's failed `http.fetch` (a timeout, a network failure) answers -32000 with `data: { code: "timeout" | "network", retryable: true }`, which a provider passes on as is.
+  - The author guide is `docs/providers/authoring.md`, embedded in the binary for `strato provider guide`.
 
 ### proof
 

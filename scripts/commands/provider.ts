@@ -4,29 +4,39 @@
  *
  *   provider list                        the built-in and configured providers, where each one stands
  *   provider types                       the SDK types file, for an author's editor (`sdk` is the same)
+ *   provider guide                       the author guide, docs/providers/authoring.md, embedded in the binary
+ *   provider new <name> [--exec python] [--dir <folder>]
+ *                                        a provider that works as is against its fixtures, with its README
  *   provider trust <id>                  shows a configured provider's folder, hash and descriptor, and trusts it on a
  *                                        typed "yes", in the person's own terminal
+ *   provider test <id | path>            the offline conformance harness (providers/harness/run.ts); `--live` runs its
+ *                                        read checks against the person's own account, never its writes
  *
  * A work session never trusts, scaffolds nor runs provider code: those subcommands refuse a session caller
  * (`STRATO_CALLER=session`, set in every session's environment) and trusting needs a terminal on top.
  */
-import { existsSync, readdirSync } from "node:fs";
-import { homedir } from "node:os";
-import { join } from "node:path";
-import { F, fail, nowIso, out } from "../app/env.ts";
+import { randomUUID } from "node:crypto";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { homedir, tmpdir } from "node:os";
+import { dirname, join, resolve } from "node:path";
+import { expandHome, F, fail, flags, nowIso, out, readJson, writeJson } from "../app/env.ts";
+import { selfArgv } from "../app/self.ts";
 import { readLine } from "../app/secrets.ts";
-import { t } from "../core/i18n.ts";
+import { locale, t } from "../core/i18n.ts";
 import { textOf } from "../core/links.ts";
 import { shortPath } from "../core/setup.ts";
-import { settings } from "../core/settings.ts";
+import { resolveSettings, settings, useSettings } from "../core/settings.ts";
 import { PROVIDER_ID } from "../providers/api.ts";
 import { descriptorProblems } from "../providers/check.ts";
 import { loadExternalProviders, trustProblem } from "../providers/external.ts";
 import { describeExec } from "../providers/host/exec.ts";
 import { importModule, LoadError } from "../providers/host/module.ts";
-import { providerHome, type ResolvedSource, trustOf, writeTrust } from "../providers/host/trust.ts";
+import { type HarnessSpec, runHarness } from "../providers/harness/run.ts";
+import { EXEC_LANGUAGES, type ExecLanguage, scaffold } from "../providers/templates/scaffold.ts";
+import { providerHome, type ResolvedSource, resolveSource, trustOf, writeTrust } from "../providers/host/trust.ts";
 import { accounts, BUILTIN } from "../providers/registry.ts";
 import type { ProviderDescriptor } from "../providers/sdk.ts";
+import GUIDE from "../../docs/providers/authoring.md" with { type: "text" };
 // @ts-expect-error: imported as text, which Bun embeds in the binary; TypeScript reads it as the module it also is
 import sdkText from "../providers/sdk.ts" with { type: "text" };
 import { cliCommand } from "./setup.ts";
@@ -52,11 +62,23 @@ export async function provider(args: string[]): Promise<void> {
     case "sdk":
       process.stdout.write(SDK_TYPES);
       return;
+    case "guide":
+      process.stdout.write(GUIDE);
+      return;
     case "trust":
       refuseSession("trust");
       return trust(rest);
+    case "new":
+      refuseSession("new");
+      return scaffoldCommand(rest);
+    case "test":
+      refuseSession("test");
+      return test(rest);
+    case "_harness":
+      refuseSession("test");
+      return harness();
     default:
-      fail(`usage: provider list | types | trust <id>`, 64);
+      fail(`usage: provider list | types | guide | new <name> [--exec python] [--dir <folder>] | trust <id> | test <id | path> [--fixtures <dir>] [--live [--account <name>]]`, 64);
   }
 }
 
@@ -142,4 +164,103 @@ async function trust(args: string[]): Promise<void> {
   if (answer !== "yes" && answer !== "oui") fail(t("cli.provider.trust.declined"));
   writeTrust(id, { sha256: state.sha256, source, descriptor, at: nowIso() });
   out(t("cli.provider.trust.done", { id, cmd: `${cliCommand()} provider test ${id}` }));
+}
+
+// ------------------------------------------------------------------ test
+
+/** A provider's code given by path: a folder holding provider.ts/.js/.mjs or provider.py, or the file itself. */
+function targetOfPath(path: string): { target: HarnessSpec["target"]; folder: string } | null {
+  const abs = resolve(expandHome(path));
+  if (!existsSync(abs)) return null;
+  const file = statSync(abs).isDirectory() ? ["provider.ts", "provider.mts", "provider.js", "provider.mjs", "provider.py"].map((f) => join(abs, f)).find((f) => existsSync(f)) : abs;
+  if (!file) return null;
+  const folder = dirname(file);
+  if (/\.(m?ts|m?js)$/.test(file)) return { target: { shape: "module", file }, folder };
+  if (file.endsWith(".py")) return { target: { shape: "exec", argv: ["python3", file], cwd: folder }, folder };
+  return { target: { shape: "exec", argv: [file], cwd: folder }, folder };
+}
+
+/**
+ * `provider test <id | path>`: the conformance harness on a throwaway state folder, in a process of its own (the state
+ * folder is fixed when a Strato process starts). By id, the configured source; by path, the code there. Fixtures come
+ * from `<folder>/fixtures/` or `--fixtures`. `--live` runs the read checks against the person's own account instead.
+ */
+async function test(args: string[]): Promise<void> {
+  const { positional, opts } = flags(args);
+  const ref = positional[0];
+  if (!ref) fail("usage: provider test <id | path> [--fixtures <dir>] [--live [--account <name>]]", 64);
+  const live = opts.live === "true";
+  if (live && !process.stdin.isTTY) fail(t("cli.provider.test.liveNoTty", { cmd: `${cliCommand()} provider test ${ref} --live` }), 64);
+  const source = BUILTIN[ref] ? undefined : settings().providers[ref]?.source;
+  let found: { target: HarnessSpec["target"]; folder: string } | null = null;
+  if (source) {
+    const r = resolveSource(ref, source);
+    if (r) found = { target: r.shape === "module" ? { shape: "module", file: r.file } : { shape: "exec", argv: r.argv, cwd: r.cwd }, folder: r.folder };
+  } else if (!live) found = targetOfPath(ref);
+  if (!found) fail(t("cli.provider.test.notFound", { path: ref }));
+  let liveSpec: HarnessSpec["live"] = null;
+  if (live) {
+    const account = opts.account && opts.account !== "true" ? opts.account : "default";
+    const e = accounts().find((a) => a.account.provider === ref && a.account.id === account);
+    if (!e) fail(t("cli.provider.test.liveNeeds", { id: ref, account }));
+    liveSpec = { settings: e.account.settings, secretsFile: expandHome(e.secretsFile), auth: e.account.auth };
+  }
+  const dir = mkdtempSync(join(tmpdir(), "strato-harness-"));
+  try {
+    const state = join(dir, "state");
+    mkdirSync(join(state, "providers"), { recursive: true });
+    const spec: HarnessSpec = {
+      nonce: randomUUID(),
+      target: found.target,
+      fixturesDir: opts.fixtures && opts.fixtures !== "true" ? resolve(opts.fixtures) : join(found.folder, "fixtures"),
+      live: liveSpec,
+      locale: locale(),
+    };
+    writeJson(join(state, "harness.json"), spec);
+    const p = Bun.spawn([...selfArgv(), "provider", "_harness"], {
+      env: { ...process.env, STRATO_STATE: state, STRATO_WORKSPACE: dir, STRATO_HARNESS_NONCE: spec.nonce, STRATO_UPDATE_CHECK: "off" },
+      stdin: "ignore",
+      stdout: "inherit",
+      stderr: "inherit",
+    });
+    process.exitCode = await p.exited;
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+/** The harness process: only on a state folder `provider test` made, proven by the nonce it put in the environment. */
+async function harness(): Promise<void> {
+  const spec = readJson<HarnessSpec | null>(join(F.providers, "..", "harness.json"), null);
+  if (!spec || !process.env.STRATO_HARNESS_NONCE || spec.nonce !== process.env.STRATO_HARNESS_NONCE) fail(t("cli.provider.test.internal"), 64);
+  // offline: the process's own fetch refuses everything before any provider code runs; the provider gets the fake
+  if (!spec.live) globalThis.fetch = (async () => Promise.reject(new Error(t("cli.provider.test.globalFetch")))) as unknown as typeof fetch;
+  useSettings(resolveSettings({ ui: { locale: spec.locale } }));
+  const ok = await runHarness(spec, out);
+  process.exit(ok ? 0 : 1);
+}
+
+// ------------------------------------------------------------------ new
+
+/** `provider new <name>`: the scaffold, in `<state>/providers/<name>/` or `<folder>/<name>/`, never over existing files. */
+async function scaffoldCommand(args: string[]): Promise<void> {
+  const { positional, opts } = flags(args);
+  const id = positional[0];
+  if (!id) fail("usage: provider new <name> [--exec python] [--dir <folder>]", 64);
+  if (!PROVIDER_ID.test(id)) fail(t("cli.setup.provider.name", { path: id }), 64);
+  if (BUILTIN[id]) fail(t("cli.provider.new.builtin", { id }), 64);
+  const language = opts.exec && opts.exec !== "true" ? opts.exec : opts.exec === "true" ? "python" : null;
+  if (language && !(EXEC_LANGUAGES as readonly string[]).includes(language)) fail(t("cli.provider.new.language", { language, languages: EXEC_LANGUAGES.join(", ") }), 64);
+  const folder = opts.dir && opts.dir !== "true" ? join(resolve(expandHome(opts.dir)), id) : providerHome(id);
+  if (existsSync(folder) && readdirSync(folder).length) fail(t("cli.provider.new.exists", { path: short(folder) }));
+  const { files, source } = scaffold(id, { ...(language ? { exec: language as ExecLanguage } : {}), sdk: SDK_TYPES, folder, home: folder === providerHome(id), cli: cliCommand() });
+  for (const [rel, content] of Object.entries(files)) {
+    mkdirSync(dirname(join(folder, rel)), { recursive: true });
+    writeFileSync(join(folder, rel), content);
+  }
+  out(t("cli.provider.new.written", { path: short(folder), files: Object.keys(files).join(", ") }));
+  out(t("cli.provider.new.test", { cmd: `${cliCommand()} provider test ${folder}` }));
+  out(t("cli.provider.new.config"));
+  out(`  ${JSON.stringify({ providers: { [id]: { source } } })}`);
+  out(t("cli.provider.new.next", { trust: `${cliCommand()} provider trust ${id}`, connect: `${cliCommand()} setup --connect ${id}`, guide: `${cliCommand()} provider guide` }));
 }

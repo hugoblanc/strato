@@ -1,0 +1,48 @@
+{
+  "secrets": { "{{SECRET}}": "test-key-not-a-real-one" },
+  "settings": { "me": "u-alice", "watch": ["OPS"] },
+  "exchanges": [
+    {
+      "request": { "method": "GET", "url": "https://{{host}}/api/me" },
+      "response": { "body": { "id": "u-alice", "name": "Alice", "workspace": "acme" } },
+      "repeat": true
+    },
+    {
+      "request": { "method": "GET", "url": "https://{{host}}/api/activity" },
+      "response": {
+        "body": [
+          { "id": "a-2", "thread": "DOC-3", "author": { "id": "u-bob", "name": "Bob" }, "text": "notes are up", "at": 1790000200000 },
+          { "id": "a-1", "thread": "OPS-7", "author": { "id": "u-bob", "name": "Bob" }, "text": "@alice can you check the checkout?", "at": 1790000100000, "mentions": ["u-alice"] }
+        ]
+      },
+      "repeat": true
+    },
+    {
+      "request": { "method": "GET", "url": "https://{{host}}/api/threads/OPS-7" },
+      "response": {
+        "body": {
+          "title": "Checkout fails",
+          "items": [{ "id": "a-1", "thread": "OPS-7", "author": { "id": "u-bob", "name": "Bob" }, "text": "@alice can you check the checkout?", "at": 1790000100000 }]
+        }
+      },
+      "repeat": true
+    },
+    {
+      "request": { "method": "POST", "url": "https://{{host}}/api/threads/OPS-7/comments", "bodyContains": ["Strato conformance check"] },
+      "response": { "status": 201, "body": { "id": "c-1" } },
+      "repeat": true
+    },
+    {
+      "request": { "method": "DELETE", "url": "https://{{host}}/api/comments/c-1" },
+      "response": { "body": {} }
+    }
+  ],
+  "expect": {
+    "items": [
+      { "id": "a-1", "kind": "mention" },
+      { "id": "a-2", "kind": null },
+      { "id": "a-2", "kind": "canal", "rules": { "watch": ["DOC"] } }
+    ]
+  },
+  "act": { "thread": "OPS-7" }
+}

@@ -53,10 +53,11 @@ const error = (id: number | string, code: number, message: string, data?: object
 function ask(method: string, params: unknown): Promise<any> {
   const id = nextId++;
   send({ id, method, params });
-  return new Promise((resolve, reject) => waiting.set(id, (v) => (v.error ? reject(new Error(v.error.message)) : resolve(v.result))));
+  return new Promise((resolve, reject) => waiting.set(id, (v) => (v.error ? reject({ code: -32000, message: v.error.message, data: v.error.data }) : resolve(v.result))));
 }
 
 const api = async (method: string, path: string, body?: unknown) => {
+  // a request that failed on the way (timeout, network) comes back with Strato's error data: it is passed on as is
   const r = await ask("http.fetch", { method, url: `https://tickets.example${path}`, headers: { authorization: `Bearer ${secrets.TICKETS_API_KEY ?? ""}`, "content-type": "application/json" }, ...(body ? { body: JSON.stringify(body) } : {}) });
   if (r.status === 401 || r.status === 403) throw { code: -32002, message: "the API key was refused", data: { code: "invalid_auth", fatal: true } };
   if (r.status === 429) throw { code: -32003, message: "rate limited", data: { code: "rate_limited", retryable: true, retryAfterMs: Number(r.headers["retry-after"] ?? 1) * 1000 } };

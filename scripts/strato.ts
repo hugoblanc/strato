@@ -63,8 +63,10 @@ export const USAGE = `strato: routes Slack to Claude Code work sessions, one top
   strato version                        version, commit and install mode
   strato iterm-mark                     marks the master's iTerm2 tab (amber tab and badge)
   strato policy-default <template>      prints a default policy template, to copy into <state>/policy/
-  strato provider list | types | trust <id>   external providers: where each stands, the SDK types for authors,
-                                        trusting a configured one in your own terminal
+  strato provider list | types | guide  external providers: where each stands, the SDK types and the guide for authors
+  strato provider new <name> [--exec python] [--dir <folder>]   a provider that works as is, with fixtures and a README
+  strato provider test <name | path> [--fixtures <dir>] [--live [--account <name>]]   the offline conformance harness
+  strato provider trust <name>          trusts a configured provider's folder, in your own terminal
 
 <topic> = letter (A), any key of the topic (channel:ts, linear:ABC-123), short session id,
 sessionId or Slack link of one of its threads.

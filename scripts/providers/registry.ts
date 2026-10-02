@@ -194,6 +194,16 @@ function apiHostsOf(entry: AccountEntry): string[] {
  * global one does not reach the built-in providers' requests.
  */
 const FETCH = globalThis.fetch;
+/** The fetch every account context starts from: the captured one, or the conformance harness's fake tool. */
+let baseFetch: typeof fetch = FETCH;
+
+/**
+ * Replaces the fetch of every account context of this process, the act path's included: the conformance harness
+ * puts its fake tool here, so that nothing it runs reaches a network. Null puts the captured one back.
+ */
+export function useBaseFetch(f: typeof fetch | null): void {
+  baseFetch = f ?? FETCH;
+}
 
 /** Every known secret value masked in a text: a provider's errors and logs never carry one. */
 const masked = (text: string, secrets: string[]) => secrets.reduce((t, s) => (s.length >= 6 ? t.split(s).join(`${s.slice(0, 4)}…`) : t), text);
@@ -219,7 +229,7 @@ export function accountContext(entry: AccountEntry, opts: { identity?: Identity 
     return value;
   };
   const signal = opts.signal ?? new AbortController().signal;
-  const baseFetch = opts.fetchImpl ?? FETCH;
+  const base = opts.fetchImpl ?? baseFetch;
   const hosts = apiHostsOf(entry);
   const label = `${entry.account.provider}${entry.account.id === "default" ? "" : `@${entry.account.id}`}`;
   const limitedFetch = (async (input: string | URL | Request, init?: RequestInit) => {
@@ -227,7 +237,7 @@ export function accountContext(entry: AccountEntry, opts: { identity?: Identity 
     if (url.protocol !== "https:" || !hosts.some((h) => hostMatches(h, url.hostname))) throw new Error(`${label}: ${url.hostname} is not among the provider's API hosts`);
     const timeout = AbortSignal.timeout(25_000);
     try {
-      return await baseFetch(input, { ...init, signal: AbortSignal.any([signal, timeout, ...(init?.signal ? [init.signal] : [])]) });
+      return await base(input, { ...init, signal: AbortSignal.any([signal, timeout, ...(init?.signal ? [init.signal] : [])]) });
     } catch (e) {
       throw new Error(masked(`${label}: ${(e as Error).message}`, known));
     }

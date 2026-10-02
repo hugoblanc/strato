@@ -153,6 +153,31 @@ export async function actOnTask(req: { key: string; taskId: string; sha: string;
   return { ok: false, failed: error, tool, link };
 }
 
+/**
+ * A dry run of a draft or action task through the same gate, for the conformance harness: every check of a real Go
+ * (shadow mode first), then the provider's `act` with `dryRun: true`, which validates and describes without writing.
+ * Nothing on the topic changes; the attempt is logged as `act-dry`.
+ */
+export async function dryRunTask(req: { key: string; taskId: string; sha: string; by: ActOrigin }): Promise<{ ok: true; result: Extract<ActResult, { ok: true }> } | { ok: false; refused: Refusal } | { ok: false; failed: ProviderError }> {
+  const shadow = shadowNow();
+  const s = findSujet(loadSujets(), req.key);
+  const task = s ? findTask(s, req.taskId) : undefined;
+  const missing: Refusal = { code: "missing", message: t("board.api.taskMissing", { id: req.taskId }) };
+  const plan = s && task ? planOfTask(s, task) : missing;
+  const { entry, account } = gateAccount("plan" in plan ? plan.plan : null);
+  const refused = taskRefusal({ shadow, topic: s, task, taskId: req.taskId, shown: plan, plan, account, sha: req.sha, retry: false, now: Date.now() });
+  if (refused || !("plan" in plan) || !entry) {
+    const r = refused ?? missing;
+    logRefusal(req.by, req.key, req.taskId, r, req.sha);
+    return { ok: false, refused: r };
+  }
+  const sha = planSha(plan.plan);
+  const actor = actorOf(entry);
+  const result = actor?.act ? checkedResult(await call(() => (actor.act as NonNullable<typeof actor.act>)(accountContext(entry), { action: plan.plan.actions[0], idempotencyKey: idempotencyKey(req.key, req.taskId, sha, task?.attempt ?? 1), dryRun: true }))) : { ok: false as const, error: { code: "unsupported", message: "no act", retryable: false, fatal: true, outcome: "none" as const } };
+  logEvent({ type: "act-dry", by: req.by, key: req.key, task: req.taskId, account: accountName(plan.plan), kinds: kindsOf(plan.plan), sha: short(sha), ok: result.ok, ...(result.ok ? {} : { error: result.error.code }) });
+  return result.ok ? { ok: true, result } : { ok: false, failed: result.error };
+}
+
 /** Where to check a plan's first action: the thread or conversation it targets. */
 function planLink(plan: ActionPlan): string | null {
   const a = plan.actions[0];

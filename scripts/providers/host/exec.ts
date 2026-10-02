@@ -45,6 +45,8 @@ export interface ExecHostOptions {
 export interface ExecProvider extends Provider {
   stopAll(): Promise<void>;
   processes(): { account: string; pid: number | null; crashes: number }[];
+  /** Any request, for the conformance harness's protocol checks (an unknown method must answer -32601). */
+  rpc(ctx: AccountContext, method: string, params?: unknown): Promise<unknown>;
 }
 
 type During = "read" | "write";
@@ -412,7 +414,9 @@ class Channel {
       }
       this.write(failure(id, RPC.methodNotFound, `Strato has no method ${method}`));
     } catch (e) {
-      this.write(failure(id, RPC.provider, this.masked((e as Error)?.message ?? String(e))));
+      // a request that failed on the way (timeout, network) may succeed later: the provider can pass this on as is
+      const timeout = (e as Error)?.name === "TimeoutError" || (e as Error)?.name === "AbortError";
+      this.write(failure(id, RPC.provider, this.masked((e as Error)?.message ?? String(e)), method === "http.fetch" ? { code: timeout ? "timeout" : "network", retryable: true } : undefined));
     }
   }
 
@@ -552,6 +556,7 @@ export function execProvider(o: ExecHostOptions): ExecProvider {
       await Promise.all([...channels.values()].map((ch) => ch.shutdown()));
     },
     processes: () => [...channels.entries()].map(([account, ch]) => ({ account, pid: ch.pid, crashes: ch.crashCount })),
+    rpc: (ctx, method, params = {}) => channel(ctx).call(method as keyof ExecMethods, params, ctx),
   };
 }
 

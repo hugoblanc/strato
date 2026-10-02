@@ -1,0 +1,241 @@
+#!/usr/bin/env python3
+"""{{label}}: a Strato provider, written as a program that speaks JSON-RPC 2.0 on its stdin and stdout.
+
+It works as is against the fixtures in fixtures/, so `strato provider test` passes before you change anything.
+Standard library only, single-threaded: Strato sends one request at a time and answers this program's own requests
+(http.fetch, store.*) while its request is pending. Every request to the tool goes through http.fetch, which only
+reaches the descriptor's apiHosts and lets the harness check this provider offline.
+
+Print nothing else on stdout: it carries protocol messages only. Write logs to stderr.
+The guide: `strato provider guide`. The message types: strato-provider.d.ts (`strato provider types`).
+"""
+import json
+import sys
+import time
+
+HOST = "{{host}}"
+API = "https://" + HOST
+SECRET = "{{SECRET}}"
+UNDO_MS = 30000
+
+
+def text(en):
+    return {"en": en}
+
+
+DESCRIPTOR = {
+    "id": "{{id}}",
+    "label": text("{{label}}"),
+    "api": {"min": 1, "max": 1},
+    "kinds": ["tracker"],
+    "capabilities": {
+        "ingest": {"push": False, "poll": True},
+        "participation": False,
+        "context": True,
+        "actions": ["comment"],
+        "undo": ["comment"],
+        "idempotent": ["comment"],
+        "edits": False,
+        "identity": False,
+    },
+    "auth": [
+        {
+            "id": "api-key",
+            "kind": "api-key",
+            "label": text("Personal API key"),
+            "docs": API + "/docs/api-keys",
+            "steps": [
+                {"kind": "open", "url": API + "/settings/api", "say": text("Create a personal API key")},
+                {"kind": "paste", "secret": SECRET, "say": text("Paste the API key (it is not shown)")},
+                {"kind": "verify"},
+            ],
+            "stores": [{"name": SECRET}],
+        }
+    ],
+    "settings": [
+        {"key": "me", "type": "string", "label": text("Your user id"), "ask": text("What is your user id in {{label}}?"), "triage": "me"},
+        {"key": "watch", "type": "string[]", "label": text("Watched projects"), "default": [], "ask": text("In which projects is every new item a request for you?"), "triage": "watch"},
+        {"key": "ignoreAuthors", "type": "string[]", "label": text("Bots to set aside"), "default": [], "ask": text("Which bots post there that you do not need to read?"), "triage": "ignoreAuthors"},
+    ],
+    "vocabulary": {"item": text("comment"), "thread": text("item"), "conversation": text("project"), "targetFormat": "the item's key, such as {{id}}:OPS-7"},
+    "links": {
+        "parse": [{"host": HOST, "pattern": "^/t/([A-Za-z0-9_-]+)", "thread": "$1"}],
+        "of": [{"match": "^([A-Za-z0-9_-]+)$", "url": API + "/t/$1"}],
+    },
+    "hosts": [HOST],
+    "apiHosts": [HOST],
+    "undoMs": UNDO_MS,
+}
+
+state = {"secrets": {}, "settings": {}, "next": 1}
+
+
+class ProviderError(Exception):
+    """An error Strato reads: a JSON-RPC code, and a ProviderError in data (code, retryable, fatal, retryAfterMs)."""
+
+    def __init__(self, code, message, data=None):
+        super().__init__(message)
+        self.code = code
+        self.message = message
+        self.data = data
+
+
+def send(message):
+    sys.stdout.write(json.dumps(dict({"jsonrpc": "2.0"}, **message)) + "\n")
+    sys.stdout.flush()
+
+
+def ask_strato(method, params):
+    """A request to Strato, answered while Strato's own request is pending."""
+    rid = "p%d" % state["next"]
+    state["next"] += 1
+    send({"id": rid, "method": method, "params": params})
+    while True:
+        line = sys.stdin.readline()
+        if not line:
+            sys.exit(0)
+        if not line.strip():
+            continue
+        message = json.loads(line)
+        if message.get("id") == rid and "method" not in message:
+            if "error" in message:
+                error = message["error"]
+                raise ProviderError(-32000, error.get("message", ""), error.get("data"))
+            return message["result"]
+        # a notification ($/cancel) while waiting: a single-threaded provider finishes its request instead
+
+
+def api(method, path, body=None):
+    """A request to the tool's API; its errors say what Strato should do about them."""
+    params = {"method": method, "url": API + path, "headers": {"authorization": "Bearer " + state["secrets"].get(SECRET, ""), "content-type": "application/json"}}
+    if body is not None:
+        params["body"] = json.dumps(body)
+    # a timeout or a network failure comes back from Strato as a retryable error, passed on as is
+    response = ask_strato("http.fetch", params)
+    status = response["status"]
+    if status in (401, 403):
+        raise ProviderError(-32002, "the API key was refused", {"code": "invalid_auth", "fatal": True})
+    if status == 429:
+        retry = float(response["headers"].get("retry-after", "1"))
+        raise ProviderError(-32003, "rate limited", {"code": "rate_limited", "retryable": True, "retryAfterMs": int(retry * 1000)})
+    if status == 404:
+        raise ProviderError(-32000, "%s %s: not found" % (method, path), {"code": "not_found"})
+    if status >= 400:
+        raise ProviderError(-32000, "%s %s: HTTP %d" % (method, path, status), {"code": "http", "retryable": status >= 500})
+    return json.loads(response["body"]) if response["body"] else None
+
+
+def item_of(activity):
+    """One entry of the tool's activity as an item: the native ids, the facts triage needs, plain text."""
+    me = str(state["settings"].get("me", ""))
+    project = activity["thread"].split("-")[0]
+    mentions = activity.get("mentions") or []
+    author = activity["author"]
+    return {
+        "thread": activity["thread"],
+        "id": activity["id"],
+        "event": "comment",
+        "author": {"id": author["id"], "name": author["name"], "isMe": author["id"] == me, "isBot": bool(author.get("bot"))},
+        "conversation": {"id": project, "label": project, "kind": "ticket"},
+        "text": activity["text"],
+        "time": activity["at"],
+        "link": API + "/t/" + activity["thread"],
+        "mentionsMe": me in mentions,
+        "targetsOther": any(m != me for m in mentions),
+    }
+
+
+def connect(params):
+    me = api("GET", "/api/me")
+    return {"me": me["id"], "name": me["name"], "workspace": me["workspace"]}
+
+
+def poll(params):
+    """Everything newer than the cursor, oldest first; when there is more than maxItems, the newest ones."""
+    cursor = params.get("cursor")
+    since = int(cursor["value"]) if cursor else params["since"]
+    fresh = sorted((a for a in api("GET", "/api/activity") if a["at"] > since), key=lambda a: a["at"])
+    kept = fresh[-params["maxItems"]:] if params["maxItems"] > 0 else []
+    complete = len(kept) == len(fresh)
+    newest = kept[-1]["at"] if kept else since
+    # a capped pass hands back the oldest item it read: what is older than it is dropped on purpose
+    at = newest if complete else kept[0]["at"]
+    return {"items": [item_of(a) for a in kept], "cursor": {"value": str(at), "at": at}, "complete": complete}
+
+
+def context(params):
+    thread = params["thread"]
+    t = api("GET", "/api/threads/" + thread)
+    entries = sorted(t["items"], key=lambda a: a["at"])[-params["max"]:]
+    project = thread.split("-")[0]
+    return {
+        "thread": thread,
+        "link": API + "/t/" + thread,
+        "conversation": {"id": project, "label": project, "kind": "ticket"},
+        "title": t["title"],
+        "items": [{"id": a["id"], "author": a["author"]["name"], "time": a["at"], "text": a["text"]} for a in entries],
+        "complete": len(entries) == len(t["items"]),
+        "fetchedAt": int(time.time() * 1000),
+    }
+
+
+def act(params):
+    """A comment, only ever called by Strato after the person's Go on this exact text."""
+    action = params["action"]
+    native = action["target"]["native"]
+    if action["kind"] != "comment":
+        return {"ok": False, "error": {"code": "unsupported", "message": action["kind"] + " is not supported", "retryable": False, "fatal": False, "outcome": "none"}}
+    if params["dryRun"]:
+        return {"ok": True, "ref": "", "link": API + "/t/" + native, "dry": "comment on " + native}
+    # the idempotency key goes to the tool, so a replay of the same Go never comments twice
+    c = api("POST", "/api/threads/" + native + "/comments", {"text": action["text"], "idempotencyKey": params["idempotencyKey"]})
+    return {"ok": True, "ref": c["id"], "link": API + "/t/" + native + "#" + c["id"], "undo": {"token": c["id"], "until": int(time.time() * 1000) + UNDO_MS}}
+
+
+def undo(params):
+    api("DELETE", "/api/comments/" + params["token"])
+    return {"ok": True, "ref": params["token"], "link": ""}
+
+
+def describe(params):
+    return {"api": 1, "descriptor": DESCRIPTOR}
+
+
+def initialize(params):
+    state["secrets"] = params.get("secrets") or {}
+    state["settings"] = (params.get("account") or {}).get("settings") or {}
+    return {"ok": True}
+
+
+HANDLERS = {"describe": describe, "initialize": initialize, "connect": connect, "poll": poll, "context": context, "act": act, "undo": undo}
+
+
+def main():
+    while True:
+        line = sys.stdin.readline()
+        if not line:
+            return
+        if not line.strip():
+            continue
+        message = json.loads(line)
+        if "id" not in message or "method" not in message:
+            continue  # a notification, or a late answer: nothing to do
+        rid, method = message["id"], message["method"]
+        if method == "shutdown":
+            send({"id": rid, "result": {"ok": True}})
+            return
+        handler = HANDLERS.get(method)
+        if handler is None:
+            send({"id": rid, "error": {"code": -32601, "message": "no method " + method}})
+            continue
+        try:
+            send({"id": rid, "result": handler(message.get("params") or {})})
+        except ProviderError as e:
+            send({"id": rid, "error": {"code": e.code, "message": e.message, "data": e.data}})
+        except Exception as e:  # a bug: Strato reads it as a crash of this request
+            sys.stderr.write("%s: %r\n" % (method, e))
+            send({"id": rid, "error": {"code": -32000, "message": str(e)}})
+
+
+if __name__ == "__main__":
+    main()
