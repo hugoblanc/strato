@@ -61,5 +61,8 @@ export function selfArgv(m: SelfMode = RUNNING): string[] {
  * script's path both come out right.
  */
 export function commandForEntry(entry: string): string {
-  return /\.[cm]?[jt]s$/.test(entry) ? `bun ${shellWord(entry)}` : shellWord(entry);
+  return /\.[cm]?[jt]s$/.test(entry) ? `bun ${pathWord(entry)}` : pathWord(entry);
 }
+
+/** A path as a shell word: a leading `~/` stays outside the quotes, where the shell expands it; the rest as `shellWord`. */
+export const pathWord = (path: string): string => (path.startsWith("~/") ? `~/${shellWord(path.slice(2))}` : shellWord(path));

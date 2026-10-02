@@ -44,6 +44,9 @@ describe("selfCommand", () => {
   test("commandForEntry: a .ts entry is run by bun, a binary as is", () => {
     expect(commandForEntry("/s/strato.ts")).toBe("bun /s/strato.ts");
     expect(commandForEntry("/opt/bin/strato")).toBe("/opt/bin/strato");
+    // a path under the home folder stays one the shell expands
+    expect(commandForEntry("~/.local/bin/strato")).toBe("~/.local/bin/strato");
+    expect(commandForEntry("~/my tools/strato.ts")).toBe("bun ~/'my tools/strato.ts'");
     expect(commandForEntry("C:/strato/strato-windows-x64.exe")).toBe("C:/strato/strato-windows-x64.exe");
   });
 });
