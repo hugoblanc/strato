@@ -2,7 +2,7 @@
  * The values that go with providers/sdk.ts: the interface version, the identity function built-in providers are
  * written with, and the pure rules every provider shares (capabilities of an account, errors read from a throw).
  */
-import type { ActionKind, Capabilities, Provider, ProviderDescriptor, ProviderError } from "./sdk.ts";
+import type { ActionKind, ActResult, Capabilities, Provider, ProviderDescriptor, ProviderError } from "./sdk.ts";
 
 /** The version of the provider interface and of the exec protocol, one number for both. */
 export const PROVIDER_API = 1;
@@ -69,3 +69,17 @@ export function providerError(thrown: unknown, during: "read" | "write" = "read"
   const message = thrown instanceof Error ? thrown.message : String(thrown);
   return { code: "internal", message, retryable: true, fatal: false, ...(during === "write" ? { outcome: "unknown" as const } : {}) };
 }
+
+// ------------------------------------------------------------------ helpers of the built-in providers' writes
+
+/**
+ * A write that failed without an answer from the tool (the network, a timeout, an unreadable answer): once the request
+ * was sent, it may have written (`outcome: "unknown"`); before, it surely did not.
+ */
+export const networkWriteError = (e: unknown, sent: boolean): ProviderError => ({ code: "network", message: (e as Error)?.message ?? String(e), retryable: true, fatal: false, outcome: sent ? "unknown" : "none" });
+
+/** A failed act or undo. */
+export const actFailed = (error: ProviderError): ActResult => ({ ok: false, error });
+
+/** The end of the undo window of a write made now, from the tool's `undoMs`. */
+export const undoDeadline = (d: Pick<ProviderDescriptor, "undoMs">): number => Date.now() + (d.undoMs ?? 0);

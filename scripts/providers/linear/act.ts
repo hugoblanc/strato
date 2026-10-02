@@ -10,6 +10,7 @@
  */
 import { linkOfNative } from "../../core/links.ts";
 import type { AccountContext, ActInput, ActResult, Provider, ProviderError } from "../sdk.ts";
+import { actFailed, networkWriteError, undoDeadline } from "../api.ts";
 import { LinearError, linearQuery } from "./client.ts";
 import { commentNative, LINEAR_DESCRIPTOR, type LinearComment, type LinearPerson, pickAssignee, pickState, stableUuid, ticketOfNative } from "./model.ts";
 
@@ -43,12 +44,12 @@ interface IssueForWrite {
  */
 function writeError(e: unknown, sent: boolean): ProviderError {
   if (e instanceof LinearError) return { ...e.toProviderError(), outcome: e.answered || !sent ? "none" : "unknown" };
-  return { code: "network", message: (e as Error)?.message ?? String(e), retryable: true, fatal: false, outcome: sent ? "unknown" : "none" };
+  return networkWriteError(e, sent);
 }
 
-const failed = (error: ProviderError): ActResult => ({ ok: false, error });
+const failed = actFailed;
 const refused = (code: string, message: string): ActResult => failed({ code, message, retryable: false, fatal: false, outcome: "none" });
-const undoUntil = () => Date.now() + (LINEAR_DESCRIPTOR.undoMs ?? 0);
+const undoUntil = () => undoDeadline(LINEAR_DESCRIPTOR);
 
 /** The issue a write targets, read before anything is written: its id, its state and assignee, its team's states. */
 async function issueForWrite(ctx: AccountContext, identifier: string): Promise<IssueForWrite | null> {

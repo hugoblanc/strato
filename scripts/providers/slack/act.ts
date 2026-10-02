@@ -7,6 +7,8 @@ import { connectSlack, NO_TOKEN, SlackError } from "../../app/slack.ts";
 import { permalinkFor } from "../../chat/slack-model.ts";
 import { linkOfNative } from "../../core/links.ts";
 import { settings } from "../../core/settings.ts";
+import { t } from "../../core/i18n.ts";
+import { actFailed, networkWriteError, undoDeadline } from "../api.ts";
 import type { AccountContext, ActInput, ActResult, Provider, ProviderError } from "../sdk.ts";
 import { clientOf } from "./index.ts";
 import { SLACK_DESCRIPTOR } from "./model.ts";
@@ -17,10 +19,10 @@ import { SLACK_DESCRIPTOR } from "./model.ts";
  */
 function writeError(e: unknown, sent: boolean): ProviderError {
   if (e instanceof SlackError) return { code: e.code, message: e.message, retryable: !e.fatal, fatal: e.fatal, outcome: "none" };
-  return { code: "network", message: (e as Error)?.message ?? String(e), retryable: true, fatal: false, outcome: sent ? "unknown" : "none" };
+  return networkWriteError(e, sent);
 }
 
-const failed = (error: ProviderError): ActResult => ({ ok: false, error });
+const failed = actFailed;
 
 /** `C…:ts` -> its channel and ts, or null. */
 function split(native: string): { channel: string; ts: string } | null {
@@ -35,14 +37,14 @@ async function readyClient(ctx: AccountContext) {
   return client.token ? client : null;
 }
 
-const undoUntil = () => Date.now() + (SLACK_DESCRIPTOR.undoMs ?? 0);
+const undoUntil = () => undoDeadline(SLACK_DESCRIPTOR);
 
 export const slackWrites: Required<Pick<Provider, "act" | "undo">> = {
   async act(ctx: AccountContext, input: ActInput): Promise<ActResult> {
     const a = input.action;
     if (input.dryRun) return { ok: true, ref: "", link: "", dry: `${a.kind} ${a.target.native}` };
     const client = await readyClient(ctx);
-    if (!client) return failed({ code: "no_token", message: ctx.account.id === "default" ? NO_TOKEN(settings().slack) : `Slack account "${ctx.account.id}": no SLACK_USER_TOKEN in its secret file`, retryable: false, fatal: true, outcome: "none" });
+    if (!client) return failed({ code: "no_token", message: ctx.account.id === "default" ? NO_TOKEN(settings().slack) : t("provider.slack.error.noUserToken", { account: ctx.account.id }), retryable: false, fatal: true, outcome: "none" });
     let sent = false;
     try {
       if (a.kind === "reply" || a.kind === "post") {
