@@ -18,14 +18,16 @@ const MESSAGE = "^/archives/([A-Z0-9]+)/p(\\d{10})(\\d{6})";
 
 /**
  * Slack's links. A reply's link carries its root in `thread_ts`: the thread is the root, the item the reply. A
- * channel id alone links to the channel (a separate message). The workspace's own host names its account; any other
- * `*.slack.com` host reads as the default account, which comes first, as `parsePermalink` always did (core/links.ts
- * tries exact hosts before wildcards).
+ * channel id alone links to the channel (a separate message). The workspace's own host names its account; the bare
+ * `slack.com` host and any other `*.slack.com` host read as the default account, which comes first, as `parsePermalink`
+ * always did (core/links.ts tries exact hosts before wildcards).
  */
 export const SLACK_LINKS: LinkSpec = {
   parse: [
     { host: "{settings.workspace}.slack.com", pattern: REPLY, thread: "$1:$4", item: "$1:$2.$3" },
     { host: "{settings.workspace}.slack.com", pattern: MESSAGE, thread: "$1:$2.$3" },
+    { host: "slack.com", pattern: REPLY, thread: "$1:$4", item: "$1:$2.$3" },
+    { host: "slack.com", pattern: MESSAGE, thread: "$1:$2.$3" },
     { host: "*.slack.com", pattern: REPLY, thread: "$1:$4", item: "$1:$2.$3" },
     { host: "*.slack.com", pattern: MESSAGE, thread: "$1:$2.$3" },
   ],

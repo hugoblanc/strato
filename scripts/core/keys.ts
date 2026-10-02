@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { ACCOUNT_ID, PROVIDER_ID } from "../providers/api.ts";
-import { claimTicketId, hasAccount, linkOfNative, parseLink, passesTicketIds, providerLabel, ticketPrefixesOf } from "./links.ts";
+import { claimTicketId, descriptorOf, hasAccount, linkOfNative, parseLinks, passesTicketIds, providerLabel, ticketPrefixesOf } from "./links.ts";
 
 /**
  * Topic keys, and the only place that builds, escapes and parses them (docs/design/providers.md, section 5).
@@ -200,12 +200,15 @@ export function ticketUrl(id: string): string | null {
 
 /**
  * Key of a pasted reference: a ticket key as is, a link of a configured account (a Slack thread, a ticket), a bare
- * ticket id claimed by exactly one account (`ENG-12`), or a key of a configured account in its canonical form.
+ * ticket id claimed by exactly one account (`ENG-12`), or a key of a configured account in its canonical form. When the
+ * text holds several links, a conversation's thread wins over a ticket, as a Slack link always won over a ticket id;
+ * else the first link that an account claims.
  */
 export function sujetKey(ref: string): string | null {
   if (isTicketKey(ref)) return ref;
-  const linked = parseLink(ref);
-  if (linked) return formatKey(linked.provider, linked.account, linked.thread);
+  const linked = parseLinks(ref);
+  const thread = linked.find((x) => !descriptorOf(x.provider)?.kinds.includes("tracker")) ?? linked[0];
+  if (thread) return formatKey(thread.provider, thread.account, thread.thread);
   const ticket = claimTicketId(ref);
   if (ticket) return formatKey(ticket.provider, ticket.account, ticket.native);
   const p = parseKey(ref.trim());

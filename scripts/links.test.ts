@@ -70,6 +70,12 @@ describe("Slack links as data", () => {
     "acme.slack.com/archives/C0ACME0001/p1759219200000100",
     "see https://acme.slack.com/archives/C0ACME0001/p1759219200000100.",
     "  https://acme.slack.com/archives/C0ACME0001/p1759219200000100  ",
+    "https://slack.com/archives/C0ACME0001/p1759219200000100",
+    "/archives/C0ACME0001/p1759219200000100",
+    "see https://example.com/x and https://acme.slack.com/archives/C0ACME0001/p1759219200000100",
+    "ticket https://linear.app/acme/issue/OPS-7 and slack https://acme.slack.com/archives/C0ACME0001/p1759219200000100",
+    "see **https://acme.slack.com/archives/C0ACME0001/p1759219200000100** now",
+    "https://acme.slack.com/archives/C0ACME0001/p1759219200000100,https://acme.slack.com/archives/C0ACME0002/p1759219200000200",
   ];
   test.each(links)("%s", (link) => {
     expect(keyFromPermalink(link)).not.toBeNull();
@@ -103,6 +109,21 @@ describe("Slack links as data", () => {
     expect(citations("voir https://acme.slack.com/archives/C0ACME0001/p1759219200000100, merci").slack).toEqual([
       { key: "C0ACME0001:1759219200.000100", url: "https://acme.slack.com/archives/C0ACME0001/p1759219200000100", workspace: "acme" },
     ]);
+  });
+
+  test("citations stop at Markdown emphasis and at a comma between two links", () => {
+    const one = "https://acme.slack.com/archives/C0ACME0001/p1759219200000100";
+    const two = "https://acme.slack.com/archives/C0ACME0002/p1759219200000200";
+    expect(citations(`see **${one}** now`).slack).toEqual([{ key: "C0ACME0001:1759219200.000100", url: one, workspace: "acme" }]);
+    expect(citations(`${one},${two}`).slack.map((c) => [c.key, c.url])).toEqual([
+      ["C0ACME0001:1759219200.000100", one],
+      ["C0ACME0002:1759219200.000200", two],
+    ]);
+  });
+
+  test("in a long text, every link is still cited", () => {
+    const one = "https://acme.slack.com/archives/C0ACME0001/p1759219200000100";
+    expect(citations(`${"x ".repeat(3000)}${one}`).slack.map((c) => c.key)).toEqual(["C0ACME0001:1759219200.000100"]);
   });
 });
 

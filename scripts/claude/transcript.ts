@@ -1,6 +1,6 @@
 import { t } from "../core/i18n.ts";
 import { formatKey, ticketPattern } from "../core/keys.ts";
-import { parseLink, providerLabel } from "../core/links.ts";
+import { linksIn, parseLink, providerLabel } from "../core/links.ts";
 import { mcpProvider } from "../core/mcp.ts";
 import { clip } from "../core/text.ts";
 
@@ -79,17 +79,13 @@ export interface SlackCitation {
 }
 
 
-/** An https link in a text, up to whitespace, a quote, a closing bracket or a pipe (Markdown and Slack's `<url|label>`). */
-const LINK_IN_TEXT = /https:\/\/[^\s<>"'`)\]|]+/g;
-
 /**
  * Slack threads and Linear tickets quoted in a text, in order of appearance. Links are read through the providers'
  * link patterns (core/links.ts): any Slack host, as before, and a named Slack account's own workspace.
  */
 export function citations(text: string): { slack: SlackCitation[]; linear: string[] } {
   const slack: SlackCitation[] = [];
-  for (const m of text.matchAll(LINK_IN_TEXT)) {
-    const url = m[0].replace(/[.,;:!?]+$/, "");
+  for (const url of linksIn(text)) {
     const target = parseLink(url);
     const key = target?.provider === "slack" ? formatKey(target.provider, target.account, target.thread) : null;
     if (key) slack.push({ key, url, workspace: new URL(url).hostname.split(".")[0] });

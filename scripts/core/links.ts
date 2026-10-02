@@ -200,20 +200,23 @@ export function settingHost(value: unknown): string | null {
 }
 
 /**
- * The link in a pasted reference: the reference itself, the first http(s) link of a text, or a link written without
- * its scheme (`acme.slack.com/archives/…`). Null over 2 KiB.
+ * The candidate links of a text, in order of appearance: every http(s) link, cut at whitespace, a quote, a bracket, a
+ * pipe (Slack's `<url|label>`), a `*` (Markdown emphasis) or a comma (two links joined by one), then trimmed of trailing
+ * punctuation and Markdown emphasis; else the text itself when it is a link written without its scheme
+ * (`acme.slack.com/archives/…`). No link over 2 KiB. The one link extractor of the code base: references, transcript
+ * citations and the search bar all read links through it.
  */
-function urlIn(text: string): URL | null {
+export function linksIn(text: string): string[] {
   const ref = text.trim();
-  if (!ref || ref.length > LINK_INPUT_MAX) return null;
-  const found = ref.match(/\bhttps?:\/\/[^\s<>"'`]+/i)?.[0] ?? (/^[a-z0-9-]+(?:\.[a-z0-9-]+)+\/\S*$/i.test(ref) ? `https://${ref}` : null);
-  if (!found) return null;
-  try {
-    return new URL(found);
-  } catch {
-    return null;
-  }
+  const found = [...ref.matchAll(LINK_CANDIDATE)].map((m) => m[0].replace(/[.;:!?_~]+$/, "")).filter((x) => x.length <= LINK_INPUT_MAX && /^https?:\/\/[^/?#]/i.test(x));
+  if (found.length) return found;
+  return ref.length <= LINK_INPUT_MAX && /^[a-z0-9-]+(?:\.[a-z0-9-]+)+\/\S*$/i.test(ref) ? [`https://${ref}`] : [];
 }
+
+const LINK_CANDIDATE = /\bhttps?:\/\/[^\s<>"'`()[\]{}|*,]+/gi;
+
+/** A text that is only a path (`/archives/C0ACME0001/p1759219200000100`): read on any account's host, as Slack paths always were. */
+const BARE_PATH = /^\/[^\s<>"'`|]*$/;
 
 /** What a link points to: a thread (and an item of it) on one account. */
 export interface LinkTarget {
@@ -224,14 +227,36 @@ export interface LinkTarget {
 }
 
 /**
- * A pasted link -> native ids, from the `parse` patterns of every configured account. Exact hosts are tried before
- * wildcard hosts, across accounts, so `acme-partners.slack.com` goes to the account of that workspace and any other
- * Slack host to the default account; within a host kind, accounts and patterns keep their order.
+ * A pasted link -> native ids, from the `parse` patterns of every configured account: the first link of the text that
+ * some account claims. Exact hosts are tried before wildcard hosts, across accounts, so `acme-partners.slack.com` goes
+ * to the account of that workspace and any other Slack host to the default account; within a host kind, accounts and
+ * patterns keep their order. A text that is only a path is tried on every account, hosts aside.
  */
 export function parseLink(text: string): LinkTarget | null {
-  const url = urlIn(text);
-  if (!url) return null;
-  const rest = `${url.pathname}${url.search}${url.hash}`;
+  return parseLinks(text)[0] ?? null;
+}
+
+/** Every link of a text that some account claims, in order of appearance (`parseLink` for each candidate link). */
+export function parseLinks(text: string): LinkTarget[] {
+  const path = text.trim();
+  if (path.length <= LINK_INPUT_MAX && BARE_PATH.test(path)) {
+    const target = targetOf(null, path);
+    return target ? [target] : [];
+  }
+  return linksIn(text).flatMap((link) => {
+    let url: URL;
+    try {
+      url = new URL(link);
+    } catch {
+      return [];
+    }
+    const target = targetOf(url.hostname, `${url.pathname}${url.search}${url.hash}`);
+    return target ? [target] : [];
+  });
+}
+
+/** The target of a link's path on its host (any host when null), from the accounts' `parse` entries; null when none claims it. */
+function targetOf(hostname: string | null, rest: string): LinkTarget | null {
   const entries = linkAccounts().flatMap((a) =>
     a.spec.parse.flatMap((e) => {
       const host = substitute(e.host, a.settings, "text");
@@ -239,7 +264,7 @@ export function parseLink(text: string): LinkTarget | null {
     }),
   );
   for (const { a, e, host } of [...entries.filter((x) => !x.wildcard), ...entries.filter((x) => x.wildcard)]) {
-    if (!hostMatches(host, url.hostname)) continue;
+    if (hostname !== null && !hostMatches(host, hostname)) continue;
     const source = substitute(e.pattern, a.settings, "pattern");
     const m = source ? regex(source.startsWith("^") ? source : `^(?:${source})`)?.exec(rest) : null;
     if (!m) continue;
