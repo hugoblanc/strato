@@ -117,6 +117,8 @@ export interface AuthMethod {
   id: string;
   kind: AuthKind;
   label: Text;
+  /** Its trade-off in one sentence, shown next to the label when setup offers the methods. */
+  tradeoff?: Text;
   /** The official documentation of this flow, printed by setup. */
   docs: string;
   steps: AuthStep[];
@@ -143,12 +145,43 @@ export interface CapabilityLimits {
 export type AuthStep =
   /** Open a documented page (create an app from a manifest, create an API key). */
   | { kind: "open"; url: string; say: Text }
-  /** Read one secret without echo, in the person's own terminal or on the board's Connect page; never as an argument, never in a chat. */
-  | { kind: "paste"; secret: string; say: Text; shape?: string }
+  /**
+   * Read one secret without echo, in the person's own terminal or on the board's Connect page; never as an argument,
+   * never in a chat. `shape` is the prefix the secret starts with; an `optional` one may be left empty (skipped).
+   */
+  | { kind: "paste"; secret: string; say: Text; shape?: string; optional?: boolean }
   /** OAuth 2.0 authorization code on the loopback redirect, with PKCE (S256) wherever the service supports it. */
-  | { kind: "oauth"; authorizeUrl: string; tokenUrl: string; clientId: "setting" | string; clientSecret?: string; pkce: boolean; scopes: string[] }
+  | OAuthStep
   /** Check the candidate secrets with a throwaway `connect`; nothing is stored if it fails. */
   | { kind: "verify" };
+
+/**
+ * OAuth 2.0 authorization code on the loopback redirect `http://<redirectHost>:<ui.oauthPort>/oauth/callback`
+ * (docs/design/providers.md, section 11.2). The client id comes from the account's `clientId` setting when it says
+ * "setting"; a client secret only where the service requires one even with PKCE, pasted once.
+ */
+export interface OAuthStep {
+  kind: "oauth";
+  authorizeUrl: string;
+  tokenUrl: string;
+  clientId: "setting" | string;
+  /** The name of the secret holding a client secret the service requires, read like a paste step; absent: none sent. */
+  clientSecret?: string;
+  pkce: boolean;
+  scopes: string[];
+  /** The query parameter of the scopes: "scope" by default (Slack asks user scopes as "user_scope"). */
+  scopeParam?: string;
+  /** How scopes are joined: a space by default, as OAuth 2.0 says; some services take commas. */
+  scopeSeparator?: string;
+  /** The loopback host the service accepts in a redirect: "127.0.0.1" by default; Slack treats "localhost" as a desktop app. */
+  redirectHost?: "127.0.0.1" | "localhost";
+  /** Dotted path of the access token in the token response: "access_token" by default ("authed_user.access_token" for Slack). */
+  tokenField?: string;
+  /** The secret the access token is stored as. */
+  secret: string;
+  /** The secret the refresh token is stored as, when the service returns one and the provider refreshes it. */
+  refreshSecret?: string;
+}
 
 export interface SecretSpec {
   /** Name in the secret file: `SLACK_USER_TOKEN`, `LINEAR_API_KEY`. */
@@ -443,4 +476,9 @@ export interface AccountContext {
   store: { read<T>(name: string, fallback: T): T; write(name: string, value: unknown): void };
   signal: AbortSignal;
   locale: "en" | "fr";
+  /**
+   * True while setup checks secrets the person just gave (the `verify` step): `secret` returns those candidates, which
+   * are not stored yet, and `store` keeps nothing. `connect` then checks them rather than any secret found elsewhere.
+   */
+  verifying?: boolean;
 }
