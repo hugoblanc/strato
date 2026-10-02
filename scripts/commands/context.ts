@@ -15,7 +15,7 @@ import { canonicalKey, formatKey, parseKey } from "../core/keys.ts";
 import { checkedLink, claimTicketId, descriptorOf, parseLink, readsThreads } from "../core/links.ts";
 import { findSujet, sujetKeys } from "../core/sujet.ts";
 import { toolLabel } from "../core/targets.ts";
-import { parseDuration } from "../core/text.ts";
+import { oneLine, parseDuration, truncate, untrusted } from "../core/text.ts";
 import { untrustedRule } from "../policy/prompts.ts";
 import { authUsable, providerError } from "../providers/api.ts";
 import { accountContext, accountOf, nativeOfKey } from "../providers/registry.ts";
@@ -87,7 +87,8 @@ async function readOne(w: Wanted, opts: { since?: number; max: number }): Promis
     const link = typeof r.link === "string" ? checkedLink(r.link, w.provider) : null;
     return { lines: contextLines({ key: w.key, tool: toolLabel(w.provider, w.account), link }, r, opts.max) };
   } catch (e) {
-    return { error: t("cli.context.failed", { key: w.key, reason: providerError(e).message }) };
+    // the reason is the provider's own text, which may quote the tool's (and a third party's) words
+    return { error: t("cli.context.failed", { key: w.key, reason: untrusted(oneLine(truncate(providerError(e).message, 300))) }) };
   }
 }
 

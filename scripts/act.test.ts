@@ -401,7 +401,7 @@ describe("one act path", () => {
     }
   });
 
-  test("every provider the registry and the links hand out is a view without act or undo", async () => {
+  test("every provider the registry and the links hand out is a view without act, undo, nor an exec host's rpc", async () => {
     const r = rig();
     // in a child process: the registry reads the profile of a state folder, and a fake tool with writes is added
     writeFileSync(
@@ -411,16 +411,17 @@ describe("one act path", () => {
         `import { pureOf } from ${JSON.stringify(join(SCRIPTS, "core/links.ts"))};`,
         `import { fakeProvider } from ${JSON.stringify(join(SCRIPTS, "test-provider.ts"))};`,
         `const fake = fakeProvider({ id: "tickets", label: "Tickets" });`,
-        `registry.addProvider({ ...fake, act: async () => ({ ok: true, ref: "x", link: "" }), undo: async () => ({ ok: true, ref: "x", link: "" }) });`,
+        // the members an exec host adds: rpc reaches the process's act without the gate
+        `registry.addProvider({ ...fake, act: async () => ({ ok: true, ref: "x", link: "" }), undo: async () => ({ ok: true, ref: "x", link: "" }), rpc: async () => null, stopAll: async () => {} } as never);`,
         `const handed = [...Object.values(registry.BUILTIN), ...registry.accounts().map((a) => a.provider).filter(Boolean), pureOf("slack"), pureOf("tickets")];`,
-        `console.log(JSON.stringify(handed.map((p) => ["act" in p, "undo" in p])));`,
+        `console.log(JSON.stringify(handed.map((p) => ["act" in p, "undo" in p, "rpc" in p, "stopAll" in p])));`,
       ].join("\n"),
     );
     writeFileSync(join(r.state, "config.json"), JSON.stringify({ owner: { name: "Alice" }, slack: { team: "Acme", workspace: "acme", me: "UALICE" }, providers: { tickets: { source: { module: "x.ts" }, accounts: { default: { auth: "api-key" } } } } }));
     const p = Bun.spawn([process.execPath, join(r.dir, "check.ts")], { cwd: SCRIPTS, env: r.env, stdout: "pipe", stderr: "pipe" });
     const out = await new Response(p.stdout).text();
     await p.exited;
-    const flags = JSON.parse(out) as [boolean, boolean][];
+    const flags = JSON.parse(out) as boolean[][];
     expect(flags.length).toBeGreaterThanOrEqual(5);
     expect(flags.flat().every((x) => x === false)).toBe(true);
   }, 30_000);

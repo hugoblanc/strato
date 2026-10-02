@@ -9,7 +9,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { descriptorProblems, patternCost } from "./providers/check.ts";
 import { fakeDescriptor } from "./test-provider.ts";
-import { cleanupRigs, cli, type Rig, rig, run, SCRIPTS } from "./test-rig.ts";
+import { CLI, cleanupRigs, cli, inTerminal, type Rig, rig, run, SCRIPTS } from "./test-rig.ts";
 import { TEST_SETTINGS } from "./test-setup.ts";
 
 afterEach(cleanupRigs);
@@ -112,6 +112,31 @@ describe("a module provider is loaded only once trusted as it is", () => {
     expect(await problemOf(r)).toBe("tickets: changed since you trusted it; read it, then run strato provider trust tickets in your own terminal");
   }, 30_000);
 
+  test("only the top-level fixtures' JSON and git's data are left out: code anywhere else, under fixtures/ too, is pinned", async () => {
+    const r = rig();
+    const dir = moduleProvider(r, `, hook: (await import("./fixtures/hook.ts")).HOOK`);
+    mkdirSync(join(dir, "fixtures"), { recursive: true });
+    writeFileSync(join(dir, "fixtures", "hook.ts"), `export const HOOK = 1;\n`);
+    config(r, ticketsConfig());
+    await trustNow(r);
+    mkdirSync(join(dir, ".git"), { recursive: true });
+    writeFileSync(join(dir, ".git", "index"), "x");
+    writeFileSync(join(dir, "fixtures", "other.json"), "{}");
+    expect(await problemOf(r)).toBeNull();
+    const changes: [string, string][] = [
+      ["fixtures/hook.ts", `export const HOOK = 2;\n`],
+      ["lib/fixtures/data.json", "{}"],
+      ["fixtures/deeper/x.json", "{}"],
+      ["__pycache__/words.cpython-39.pyc", "x"],
+    ];
+    for (const [file, content] of changes) {
+      await trustNow(r);
+      mkdirSync(join(dir, file, ".."), { recursive: true });
+      writeFileSync(join(dir, file), content);
+      expect([file, await problemOf(r)]).toEqual([file, "tickets: changed since you trusted it; read it, then run strato provider trust tickets in your own terminal"]);
+    }
+  }, 60_000);
+
   test("a source pointing elsewhere, or a sha256 in config.json that disagrees, is not the provider trusted", async () => {
     const r = rig();
     const dir = moduleProvider(r);
@@ -121,6 +146,29 @@ describe("a module provider is loaded only once trusted as it is", () => {
     expect(await problemOf(r)).toContain("changed since you trusted it");
     config(r, ticketsConfig({ module: "provider.ts", sha256: "0000" }));
     expect(await problemOf(r)).toContain("changed since you trusted it");
+  }, 30_000);
+
+  test("a module whose top-level code never ends is a reason after five seconds, never a frozen command", async () => {
+    const r = rig();
+    const dir = join(r.state, "providers", "tickets");
+    mkdirSync(dir, { recursive: true });
+    // a network call at import while offline, as it looks from Strato: the import never settles
+    writeFileSync(join(dir, "provider.ts"), `await new Promise(() => {});\nexport default {};\n`);
+    config(r, ticketsConfig());
+    // trusted with the fake tool's descriptor: importing the module to read its own would never end either
+    await script(
+      r,
+      `const { fakeDescriptor } = await import(${JSON.stringify(join(SCRIPTS, "test-provider.ts"))});
+       const source = settings.settings().providers.tickets.source;
+       const s = trust.trustOf("tickets", source);
+       trust.writeTrust("tickets", { sha256: s.sha256, source, descriptor: fakeDescriptor("tickets", "Tickets"), at: "2026-10-01T00:00:00Z" });
+       return null;`,
+    );
+    const started = Date.now();
+    const list = await cli(r, ["provider", "list"]);
+    expect(list.code).toBe(0);
+    expect(list.out).toContain("was still being imported after 5 s");
+    expect(Date.now() - started).toBeLessThan(15_000);
   }, 30_000);
 
   test("a missing file and a broken module are reasons, never a failed command", async () => {
@@ -170,7 +218,7 @@ describe("an exec provider is loaded the same way", () => {
        const seen = [];
        const fetchImpl = async (input, init) => { seen.push(new Request(input, init).headers.get("authorization")); return new Response(JSON.stringify({ id: "u-alice", workspace: "acme" })); };
        const identity = await a.provider.connect(registry.accountContext(a, { fetchImpl }));
-       await a.provider.stopAll?.();
+       await external.stopExternalProviders();
        return { problem: a.problem, me: identity.me, seen, cwd: s.resolved.cwd, argv1: s.resolved.argv[1] };`,
     );
     expect(out).toEqual({ problem: null, me: "u-alice", seen: ["Bearer tk-acme-file-000000"], cwd: dir, argv1: join(dir, "provider.ts") });
@@ -281,12 +329,27 @@ describe("provider commands and the caller", () => {
     config(r, ticketsConfig());
     const session = await cli(r, ["provider", "trust", "tickets"], { STRATO_CALLER: "session" });
     expect(session.code).toBe(77);
-    expect(session.err).toContain("A work session never trusts, writes nor runs provider code");
+    expect(session.err).toContain("A work session never trusts, scaffolds nor tests provider code");
     const pipe = await cli(r, ["provider", "trust", "tickets"]);
     expect(pipe.code).toBe(64);
     expect(pipe.err).toContain("run it in your own terminal");
     expect(await problemOf(r)).toContain("not trusted yet");
   }, 30_000);
+
+  test("in the person's terminal, trust records the folder on two yes and the command ends, trusted again or not", async () => {
+    const r = rig();
+    moduleProvider(r);
+    config(r, ticketsConfig());
+    const first = await inTerminal(r, [process.execPath, CLI, "provider", "trust", "tickets"], { prompt: "Type yes", answer: "yes", timeoutMs: 20_000 });
+    if (!first) return; // no python3 to play the terminal
+    // stdin kept open by the prompts' reader held the process alive after its last line
+    expect(first.out).toContain("tickets is trusted.");
+    expect(first.exit).toBe(0);
+    expect(await problemOf(r)).toBeNull();
+    const again = await inTerminal(r, [process.execPath, CLI, "provider", "trust", "tickets"], { prompt: "Type yes", answer: "yes", timeoutMs: 20_000 });
+    expect(again?.out).toContain("already trust");
+    expect(again?.exit).toBe(0);
+  }, 60_000);
 
   test("provider test by name runs a configured provider only as trusted; its folder, given as a path, runs as it is", async () => {
     const r = rig();
@@ -353,6 +416,16 @@ describe("descriptor checks", () => {
       "done: the done marker is a reaction, and react must be among the actions",
     ]);
   }, 30_000);
+
+  test("a wildcard covers the sub-domains of one domain, never a whole top-level domain", () => {
+    const base = fakeDescriptor("tickets", "Tickets");
+    const d = { ...base, hosts: ["*.com", "*.tickets.example"], apiHosts: ["*.{settings.tld}", "*.{settings.org}.example"], links: { parse: [{ host: "*.example", pattern: "^/t/(\\d+)$", thread: "$1" }], of: [] } };
+    expect(descriptorProblems(d, "tickets")).toEqual([
+      "links.parse[0].host: a wildcard covers the sub-domains of one domain, such as *.tickets.example, never a whole top-level domain",
+      "hosts[0]: a wildcard covers the sub-domains of one domain, such as *.tickets.example, never a whole top-level domain",
+      "apiHosts[0]: a wildcard covers the sub-domains of one domain, such as *.tickets.example, never a whole top-level domain",
+    ]);
+  });
 
   test("a link pattern that stalls on a long input is refused", () => {
     let clock = 0;

@@ -8,7 +8,8 @@
  */
 import { createHash } from "node:crypto";
 import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, readlinkSync, statSync } from "node:fs";
-import { dirname, isAbsolute, join, relative, resolve } from "node:path";
+import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
+import { t } from "../../core/i18n.ts";
 import type { ProviderSource } from "../../core/settings.ts";
 import { expandHome, F, readJson, writeJson } from "../../app/env.ts";
 import type { ProviderDescriptor } from "../sdk.ts";
@@ -79,13 +80,18 @@ export function resolveSource(id: string, source: ProviderSource): ResolvedSourc
   return { shape: "exec", argv, folder: home, cwd: existsSync(home) ? home : F.providers, pinned: onPath ? "executable" : "none", pinPath: onPath };
 }
 
-/** Files of a folder the pin leaves out: caches and the fixtures, which the harness reads and authors edit freely. */
-const SKIPPED_DIRS = new Set(["__pycache__", ".git", "fixtures"]);
-const skippedFile = (name: string) => name.endsWith(".pyc") || name === ".DS_Store";
+/**
+ * What the pin leaves out, at the top of the folder only: git's own data, which every git command rewrites, and the
+ * fixtures the harness reads (`fixtures/*.json`), which authors edit freely. Anything else is hashed wherever it is:
+ * code under `fixtures/` or in a nested folder of that name, and Python's caches, which Python runs (Strato starts
+ * every provider process with PYTHONDONTWRITEBYTECODE=1, so running one does not change its own pin).
+ */
+const skipped = (rel: string, isDir: boolean) => rel === ".git" || (!isDir && (/^fixtures\/[^/]+\.json$/.test(rel) || /(^|\/)\.DS_Store$/.test(rel)));
 /** A folder too large to hash on every start is refused: a provider keeps its code in a folder of its own. */
 export const PIN_MAX_FILES = 5_000;
 export const PIN_MAX_BYTES = 64 * 1024 * 1024;
 
+/** A folder that cannot be pinned; its message is the person's. */
 export class PinError extends Error {}
 
 /**
@@ -99,13 +105,13 @@ export function hashFolder(dir: string): string {
     for (const name of readdirSync(at).sort()) {
       const path = join(at, name);
       const st = lstatSync(path);
-      const rel = relative(dir, path);
-      if (st.isDirectory()) {
-        if (!SKIPPED_DIRS.has(name)) walk(path);
-      } else if (st.isSymbolicLink()) entries.push(`${rel}\0link:${readlinkSync(path)}`);
-      else if (st.isFile() && !skippedFile(name)) {
+      const rel = relative(dir, path).split(sep).join("/");
+      if (skipped(rel, st.isDirectory())) continue;
+      if (st.isDirectory()) walk(path);
+      else if (st.isSymbolicLink()) entries.push(`${rel}\0link:${readlinkSync(path)}`);
+      else if (st.isFile()) {
         bytes += st.size;
-        if (entries.length >= PIN_MAX_FILES || bytes > PIN_MAX_BYTES) throw new PinError(`${dir} holds more than ${PIN_MAX_FILES} files or ${PIN_MAX_BYTES / 1024 / 1024} MiB`);
+        if (entries.length >= PIN_MAX_FILES || bytes > PIN_MAX_BYTES) throw new PinError(t("cli.provider.load.tooLarge", { path: dir, files: PIN_MAX_FILES, mib: PIN_MAX_BYTES / 1024 / 1024 }));
         entries.push(`${rel}\0${createHash("sha256").update(readFileSync(path)).digest("hex")}`);
       }
     }

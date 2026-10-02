@@ -31,10 +31,18 @@ export type ProviderView = Omit<Provider, "act" | "undo">;
 /** A provider's writes: what app/act.ts calls, after the gate. */
 export type ProviderWrites = Pick<Provider, "act" | "undo">;
 
-/** A provider without its writes. */
+/**
+ * The members a view keeps: every member of the SDK's `Provider` but its writes, named one by one (a member added to
+ * the SDK fails to compile here until it is placed). Anything else an object carries stays out, such as the exec
+ * host's `rpc`, which would reach a process's `act` without the gate.
+ */
+const VIEW_MEMBERS: Record<keyof ProviderView, true> = { descriptor: true, connect: true, poll: true, subscribe: true, replies: true, complete: true, participated: true, context: true, parseTarget: true, render: true, threadInfo: true, setup: true, deepLink: true };
+
+/** A provider without its writes, nor anything the SDK does not declare. */
 function viewOf(p: Provider): ProviderView {
-  const { act: _act, undo: _undo, ...view } = p;
-  return view;
+  const view: Record<string, unknown> = {};
+  for (const k of Object.keys(VIEW_MEMBERS) as (keyof ProviderView)[]) if (p[k] !== undefined) view[k] = p[k];
+  return view as unknown as ProviderView;
 }
 
 /** The built-in providers, whole: never exported. */
@@ -205,7 +213,6 @@ let baseFetch: typeof fetch = FETCH;
 export function useBaseFetch(f: typeof fetch | null): void {
   baseFetch = f ?? FETCH;
 }
-
 
 /**
  * What a provider receives for one account (docs/design/providers.md, section 4.11): never the state folder, other

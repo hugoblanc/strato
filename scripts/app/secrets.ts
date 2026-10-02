@@ -55,5 +55,15 @@ export async function readLine(prompt: string, opts: { secret?: boolean } = {}):
   }
 }
 
+/**
+ * Lets go of stdin once a command has read what it asked: the reader of `readLine` keeps stdin open, and an open
+ * terminal keeps the process alive after its last line. Called when a one-shot command returns.
+ */
+export async function releaseStdin(): Promise<void> {
+  const lines = stdinLines;
+  stdinLines = null;
+  await lines?.return?.();
+}
+
 /** A secret typed or pasted by the person, without echo in a terminal. */
 export const readSecret = (prompt: string): Promise<string> => readLine(prompt, { secret: true });

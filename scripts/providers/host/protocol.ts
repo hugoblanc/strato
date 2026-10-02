@@ -131,11 +131,13 @@ export const hostError = (code: string, message: string, o: Partial<ProviderErro
 const PASSED = ["HTTPS_PROXY", "HTTP_PROXY", "NO_PROXY", "https_proxy", "http_proxy", "no_proxy", "SSL_CERT_FILE", "SSL_CERT_DIR", "REQUESTS_CA_BUNDLE", "NODE_EXTRA_CA_CERTS"];
 
 /**
- * The environment of a provider process: `PATH`, `HOME`, `LANG`, `TZ`, the protocol version, and the proxy and
- * certificate variables, so a provider works behind a corporate proxy. Never a secret: those travel in `initialize`.
+ * The environment of a provider process: `PATH`, `HOME`, `LANG`, `TZ`, the protocol version, no Python cache, and the
+ * proxy and certificate variables, so a provider works behind a corporate proxy. Never a secret: those travel in
+ * `initialize`.
  */
 export function execEnv(parent: Record<string, string | undefined>): Record<string, string> {
-  const out: Record<string, string> = { STRATO_PROVIDER_PROTOCOL: String(PROVIDER_API) };
+  // a Python provider writes no cache into its folder: the cache would change the folder's pin (host/trust.ts)
+  const out: Record<string, string> = { STRATO_PROVIDER_PROTOCOL: String(PROVIDER_API), PYTHONDONTWRITEBYTECODE: "1" };
   for (const k of ["PATH", "HOME", "LANG", "TZ", ...PASSED]) {
     const v = parent[k];
     if (typeof v === "string" && v !== "") out[k] = v;

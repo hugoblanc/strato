@@ -72,7 +72,8 @@ To use the provider:
 2. Trust it, in your own terminal: `strato provider trust tickets`.
    Strato shows the folder, the command and its SHA-256, and asks a first `yes` before it runs the provider once, without secrets nor accounts, to read its descriptor.
    It then shows what the provider can reach, sign in with and do, and records the hash on a second typed `yes`.
-   Any change to a file of that folder (except `fixtures/`) needs a new trust; until then Strato does not load it.
+   Any change to a file of that folder needs a new trust; until then Strato does not load it.
+   Only git's own `.git/` folder and the JSON files directly in `fixtures/` are left out: code anywhere else counts, under `fixtures/` too, and so do Python's `__pycache__/` files (Strato starts your process with `PYTHONDONTWRITEBYTECODE=1`, so running it writes none).
 3. Connect an account: `strato setup --connect tickets`.
    Strato walks the sign-in steps your descriptor declares, checks the secret with `connect`, and stores it in a file only the person can read.
 4. `strato provider list` and `strato doctor` say where it stands.
@@ -396,7 +397,10 @@ Run it yourself, in your own terminal, once the offline run passes.
 ## 13. Security
 
 - **Opt-in.** Strato never scans a folder for providers: nothing loads unless `config.json` names it in `providers.<id>.source`.
-- **Pinned.** It runs only when its folder hashes to what the person trusted with `strato provider trust`, typed in their own terminal; a work session can never trust, scaffold nor test provider code.
+- **Pinned.** It runs only when its folder hashes to what the person trusted with `strato provider trust`, typed in their own terminal.
+  A work session is refused `provider trust`, `new` and `test`; it still runs the trusted provider through `strato context` and the other commands it uses.
+  That refusal reads the `STRATO_CALLER` variable sessions are started with: a convention that keeps sessions on the right path, not a security boundary, since a session with a shell can unset it.
+  The boundary is the terminal: trusting needs typed answers on a TTY.
   A provider that writes into its own folder breaks its pin: keep state with `store`.
 - **Same privileges as the person.** A provider runs as the person, with their files and their network; Strato cannot sandbox it.
   Installing one is the same decision as installing any command-line tool: read it, or trust its author.

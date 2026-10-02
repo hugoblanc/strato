@@ -1512,7 +1512,8 @@ It covers:
 
 - **Opt-in.** Nothing is loaded from disk unless `config.json` names it; Strato never scans a folder for providers.
 - **Trust pinning.** `strato provider trust <id>` (or **Trust** on the Connect page) prints the provider's folder, its hash and its descriptor (kinds, auth methods, actions it can perform, hosts, link patterns), and records the hash after a confirmation that a session cannot give: typed on a TTY, or clicked on the board.
-  The pin covers a folder: the folder of the module file, or of the first argument after the command that names an existing file; every regular file under it except `__pycache__/`, `*.pyc`, `.git/` and `fixtures/`, hashed as a sorted list of paths and content hashes.
+  The pin covers a folder: the folder of the module file, or of the first argument after the command that names an existing file; every regular file under it except, at its top only, `.git/` and the JSON files directly in `fixtures/`, hashed as a sorted list of paths and content hashes.
+  Code under `fixtures/`, a nested folder named `fixtures`, and Python's `__pycache__/` are pinned like the rest: a module can import them and Python runs cached bytecode; provider processes start with `PYTHONDONTWRITEBYTECODE=1`, so running one does not break its own pin.
   Without such a file (`python3 -m pkg`, `uv run tool`), the pin covers the executable resolved on `PATH`, and `trust` warns that the provider's own code is not pinned.
   A provider that writes into its own folder breaks its pin: it keeps state through `store`.
   A changed folder is refused until trusted again.
@@ -1932,6 +1933,10 @@ Each stage is one or more commits that leave `bun run check` green and the guard
   - An exec provider's failed `http.fetch` (a timeout, a network failure) answers -32000 with `data: { code: "timeout" | "network", retryable: true }`, which a provider passes on as is.
   - The author guide is `docs/providers/authoring.md`, embedded in the binary for `strato provider guide`.
   - A provider whose id is also the folder name of another tool's account (`slack-partners` next to the Slack account `partners`) is refused: both would live in `<state>/providers/slack-partners/`.
+  - Importing a module has five seconds: its top-level code runs then, and every command waits for the trusted modules first; a module still importing after that is a reason on `doctor` and `provider list`, not a frozen command.
+  - The registry's views keep the SDK's `Provider` members one by one, without `act` and `undo`: an exec host's `rpc`, `stopAll` and `processes` stay with whoever built it (the harness), and `rpc` refuses `act` and `undo` on top.
+  - A wildcard host covers at least two labels (`*.tickets.example`, never `*.com`), in `hosts`, `apiHosts` and link patterns alike.
+  - A one-shot command lets go of stdin when it returns, as it stops its exec providers: the reader behind the prompts of `provider trust` and `setup --connect` kept an open terminal, and with it the process, alive.
   - A one-shot command stops the exec processes it started when it returns (`shutdown`, then a kill after its timeout): every command but `listen`, `watch` and `serve`, which keep their providers while they run.
     Without it, a child process and its pipes kept `strato context`, `backlog` and `doctor` alive until the ten-minute idle delay.
     A call that arrives while a process shuts down waits for that process to end before starting the next one, so the old `shutdown` never holds the new process's slot.

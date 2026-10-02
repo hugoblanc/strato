@@ -124,7 +124,7 @@ describe("the protocol, pure", () => {
 
   test("the environment of a provider keeps the proxy and certificates, never a secret", () => {
     const env = execEnv({ PATH: "/bin", HOME: "/home/alice", HTTPS_PROXY: "http://proxy.acme:3128", no_proxy: "localhost", STRATO_SLACK_TOKEN: "xoxp-1", LINEAR_API_KEY: "lin_1", SSL_CERT_FILE: "/etc/acme.pem" });
-    expect(env).toEqual({ STRATO_PROVIDER_PROTOCOL: "1", PATH: "/bin", HOME: "/home/alice", HTTPS_PROXY: "http://proxy.acme:3128", no_proxy: "localhost", SSL_CERT_FILE: "/etc/acme.pem" });
+    expect(env).toEqual({ STRATO_PROVIDER_PROTOCOL: "1", PYTHONDONTWRITEBYTECODE: "1", PATH: "/bin", HOME: "/home/alice", HTTPS_PROXY: "http://proxy.acme:3128", no_proxy: "localhost", SSL_CERT_FILE: "/etc/acme.pem" });
   });
 
   test("restarts wait 1 s, 2 s, 4 s… up to 5 minutes; five crashes in ten minutes mark the account down for fifteen", () => {

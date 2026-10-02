@@ -12,8 +12,9 @@
  *   provider test <id | path>            the offline conformance harness (providers/harness/run.ts); `--live` runs its
  *                                        read checks against the person's own account, never its writes
  *
- * A work session never trusts, scaffolds nor runs provider code: those subcommands refuse a session caller
- * (`STRATO_CALLER=session`, set in every session's environment) and trusting needs a terminal on top.
+ * A work session never trusts, scaffolds nor tests provider code: those subcommands refuse a session caller
+ * (`STRATO_CALLER=session`, set in every session's environment). That is a convention a session with a shell could
+ * get around, not a boundary: the boundary is that trusting needs typed answers in a terminal.
  */
 import { randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";

@@ -26,6 +26,8 @@ const oneOf = (allowed: readonly string[]) => allowed.map((x) => `"${x}"`).join(
 /** A host name as a descriptor declares it: `tickets.example`, `*.slack.com`, `{settings.workspace}.slack.com`. */
 const HOST = /^(\*\.)?([a-z0-9-]+|\{settings\.[A-Za-z0-9_]+\})(\.([a-z0-9-]+|\{settings\.[A-Za-z0-9_]+\}))*$/i;
 const API_HOST = /^\{settings\.[A-Za-z0-9_]+\}$/;
+/** A wildcard over one label (`*.com`, `*.{settings.tld}`) would claim the links of a whole top-level domain. */
+const wideWildcard = (h: string) => h.startsWith("*.") && !h.slice(2).replace(/\{settings\.[A-Za-z0-9_]+\}/g, "x").includes(".");
 const isHttps = (v: unknown) => typeof v === "string" && /^https:\/\/[^\s/]+/.test(v.replace(/\{settings\.[A-Za-z0-9_]+\}/g, "x"));
 
 /** Inputs a pathological pattern stalls on: long runs of one character, and of a separator. */
@@ -136,6 +138,7 @@ export function descriptorProblems(raw: unknown, expectedId?: string, opts: { no
       const at = `links.parse[${i}]`;
       if (!isObject(p) || typeof p.host !== "string" || typeof p.pattern !== "string" || typeof p.thread !== "string") return expected(at, "{ host, pattern, thread }");
       if (!HOST.test(p.host)) say("cli.provider.check.host", { path: `${at}.host` });
+      else if (wideWildcard(p.host)) say("cli.provider.check.wildcard", { path: `${at}.host` });
       pattern(p.pattern, `${at}.pattern`);
     });
     l.of.forEach((o, i) => {
@@ -148,7 +151,11 @@ export function descriptorProblems(raw: unknown, expectedId?: string, opts: { no
   for (const k of ["hosts", "apiHosts"]) {
     const list = d[k];
     if (!isStrings(list)) expected(k, "string[]");
-    else list.forEach((h, i) => (HOST.test(h) || (k === "apiHosts" && API_HOST.test(h)) ? null : say("cli.provider.check.host", { path: `${k}[${i}]` })));
+    else
+      list.forEach((h, i) => {
+        if (!HOST.test(h) && !(k === "apiHosts" && API_HOST.test(h))) say("cli.provider.check.host", { path: `${k}[${i}]` });
+        else if (wideWildcard(h)) say("cli.provider.check.wildcard", { path: `${k}[${i}]` });
+      });
   }
   if (Array.isArray(d.apiHosts) && !d.apiHosts.length && Array.isArray(d.auth) && d.auth.length) say("cli.provider.check.empty", { path: "apiHosts" });
 

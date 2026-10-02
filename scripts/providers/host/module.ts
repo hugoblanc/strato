@@ -11,6 +11,7 @@ import { t } from "../../core/i18n.ts";
 import { descriptorProblems } from "../check.ts";
 import type { Capabilities, Provider } from "../sdk.ts";
 import { escapeHtml } from "../../core/text.ts";
+import { within } from "./protocol.ts";
 
 /** A pure function of a module that answers `fallback` instead of throwing. */
 function guarded<A extends unknown[], R>(fn: (...a: A) => R, fallback: (e: unknown) => R): (...a: A) => R {
@@ -23,7 +24,6 @@ function guarded<A extends unknown[], R>(fn: (...a: A) => R, fallback: (e: unkno
   };
 }
 
-
 /** A provider that cannot be loaded, with every reason. */
 export class LoadError extends Error {
   constructor(readonly problems: string[]) {
@@ -31,6 +31,9 @@ export class LoadError extends Error {
     this.name = "LoadError";
   }
 }
+
+/** How long importing a module may take: its top-level code runs then, and every command waits for it. */
+export const IMPORT_TIMEOUT_MS = 5_000;
 
 /** The members of a provider object Strato reads from a module; anything else it exports is ignored. */
 const METHODS = ["connect", "poll", "subscribe", "replies", "complete", "participated", "context", "act", "undo", "parseTarget", "threadInfo"] as const;
@@ -55,8 +58,12 @@ export function missingMethods(c: Capabilities, has: (m: string) => boolean): st
 export async function importModule(file: string, id: string): Promise<Provider> {
   let mod: Record<string, unknown>;
   try {
-    mod = (await import(pathToFileURL(file).href)) as Record<string, unknown>;
+    // every command imports the trusted modules first: one whose top-level code never ends must not freeze them all
+    const imported = await within(import(pathToFileURL(file).href) as Promise<Record<string, unknown>>, IMPORT_TIMEOUT_MS);
+    if (!imported.ok) throw new LoadError([t("cli.provider.load.importTimeout", { file, seconds: IMPORT_TIMEOUT_MS / 1000 })]);
+    mod = imported.value;
   } catch (e) {
+    if (e instanceof LoadError) throw e;
     throw new LoadError([t("cli.provider.load.import", { file, error: (e as Error).message ?? String(e) })]);
   }
   const raw = (mod.default ?? mod.provider) as Record<string, unknown> | undefined;

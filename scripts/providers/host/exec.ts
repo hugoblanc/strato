@@ -21,6 +21,7 @@ import { dirname } from "node:path";
 import { providerError } from "../api.ts";
 import type { Account, AccountContext, ActResult, ContextResult, ExecMethods, Identity, IngestCursor, Item, PollResult, Provider, ProviderDescriptor, ProviderError } from "../sdk.ts";
 import { CANCEL_GRACE_MS, EXEC_TIMEOUTS_MS, errorOfRpc, execEnv, failure, FETCH_TIMEOUT_MS, hostError, IDLE_MS, type Incoming, notification, PROTOCOL_VERSIONS, readLine, request, result, RPC, startGate, takeLines, within } from "./protocol.ts";
+import { t } from "../../core/i18n.ts";
 import { maskSecrets } from "../../core/text.ts";
 
 export interface ExecHostOptions {
@@ -42,11 +43,18 @@ export interface ExecHostOptions {
   env?: Record<string, string | undefined>;
 }
 
-/** An exec provider as Strato runs it, with a way to stop its processes and to read their state (doctor, tests). */
+/**
+ * An exec provider as Strato runs it, with a way to stop its processes and, for tests, to read their state. The
+ * registry hands out only the SDK's members of it: `rpc` stays with whoever built it (the harness).
+ */
 export interface ExecProvider extends Provider {
   stopAll(): Promise<void>;
+  /** The state of its processes, for tests. */
   processes(): { account: string; pid: number | null; crashes: number }[];
-  /** Any request, for the conformance harness's protocol checks (an unknown method must answer -32601). */
+  /**
+   * Any request but a write, for the conformance harness's protocol checks (an unknown method must answer -32601):
+   * `act` and `undo` go through the provider's own methods, which only app/act.ts reaches, behind the gate.
+   */
   rpc(ctx: AccountContext, method: string, params?: unknown): Promise<unknown>;
 }
 
@@ -147,7 +155,7 @@ class Channel {
     const gate = startGate(this.crashes, this.now());
     if (!gate.ok) {
       const seconds = Math.ceil(gate.retryAfterMs / 1000);
-      throw hostError(gate.down ? "provider_down" : "restarting", gate.down ? `${this.o.id}: the provider crashed five times within ten minutes; tried again in ${seconds} s` : `${this.o.id}: the provider restarts in ${seconds} s`, { retryAfterMs: gate.retryAfterMs, outcome: "none" });
+      throw hostError(gate.down ? "provider_down" : "restarting", t(gate.down ? "cli.provider.exec.down" : "cli.provider.exec.restarting", { id: this.o.id, seconds }), { retryAfterMs: gate.retryAfterMs, outcome: "none" });
     }
     this.starting = this.start(ctx).finally(() => {
       this.starting = null;
@@ -175,9 +183,9 @@ class Channel {
       const api = typeof d?.api === "number" ? d.api : NaN;
       const range = d?.descriptor?.api;
       if (!PROTOCOL_VERSIONS.includes(api) || typeof range?.min !== "number" || typeof range.max !== "number" || api < range.min || api > range.max) {
-        throw hostError("protocol_version", `${this.o.id}: the provider speaks protocol ${String(d?.api)}, Strato speaks ${PROTOCOL_VERSIONS.join(", ")}`, { fatal: true, retryable: false, outcome: "none" });
+        throw hostError("protocol_version", t("cli.provider.exec.protocol", { id: this.o.id, theirs: String(d?.api), ours: PROTOCOL_VERSIONS.join(", ") }), { fatal: true, retryable: false, outcome: "none" });
       }
-      if (d.descriptor?.id !== this.o.id) throw hostError("descriptor", `${this.o.id}: the provider answers to "${String(d.descriptor?.id)}"`, { fatal: true, retryable: false, outcome: "none" });
+      if (d.descriptor?.id !== this.o.id) throw hostError("descriptor", t("cli.provider.exec.answersTo", { id: this.o.id, other: String(d.descriptor?.id) }), { fatal: true, retryable: false, outcome: "none" });
       this.concurrent = d.concurrent === true;
       const method = this.o.descriptor.auth.find((m) => m.id === ctx.account.auth);
       const secrets: Record<string, string> = {};
@@ -212,7 +220,7 @@ class Channel {
     for (const [id, p] of this.pending) {
       if (p.timer) clearTimeout(p.timer);
       this.pending.delete(id);
-      if (!p.timedOut) p.reject(hostError("crashed", `${this.o.id}: the provider's process stopped (exit code ${code})`, p.during === "write" ? { outcome: "unknown" } : { outcome: "none" }));
+      if (!p.timedOut) p.reject(hostError("crashed", t("cli.provider.exec.stopped", { id: this.o.id, code: String(code) }), p.during === "write" ? { outcome: "unknown" } : { outcome: "none" }));
     }
     this.busy = 0;
     const sub = this.sub;
@@ -276,7 +284,7 @@ class Channel {
         const proc = this.proc;
         if (!proc) {
           // the process died while this call waited: start again, or say why not
-          this.ensure(ctx).then(() => (this.proc ? run() : reject(hostError("crashed", `${this.o.id}: no process`, { outcome: "none" }))), reject);
+          this.ensure(ctx).then(() => (this.proc ? run() : reject(hostError("crashed", t("cli.provider.exec.noProcess", { id: this.o.id }), { outcome: "none" }))), reject);
           return;
         }
         const id = this.nextId++;
@@ -302,7 +310,7 @@ class Channel {
     const p = this.pending.get(id);
     if (!p || p.timedOut) return;
     p.timedOut = true;
-    p.reject(hostError("timeout", `${this.o.id}: no answer to ${p.method} within ${Math.round(this.timeout(p.method) / 1000)} s`, p.during === "write" ? { outcome: "unknown" } : { outcome: "none" }));
+    p.reject(hostError("timeout", t("cli.provider.exec.timeout", { id: this.o.id, method: p.method, seconds: Math.round(this.timeout(p.method) / 1000) }), p.during === "write" ? { outcome: "unknown" } : { outcome: "none" }));
     this.write(notification("$/cancel", { id }));
     p.timer = setTimeout(() => {
       if (!this.pending.has(id)) return;
@@ -545,7 +553,7 @@ function buildExecProvider(o: ExecHostOptions): ExecProvider {
       if (ch.unsupported.has("replies")) return [];
       try {
         const r = await call<{ items?: unknown }>(ctx, "replies", { thread, since: opts.since, max: opts.max });
-        if (!Array.isArray(r?.items)) throw { code: "bad_result", message: "replies returned no items list", retryable: true, fatal: false };
+        if (!Array.isArray(r?.items)) throw { code: "bad_result", message: t("cli.provider.exec.noItems", { id: o.id }), retryable: true, fatal: false };
         return r.items as Item[];
       } catch (e) {
         if (providerError(e).code === "unsupported") return [];
@@ -576,7 +584,7 @@ function buildExecProvider(o: ExecHostOptions): ExecProvider {
       await Promise.all([...channels.values()].map((ch) => ch.shutdown()));
     },
     processes: () => [...channels.entries()].map(([account, ch]) => ({ account, pid: ch.pid, crashes: ch.crashCount })),
-    rpc: (ctx, method, params = {}) => channel(ctx).call(method as keyof ExecMethods, params, ctx),
+    rpc: (ctx, method, params = {}) => (method === "act" || method === "undo" ? Promise.reject(hostError("not_a_read", `rpc never sends ${method}`, { outcome: "none" })) : channel(ctx).call(method as keyof ExecMethods, params, ctx)),
   };
 }
 
@@ -607,7 +615,7 @@ export async function describeExec(o: Pick<ExecHostOptions, "id" | "argv" | "cwd
     const deadline = Date.now() + timeoutMs;
     for (;;) {
       const left = deadline - Date.now();
-      if (left <= 0) throw hostError("timeout", `${o.id}: no answer to describe within ${Math.round(timeoutMs / 1000)} s`);
+      if (left <= 0) throw hostError("timeout", t("cli.provider.exec.timeout", { id: o.id, method: "describe", seconds: Math.round(timeoutMs / 1000) }));
       reading ??= reader.read();
       const got = await within(reading, left);
       if (!got.ok) continue;
@@ -615,7 +623,7 @@ export async function describeExec(o: Pick<ExecHostOptions, "id" | "argv" | "cwd
       const chunk = got.value;
       if (chunk.done) {
         await within(proc.exited, 200);
-        throw hostError("crashed", `${o.id}: the provider's process stopped before answering describe${stderrTail()}`);
+        throw hostError("crashed", t("cli.provider.exec.stoppedBeforeDescribe", { id: o.id, stderr: stderrTail() }));
       }
       const r = takeLines(rest, decoder.decode(chunk.value, { stream: true }));
       rest = r.rest;
@@ -632,7 +640,7 @@ export async function describeExec(o: Pick<ExecHostOptions, "id" | "argv" | "cwd
     const m = await answer(1, o.timeouts?.describe ?? EXEC_TIMEOUTS_MS.describe);
     if (m.error) throw errorOfRpc(m.error);
     const r = (m.result ?? {}) as { api?: unknown; descriptor?: unknown; concurrent?: unknown };
-    if (typeof r.api !== "number" || !PROTOCOL_VERSIONS.includes(r.api)) throw hostError("protocol_version", `${o.id}: the provider speaks protocol ${String(r.api)}, Strato speaks ${PROTOCOL_VERSIONS.join(", ")}`, { fatal: true, retryable: false });
+    if (typeof r.api !== "number" || !PROTOCOL_VERSIONS.includes(r.api)) throw hostError("protocol_version", t("cli.provider.exec.protocol", { id: o.id, theirs: String(r.api), ours: PROTOCOL_VERSIONS.join(", ") }), { fatal: true, retryable: false });
     proc.stdin.write(request(2, "shutdown", {}));
     proc.stdin.flush();
     await answer(2, EXEC_TIMEOUTS_MS.shutdown).catch(() => null);
