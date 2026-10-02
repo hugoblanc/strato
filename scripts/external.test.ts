@@ -264,13 +264,14 @@ globalThis.fetch = async (input, init) => {
 };`;
 
 /** The exec fixture as a trusted provider of the rig, with its preload; returns how to run a command with both. */
-async function trustedExec(r: Rig): Promise<(args: string[], limitMs?: number) => Promise<{ code: number | null; out: string; err: string; ms: number }>> {
+async function trustedExec(r: Rig, o: { edit?: (code: string) => string; account?: Record<string, unknown> } = {}): Promise<(args: string[], limitMs?: number) => Promise<{ code: number | null; out: string; err: string; ms: number }>> {
   const dir = join(r.state, "providers", "tickets");
   mkdirSync(dir, { recursive: true });
-  writeFileSync(join(dir, "provider.ts"), readFileSync(join(SCRIPTS, "test-exec-provider.ts"), "utf8").replace('from "./providers/sdk.ts"', `from ${JSON.stringify(join(SCRIPTS, "providers/sdk.ts"))}`));
+  const code = readFileSync(join(SCRIPTS, "test-exec-provider.ts"), "utf8").replace('from "./providers/sdk.ts"', `from ${JSON.stringify(join(SCRIPTS, "providers/sdk.ts"))}`);
+  writeFileSync(join(dir, "provider.ts"), o.edit ? o.edit(code) : code);
   const secrets = join(r.dir, "tickets.env");
   writeFileSync(secrets, "TICKETS_API_KEY=tk-acme-file-000000\n");
-  config(r, { tickets: { source: { exec: [process.execPath, "provider.ts"] }, accounts: { default: { auth: "api-key", secretsFile: secrets, me: "u-alice" } } } });
+  config(r, { tickets: { source: { exec: [process.execPath, "provider.ts"] }, accounts: { default: o.account ?? { auth: "api-key", secretsFile: secrets, me: "u-alice" } } } });
   await script(
     r,
     `const { describeExec } = await import(${JSON.stringify(join(SCRIPTS, "providers/host/exec.ts"))});
@@ -325,6 +326,34 @@ describe("setup --connect of an exec provider", () => {
     expect(res.out).toContain("u-alice");
     expect(res.exit).toBe(0);
     expect(readFileSync(join(r.dir, "tickets.env"), "utf8")).toContain("TICKETS_API_KEY=tk-acme-new-000000");
+  }, 60_000);
+
+  test("the settings a tool needs and cannot guess are asked first, seen by its checks, and written to the account", async () => {
+    const r = rig();
+    const secrets = join(r.dir, "tickets.env");
+    await trustedExec(r, {
+      // a self-hosted tool: its server is a setting without a default, and connect reports it as the workspace
+      edit: (code) =>
+        code
+          .replace("  settings: [\n", '  settings: [\n    { key: "server", type: "string", label: text("Server"), ask: text("Which server do you use?") },\n')
+          .replace("workspace: me.workspace }", "workspace: String(settings.server ?? me.workspace) }"),
+      account: { auth: "api-key", secretsFile: secrets },
+    });
+    const preload = join(r.dir, "tickets-preload.ts");
+    const res = await inTerminal(r, [process.execPath, "--preload", preload, CLI, "setup", "--connect", "tickets"], {
+      prompt: "Paste your API key",
+      answer: "tk-acme-new-000000",
+      more: [
+        ["Which server do you use?", "tickets.acme.example"],
+        ["Your user id?", "u-alice"],
+      ],
+      timeoutMs: 30_000,
+    });
+    if (!res) return; // no python3 to play the terminal
+    expect(res.out).toContain("tickets.acme.example");
+    expect(res.exit).toBe(0);
+    const profile = JSON.parse(readFileSync(join(r.state, "config.json"), "utf8"));
+    expect(profile.providers.tickets.accounts.default).toMatchObject({ server: "tickets.acme.example", me: "u-alice" });
   }, 60_000);
 });
 

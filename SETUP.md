@@ -255,6 +255,8 @@ Then, in your own terminal:
 2. Read its code, then trust it: `strato provider trust tickets` shows its folder and its SHA-256, runs it once without secrets after a first `yes` to show what it can reach and do, and records the hash on a second typed `yes`.
    A change to any file of that folder (but `.git/` and the JSON files directly in `fixtures/`) needs a new trust; until then Strato does not load it.
 3. Connect your account: `strato setup --connect tickets`.
+   It first asks what the tool needs and cannot guess (a server, an address), then walks the sign-in.
+   The answers go into `config.json` under `providers.tickets.accounts.default`.
 
 `strato provider list` and `strato doctor` say where each provider stands.
 A provider runs with your privileges, like any command-line tool you install; its writes still go through the board's Go, and nothing goes out in shadow mode.

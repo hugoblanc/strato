@@ -3,7 +3,7 @@
  * `setup --check`): which auth method, what goes into config.json, and the lines a person reads. No disk, no network:
  * commands/connect.ts does that (docs/design/providers.md, section 11).
  */
-import type { Account, AuthMethod, Detected, Identity, ProviderDescriptor } from "../providers/sdk.ts";
+import type { Account, AuthMethod, Detected, Identity, ProviderDescriptor, SettingSpec } from "../providers/sdk.ts";
 import { t } from "./i18n.ts";
 import { textOf } from "./links.ts";
 
@@ -38,6 +38,32 @@ export function chooseMethod(d: ProviderDescriptor, wanted: string | undefined):
   if (!wanted) return d.auth[0];
   const m = d.auth.find((x) => x.id === wanted);
   return m ?? { error: t("cli.connect.unknownMethod", { tool: textOf(d.label), auth: wanted, methods: d.auth.map((x) => x.id).join(", ") }) };
+}
+
+/** A setting without a value: absent, empty text, or an empty list. */
+const unset = (v: unknown) => v === undefined || v === null || v === "" || (Array.isArray(v) && v.length === 0);
+
+/**
+ * The settings `setup --connect` asks before signing in: the ones the tool needs and cannot guess, so that its checks
+ * see them (an API host, a server, an address). That is every setting with a question and no default that has no
+ * value yet; a map is never asked on one line, and the person's id is not asked when the tool says who they are.
+ */
+export function settingsToAsk(d: ProviderDescriptor, current: Record<string, unknown>): SettingSpec[] {
+  return d.settings.filter((s) => s.ask && s.default === undefined && s.type !== "map" && unset(current[s.key]) && !(s.triage === "me" && d.capabilities.identity));
+}
+
+/** A typed answer as the setting's type reads it: nothing for an empty answer, or why it is not one. */
+export function settingAnswer(spec: Pick<SettingSpec, "type">, text: string): { value?: unknown } | { error: string } {
+  const v = text.trim();
+  if (!v) return {};
+  if (spec.type === "string[]") return { value: v.split(",").map((x) => x.trim()).filter(Boolean) };
+  if (spec.type === "number") return Number.isFinite(Number(v)) ? { value: Number(v) } : { error: t("cli.connect.setting.number") };
+  if (spec.type === "boolean") {
+    if (/^(y|yes|true|o|oui)$/i.test(v)) return { value: true };
+    if (/^(n|no|false|non)$/i.test(v)) return { value: false };
+    return { error: t("cli.connect.setting.boolean") };
+  }
+  return { value: v };
 }
 
 /** The detected values sure enough to write: high and medium confidence, a non-empty value, a setting the provider has. */

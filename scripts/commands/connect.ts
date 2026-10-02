@@ -16,7 +16,7 @@ import { expandHome, fail, out, run } from "../app/env.ts";
 import { OAuthError, runOAuth } from "../app/oauth.ts";
 import { writeProfile } from "../app/profile.ts";
 import { checkSecretValue, readLine, readSecret, writeSecret } from "../app/secrets.ts";
-import { accountLine, type AccountStatus, chooseMethod, connectPatch, detectedSettings, methodText, providerListLines } from "../core/connect.ts";
+import { accountLine, type AccountStatus, chooseMethod, connectPatch, detectedSettings, methodText, providerListLines, settingAnswer, settingsToAsk } from "../core/connect.ts";
 import { t } from "../core/i18n.ts";
 import { textOf } from "../core/links.ts";
 import { type CheckItem, type Detected, profileErrors, shortPath } from "../core/setup.ts";
@@ -192,6 +192,21 @@ export async function connectCommand(opts: Record<string, string>, cli: string):
 
   const clientId = clientIdOf(opts, view, accountId);
   const entry = entryFor(view, accountId, method, clientId);
+  // the settings the tool needs and cannot guess (a server, an address): typed first, so its checks see them
+  const typed: Record<string, unknown> = {};
+  for (const spec of settingsToAsk(d, entry.account.settings)) {
+    const hint = `${spec.type === "string[]" ? `${t("cli.connect.setting.list")}; ` : ""}${t("cli.connect.setting.skip")}`;
+    for (let tries = 0; tries < 3; tries++) {
+      const answer = settingAnswer(spec, await readLine(`${textOf(spec.ask ?? spec.label)} (${hint}) `));
+      if ("error" in answer) {
+        out(answer.error);
+        continue;
+      }
+      if (answer.value !== undefined) typed[spec.key] = answer.value;
+      break;
+    }
+  }
+  entry.account.settings = { ...entry.account.settings, ...typed };
   const candidates: Record<string, string> = {};
   let found: { identity: Identity; detected: Record<string, Detected> } | null = null;
   const notes: string[] = [];
@@ -247,7 +262,8 @@ export async function connectCommand(opts: Record<string, string>, cli: string):
   // what goes into config.json: the settings the tool told, never a secret; checked before anything is stored
   const tracked = settings().tracker?.kind === "linear";
   const keys = d.settings.map((x) => x.key).filter((k) => !(d.id === "linear" && accountId === "default" && tracked && (TRACKER_LINK_FIELDS as readonly string[]).includes(k)));
-  const values = detectedSettings(found.detected, keys);
+  // what the person typed wins over what the tool guessed
+  const values = { ...detectedSettings(found.detected, keys), ...Object.fromEntries(Object.entries(typed).filter(([k]) => keys.includes(k))) };
   const flagClientId = opts["client-id"] && opts["client-id"] !== "true" ? opts["client-id"] : undefined;
   const defaultSlack = d.id === "slack" && accountId === "default";
   const workspace = typeof values.workspace === "string" ? values.workspace : found.identity.workspace.toLowerCase().replace(/[^a-z0-9-]+/g, "-");

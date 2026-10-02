@@ -96,7 +96,10 @@ To use the provider:
    Any change to a file of that folder needs a new trust; until then Strato does not load it.
    Only git's own `.git/` folder and the JSON files directly in `fixtures/` are left out: code anywhere else counts, under `fixtures/` too, and so do Python's `__pycache__/` files (Strato starts your process with `PYTHONDONTWRITEBYTECODE=1`, so running it writes none).
 3. Connect an account: `strato setup --connect tickets`.
-   Strato walks the sign-in steps your descriptor declares, checks the secret with `connect`, and stores it in a file only the person can read.
+   Strato first asks every setting your tool needs and cannot guess: each one with an `ask` question and no `default` that has no value yet (a server, an address, a site), except the person's id when `capabilities.identity` says your `connect` tells who they are.
+   It then walks the sign-in steps your descriptor declares, checks the secret with `connect` (which sees the answers), and stores it in a file only the person can read.
+   The answers, and what `setup.detect` finds, go into `config.json` as flat keys of the account: `providers.<id>.accounts.<name>.<key>`, for example `providers.tickets.accounts.default.site`.
+   The person can also write them there by hand.
 4. `strato provider list` and `strato doctor` say where it stands.
 
 ## 5. The descriptor
@@ -112,7 +115,7 @@ Every user-facing text is `{ "en": "…", "fr": "…" }`, English required.
 | `kinds` | What the tool is, which decides how a typed destination (a key in `to=`) is read; see "How a text becomes an action" in section 6. `tracker`: a key names a ticket, and a text there is a `comment`. `mail`: a key names an email thread, and a text there is a `reply`. `chat`: no default; a key is a thread only if `threadInfo` reads it as one, else a conversation, where a text is a `post`. `forge` (merge requests): no default of its own today; a forge that also has issues declares `tracker` too. A tool may declare several: `tracker` is applied first. |
 | `capabilities` | What you implement: `ingest.poll`, `ingest.push` (push requires poll), `participation`, `context`, `actions`, `undo`, `idempotent`, `edits`, `identity`. Strato never calls what is not declared, and every declared capability needs its method. |
 | `auth` | The official ways to sign in (section 11): their steps, the secrets they store, and what they cannot do (`limits`). |
-| `settings` | The account settings you read, with their type and, for the interview, an `ask` question. A setting with a `triage` role feeds triage (section 8). |
+| `settings` | The account settings you read, with their type and an `ask` question. `setup --connect` asks every setting with an `ask` and no `default` before signing in (section 4, step 3); the setup interview asks the others. A setting with a `triage` role feeds triage (section 8). They live in `config.json` under `providers.<id>.accounts.<name>.<key>`. |
 | `vocabulary` | Your tool's words for an item, a thread and a conversation, and `targetFormat`: one English sentence that tells a work session how to write a destination, such as "the item's key, such as tickets:OPS-7". |
 | `links` | Your links as data (section 9). |
 | `hosts` | The hosts of the links you build. The board opens those, and only those, for your keys. |

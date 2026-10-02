@@ -139,11 +139,11 @@ export const postBoard = (port: number, path: string, body: unknown) =>
 /** The terminal side of `inTerminal`, in Python: its `pty` module is on every machine python3 is. */
 const PTY_DRIVER = `
 import json, os, select, sys, time
-prompt, answer, timeout = sys.argv[1].encode(), sys.argv[2].encode() + b"\\n", float(sys.argv[3])
+pairs, timeout = [(p.encode(), a.encode() + b"\\n") for p, a in json.loads(sys.argv[1])], float(sys.argv[3])
 pid, fd = os.forkpty()
 if pid == 0:
     os.execvp(sys.argv[4], sys.argv[4:])
-out, answered, deadline = b"", 0, time.time() + timeout
+out, answered, deadline = b"", [0] * len(pairs), time.time() + timeout
 while True:
     ready, _, _ = select.select([fd], [], [], 0.1)
     if ready:
@@ -152,9 +152,10 @@ while True:
         except OSError:
             data = b""
         out += data
-        while out.count(prompt) > answered:
-            os.write(fd, answer)
-            answered += 1
+        for i, (prompt, answer) in enumerate(pairs):
+            while out.count(prompt) > answered[i]:
+                os.write(fd, answer)
+                answered[i] += 1
         if data:
             continue
     done, status = os.waitpid(pid, os.WNOHANG)
@@ -171,13 +172,15 @@ sys.stdout.write(json.dumps({"exit": code, "out": out.decode("utf-8", "replace")
 
 /**
  * Drives a program (`argv[0]`, an absolute path) in a pseudo-terminal, as the person's own terminal would run it:
- * each time the output shows `prompt` once more, `answer` is typed. Needs python3 (null without it). `exit` is null
- * when the program was still running after `timeoutMs`; it is then killed.
+ * each time the output shows `prompt` once more, `answer` is typed; `more` adds other prompts with their answers.
+ * Needs python3 (null without it). `exit` is null when the program was still running after `timeoutMs`; it is then
+ * killed.
  */
-export async function inTerminal(r: Rig, argv: string[], o: { prompt: string; answer: string; timeoutMs: number; env?: Record<string, string> }): Promise<{ exit: number | null; out: string } | null> {
+export async function inTerminal(r: Rig, argv: string[], o: { prompt: string; answer: string; more?: [string, string][]; timeoutMs: number; env?: Record<string, string> }): Promise<{ exit: number | null; out: string } | null> {
   const python = Bun.which("python3");
   if (!python) return null;
-  const p = Bun.spawn([python, "-c", PTY_DRIVER, o.prompt, o.answer, String(o.timeoutMs / 1000), ...argv], { cwd: SCRIPTS, env: { ...r.env, ...o.env }, stdout: "pipe", stderr: "pipe", stdin: "ignore" });
+  const pairs = JSON.stringify([[o.prompt, o.answer], ...(o.more ?? [])]);
+  const p = Bun.spawn([python, "-c", PTY_DRIVER, pairs, "", String(o.timeoutMs / 1000), ...argv], { cwd: SCRIPTS, env: { ...r.env, ...o.env }, stdout: "pipe", stderr: "pipe", stdin: "ignore" });
   const [out, err] = await Promise.all([new Response(p.stdout).text(), new Response(p.stderr).text(), p.exited]);
   if (!out) throw new Error(err);
   return JSON.parse(out) as { exit: number | null; out: string };
