@@ -40,7 +40,7 @@ describe("demo per role", () => {
       expect(topics[0].tasks?.[0]).toMatchObject({ kind: "draft", status: "open" });
       expect(topics[1].tasks?.[0]).toMatchObject({ kind: "decision", status: "open" });
       const text = JSON.stringify(topics);
-      expect(text).not.toContain("—");
+      expect(text).not.toContain("\u2014");
       if (r !== "developer") expect(text, r).not.toMatch(/merge request|\bMR\b|![0-9]/);
       titles.add(topics[0].title);
     }

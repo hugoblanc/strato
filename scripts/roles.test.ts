@@ -108,7 +108,7 @@ describe("prompts per role", () => {
   test("every role file is embedded, and the embedded copy is the file on disk", () => {
     for (const r of NON_DEV) expect(EMBEDDED_ROLES[r]).toBe(readFileSync(join(SCRIPTS, "policy/defaults/roles", `${r}.md`), "utf8"));
     expect(EMBEDDED_ROLES.developer).toBeUndefined();
-    for (const text of Object.values(EMBEDDED_ROLES)) expect(text).not.toContain("—");
+    for (const text of Object.values(EMBEDDED_ROLES)) expect(text).not.toContain("\u2014");
   });
 
   test("a role file in <state>/policy/roles/ wins over the shipped one, and may name the owner", () => {
