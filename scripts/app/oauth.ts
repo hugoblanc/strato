@@ -9,6 +9,7 @@ import { randomBytes } from "node:crypto";
 import { t } from "../core/i18n.ts";
 import { authorizeUrlOf, CALLBACK_PATH, endpointProblem, oauthPortProblem, pkceChallenge, redirectUriOf, base64url, tokenOf, tokenRequestBody } from "../core/oauth.ts";
 import type { OAuthStep } from "../providers/sdk.ts";
+import { escapeHtml } from "../core/text.ts";
 
 /** A flow that did not end with a token, its reason in the person's language. */
 export class OAuthError extends Error {}
@@ -33,7 +34,6 @@ export interface OAuthOptions {
   fetchImpl?: typeof fetch;
 }
 
-const escapeHtml = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 
 /** The page the browser shows after the redirect: one sentence, no script, nothing from the query echoed but escaped. */
 const page = (title: string, status: number) =>

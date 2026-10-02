@@ -23,6 +23,7 @@ import { linearProvider } from "./linear/index.ts";
 import type { Account, AccountContext, Identity, Provider, ProviderDescriptor } from "./sdk.ts";
 import { slackWrites } from "./slack/act.ts";
 import { slackProvider } from "./slack/index.ts";
+import { maskSecrets } from "../core/text.ts";
 
 /** A provider as the registry hands it out: everything but its writes. */
 export type ProviderView = Omit<Provider, "act" | "undo">;
@@ -205,8 +206,6 @@ export function useBaseFetch(f: typeof fetch | null): void {
   baseFetch = f ?? FETCH;
 }
 
-/** Every known secret value masked in a text: a provider's errors and logs never carry one. */
-const masked = (text: string, secrets: string[]) => secrets.reduce((t, s) => (s.length >= 6 ? t.split(s).join(`${s.slice(0, 4)}…`) : t), text);
 
 /**
  * What a provider receives for one account (docs/design/providers.md, section 4.11): never the state folder, other
@@ -239,7 +238,7 @@ export function accountContext(entry: AccountEntry, opts: { identity?: Identity 
     try {
       return await base(input, { ...init, signal: AbortSignal.any([signal, timeout, ...(init?.signal ? [init.signal] : [])]) });
     } catch (e) {
-      throw new Error(masked(`${label}: ${(e as Error).message}`, known));
+      throw new Error(maskSecrets(`${label}: ${(e as Error).message}`, known));
     }
   }) as typeof fetch;
   return {
@@ -255,7 +254,7 @@ export function accountContext(entry: AccountEntry, opts: { identity?: Identity 
     fetch: limitedFetch,
     log(level, message) {
       if (level === "debug") return;
-      (opts.log ?? ((line: string) => process.stderr.write(`${line}\n`)))(`[${label}] ${level}: ${masked(message, known)}`);
+      (opts.log ?? ((line: string) => process.stderr.write(`${line}\n`)))(`[${label}] ${level}: ${maskSecrets(message, known)}`);
     },
     store: {
       read: <T>(name: string, fallback: T) => (candidates ? fallback : readJson<T>(storeFile(entry.account, name), fallback)),

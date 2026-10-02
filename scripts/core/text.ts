@@ -81,3 +81,9 @@ export function oneLine(text: string): string {
 export function untrusted(text: string): string {
   return text.replace(/\[/g, "(").replace(/\]/g, ")").replace(/[«»]/g, '"');
 }
+
+/** Text made safe inside HTML, attribute values included. */
+export const escapeHtml = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+
+/** Every known secret in a text cut to its first four characters: a log or an error never carries one. Short values are left alone. */
+export const maskSecrets = (text: string, secrets: string[]) => secrets.reduce((t, s) => (s.length >= 6 ? t.split(s).join(`${s.slice(0, 4)}…`) : t), text);

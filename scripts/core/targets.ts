@@ -12,6 +12,7 @@ import { parseKey } from "./keys.ts";
 import { descriptorOf, linkAccount, linkOfNative, parseLink, providerDescriptors, providerLabel, pureOf, textOf } from "./links.ts";
 import type { Sujet } from "./sujet.ts";
 import type { Task } from "./tasks.ts";
+import { escapeHtml } from "./text.ts";
 
 /** A destination resolved: the account it goes through and the target on it. */
 export interface ResolvedTarget {
@@ -112,7 +113,6 @@ export const maxTextOf = (provider: string): number | null => descriptorOf(provi
 /** A tool and its account as the board names them: "Slack", "Slack (partners)". */
 export const toolLabel = (provider: string, account: string): string => `${providerLabel(provider)}${account === "default" ? "" : ` (${account})`}`;
 
-const escapeHtml = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;");
 
 /** A text in a tool's markup, as safe HTML for the board: the provider's rendering, else the text escaped. */
 export function renderHtml(provider: string | null, text: string, names?: RenderNames): string {

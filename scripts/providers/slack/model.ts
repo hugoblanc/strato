@@ -9,6 +9,7 @@ import manifestYaml from "../../../examples/slack-app-manifest.yaml" with { type
 import teamManifestYaml from "../../../examples/slack-team-app-manifest.yaml" with { type: "text" };
 import { PROVIDER_API } from "../api.ts";
 import type { Account, AuthMethod, Identity, LinkSpec, ProviderDescriptor, ProviderPure, RenderNames, SecretSpec, Target, Text } from "../sdk.ts";
+import { escapeHtml } from "../../core/text.ts";
 
 const key = (k: string): Text => ({ key: `provider.slack.${k}` });
 
@@ -157,7 +158,6 @@ export const SLACK_DESCRIPTOR: ProviderDescriptor = {
   done: { kind: "react", emoji: "white_check_mark" },
 };
 
-const escapeHtml = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;");
 
 /**
  * A draft as Slack will show it, for the board: "<@U012AB3CD>" becomes "@Ann", "<#C…|support>" becomes "#support",

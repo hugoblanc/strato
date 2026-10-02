@@ -10,6 +10,7 @@ import { pathToFileURL } from "node:url";
 import { t } from "../../core/i18n.ts";
 import { descriptorProblems } from "../check.ts";
 import type { Capabilities, Provider } from "../sdk.ts";
+import { escapeHtml } from "../../core/text.ts";
 
 /** A pure function of a module that answers `fallback` instead of throwing. */
 function guarded<A extends unknown[], R>(fn: (...a: A) => R, fallback: (e: unknown) => R): (...a: A) => R {
@@ -22,7 +23,6 @@ function guarded<A extends unknown[], R>(fn: (...a: A) => R, fallback: (e: unkno
   };
 }
 
-const escapeHtml = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;");
 
 /** A provider that cannot be loaded, with every reason. */
 export class LoadError extends Error {

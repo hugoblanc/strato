@@ -7,9 +7,9 @@
  */
 import { locale, openTasks, parseSteps, permalinkOfKey, providerKeyLabel, repoLabel, settings, sujetKeys, sujetsByKey, t, taskDraftText, threadInfoOfKey, ticketIdOfKey, isResolved, resolveTarget, targetLink, type Task, ticketUrl, type SessionContext, type Sujet, type ThreadDump } from "./lib.ts";
 
-export function escapeHtml(s: string): string {
-  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;");
-}
+import { escapeHtml } from "./core/text.ts";
+
+export { escapeHtml };
 
 function externalLink(url: string, label: string): string {
   return `<a href="${escapeHtml(url)}" data-open>${escapeHtml(label)}</a>`;

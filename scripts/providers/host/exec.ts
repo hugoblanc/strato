@@ -21,6 +21,7 @@ import { dirname } from "node:path";
 import { providerError } from "../api.ts";
 import type { Account, AccountContext, ActResult, ContextResult, ExecMethods, Identity, IngestCursor, Item, PollResult, Provider, ProviderDescriptor, ProviderError } from "../sdk.ts";
 import { CANCEL_GRACE_MS, EXEC_TIMEOUTS_MS, errorOfRpc, execEnv, failure, FETCH_TIMEOUT_MS, hostError, IDLE_MS, type Incoming, notification, PROTOCOL_VERSIONS, readLine, request, result, RPC, startGate, takeLines } from "./protocol.ts";
+import { maskSecrets } from "../../core/text.ts";
 
 export interface ExecHostOptions {
   id: string;
@@ -131,7 +132,7 @@ class Channel {
   }
 
   private masked(text: string): string {
-    return this.secrets.reduce((t, s) => (s.length >= 6 ? t.split(s).join(`${s.slice(0, 4)}…`) : t), text);
+    return maskSecrets(text, this.secrets);
   }
 
   // ---------------------------------------------------------------- lifecycle
