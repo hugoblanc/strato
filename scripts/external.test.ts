@@ -5,13 +5,11 @@
  */
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { resolveSettings, useSettings } from "./core/settings.ts";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { existsSync, mkdirSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { hashFolder } from "./providers/host/trust.ts";
 import { descriptorProblems, patternCost } from "./providers/check.ts";
 import { fakeDescriptor } from "./test-provider.ts";
-import { CLI, cleanupRigs, cli, inTerminal, type Rig, rig, run, SCRIPTS } from "./test-rig.ts";
+import { CLI, cleanupRigs, cli, inProcess, inTerminal, type Rig, rig, run, SCRIPTS } from "./test-rig.ts";
 import { TEST_SETTINGS } from "./test-setup.ts";
 
 afterEach(cleanupRigs);
@@ -190,10 +188,10 @@ describe("a module provider is loaded only once trusted as it is", () => {
 });
 
 describe("symbolic links are pinned by what they reach", () => {
-  test("changing a linked file or a file of a linked folder changes the hash; a link back into the folder does not loop", () => {
-    const top = mkdtempSync(join(tmpdir(), "strato-pin-"));
-    const outside = join(top, "outside");
-    const dir = join(top, "acme");
+  test("changing a linked file or a file of a linked folder changes the hash; a link back into the folder does not loop", async () => {
+    const r = rig();
+    const outside = join(r.dir, "outside");
+    const dir = join(r.dir, "acme");
     mkdirSync(join(outside, "lib"), { recursive: true });
     mkdirSync(dir);
     writeFileSync(join(outside, "real.ts"), "export const A = 1;\n");
@@ -202,14 +200,14 @@ describe("symbolic links are pinned by what they reach", () => {
     symlinkSync(join(outside, "lib"), join(dir, "lib"));
     symlinkSync(dir, join(dir, "self"));
     symlinkSync(join(outside, "gone.ts"), join(dir, "dangling.ts"));
-    const before = hashFolder(dir);
+    const hash = () => inProcess(r, { trust: "providers/host/trust.ts" }, `return trust.hashFolder(${JSON.stringify(dir)});`);
+    const before = await hash();
     writeFileSync(join(outside, "real.ts"), "export const A = 2;\n");
-    const afterFile = hashFolder(dir);
+    const afterFile = await hash();
     expect(afterFile).not.toBe(before);
     writeFileSync(join(outside, "lib", "x.ts"), "export const X = 2;\n");
-    expect(hashFolder(dir)).not.toBe(afterFile);
-    rmSync(top, { recursive: true, force: true });
-  });
+    expect(await hash()).not.toBe(afterFile);
+  }, 20_000);
 });
 
 describe("a provider never shares an account's folder", () => {

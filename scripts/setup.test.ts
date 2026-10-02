@@ -3,17 +3,14 @@
  * and shadow mode (board, server, prompts). Slack is faked by a preload: no network, nothing posted.
  */
 import { afterEach, describe, expect, test } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, statSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { writeSecret } from "./app/secrets.ts";
-import { envFileValue } from "./app/slack.ts";
 import { TEST_SETTINGS } from "./test-setup.ts";
 import { actionCard, type BoardLine } from "./board.ts";
 import { backgroundSessionsOk, checkReport, mergeProfile, profileWarnings, setEnvLine, tokenKindProblem, nextStep, shortPath, slackAppLink, parseRemote, profileDiff, profileErrors, SLACK_SCOPES, slackWorkspaceFromUrl, suggestedConfig, ticketPrefixes, topChannels } from "./core/setup.ts";
 import { missingSettings, resolveSettings, useSettings } from "./core/settings.ts";
 import { workerPrompt } from "./policy/prompts.ts";
-import { CLI, cleanupRigs, cli, KEY, LINK, SCRIPTS, lines, postBoard, readSujets, type Rig, rig, run, startServe, sujet, writeSujets } from "./test-rig.ts";
+import { CLI, cleanupRigs, cli, inProcess, KEY, LINK, SCRIPTS, lines, postBoard, readSujets, type Rig, rig, run, startServe, sujet, writeSujets } from "./test-rig.ts";
 
 afterEach(() => {
   cleanupRigs();
@@ -367,31 +364,35 @@ describe("setup --token and --app-token (O6)", () => {
     expect(setEnvLine("export A=0\nB=2\n", "A", "1")).toBe("A=1\nB=2\n");
   });
 
-  test("secret values round-trip: replacement patterns, quotes, spaces and line breaks", () => {
-    const dir = mkdtempSync(join(tmpdir(), "strato-secret-"));
-    const file = join(dir, "acme.env");
-    writeSecret(file, "APP_PASSWORD", "first");
-    writeSecret(file, "OTHER", "kept");
-    for (const value of ["pa$$w$&rd", "x$'y$`z", "'quoted pass'", '"dq"', " padded ", "a#b", "back\\slash", "plain-token_1"]) {
-      writeSecret(file, "APP_PASSWORD", value);
-      expect(envFileValue(file, "APP_PASSWORD")).toBe(value);
-      expect(envFileValue(file, "OTHER")).toBe("kept");
-    }
-    let refused = "";
-    try {
-      writeSecret(file, "APP_PASSWORD", "tok\nOTHER=x");
-    } catch (e) {
-      refused = (e as Error).message;
-    }
-    expect(refused).toContain("APP_PASSWORD");
-    expect(refused).not.toContain("OTHER=x");
-    expect(envFileValue(file, "OTHER")).toBe("kept");
+  test("secret values round-trip: replacement patterns, quotes, spaces and line breaks", async () => {
+    const r = rig();
+    const file = join(r.dir, "acme.env");
+    const values = ["pa$$w$&rd", "x$'y$`z", "'quoted pass'", '"dq"', " padded ", "a#b", "back\\slash", "plain-token_1"];
+    const got = await inProcess(
+      r,
+      { secrets: "app/secrets.ts", slack: "app/slack.ts" },
+      `const file = ${JSON.stringify(file)};
+       secrets.writeSecret(file, "APP_PASSWORD", "first");
+       secrets.writeSecret(file, "OTHER", "kept");
+       const read = [];
+       for (const v of ${JSON.stringify(values)}) {
+         secrets.writeSecret(file, "APP_PASSWORD", v);
+         read.push([slack.envFileValue(file, "APP_PASSWORD"), slack.envFileValue(file, "OTHER")]);
+       }
+       let refused = "";
+       try { secrets.writeSecret(file, "APP_PASSWORD", "tok\\nOTHER=x"); } catch (e) { refused = e.message; }
+       const after = slack.envFileValue(file, "OTHER");
+       (await import("node:fs")).writeFileSync(file, "export T=\\"xoxp-1\\"\\nU='xapp-2'\\nV=plain  \\n");
+       return { read, refused, after, legacy: ["T", "U", "V"].map((k) => slack.envFileValue(file, k)) };`,
+    );
+    expect(got.read).toEqual(values.map((v) => [v, "kept"]));
+    expect(got.refused).toContain("APP_PASSWORD");
+    expect(got.refused).not.toContain("OTHER=x");
+    expect(got.after).toBe("kept");
+    expect(got.legacy).toEqual(["xoxp-1", "xapp-2", "plain"]);
     // a key is matched literally: A.B does not touch A_B
     expect(setEnvLine("A_B=1\n", "A.B", "2")).toBe("A_B=1\nA.B=2\n");
-    // hand-written files read as before
-    writeFileSync(file, "export T=\"xoxp-1\"\nU='xapp-2'\nV=plain  \n");
-    expect([envFileValue(file, "T"), envFileValue(file, "U"), envFileValue(file, "V")]).toEqual(["xoxp-1", "xapp-2", "plain"]);
-  });
+  }, 20_000);
 
   test("a user token: checked, stored 600 in ~/.config/strato, profile pointed at it, then found by doctor", async () => {
     const r = rig();

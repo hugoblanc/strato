@@ -105,6 +105,20 @@ export async function run(r: Rig, args: string[], extra: Record<string, string> 
 }
 export const cli = (r: Rig, args: string[], extra: Record<string, string> = {}) => run(r, [CLI, ...args], extra);
 
+/**
+ * Runs a module body in a process of its own on the rig's state, and returns what it returns, through JSON. For the
+ * code of app/ and providers/host/: importing it in the test process would resolve the state folder there, once for
+ * every test file. `imports` maps a name to a path under scripts/ (`{ claude: "app/claude.ts" }`).
+ */
+export async function inProcess(r: Rig, imports: Record<string, string>, body: string): Promise<any> {
+  const path = join(r.dir, `p${Math.random().toString(36).slice(2, 8)}.ts`);
+  const lines = Object.entries(imports).map(([name, file]) => `import * as ${name} from ${JSON.stringify(join(SCRIPTS, file))};`);
+  writeFileSync(path, [...lines, `const result = await (async () => { ${body} })();`, "process.stdout.write(JSON.stringify(result ?? null));"].join("\n"));
+  const res = await run(r, [path]);
+  if (res.code !== 0) throw new Error(res.err);
+  return JSON.parse(res.out);
+}
+
 /** Starts `serve` on a free port with the rig's state, waits until it answers, and returns how to stop it. */
 export async function startServe(r: Rig, extra: { preload?: string; env?: Record<string, string> } = {}): Promise<{ port: number; stop: () => Promise<void> }> {
   const probe = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch: () => new Response("") });

@@ -4,7 +4,6 @@
  * through the providers' link patterns.
  */
 import { afterEach, describe, expect, test } from "bun:test";
-import { workerSettings } from "./app/claude.ts";
 import { activityLabel, citations } from "./claude/transcript.ts";
 import { useProviders } from "./core/links.ts";
 import { mcpReadRules, mcpWriteDenyRules } from "./core/mcp.ts";
@@ -13,8 +12,12 @@ import { BUILTIN_DESCRIPTORS } from "./providers/builtin.ts";
 import type { ProviderDescriptor } from "./providers/sdk.ts";
 import { SLACK_DESCRIPTOR } from "./providers/slack/model.ts";
 import { TEST_SETTINGS } from "./test-setup.ts";
+import { cleanupRigs, inProcess, rig } from "./test-rig.ts";
+import { writeFileSync } from "node:fs";
+import { join } from "node:path";
 
 afterEach(() => {
+  cleanupRigs();
   useSettings(TEST_SETTINGS);
   useProviders([...BUILTIN_DESCRIPTORS]);
 });
@@ -84,13 +87,16 @@ describe("what sessions read with, and what the board says they read", () => {
     expect(deny).toContain("mcp__linear__save_comment");
   });
 
-  test("a session's settings: each allow rule once, and the write tools denied only in shadow mode", () => {
-    const base = { ...TEST_SETTINGS, workers: { ...TEST_SETTINGS.workers, allow: ["mcp__linear__get_issue"] } };
-    useSettings(resolveSettings({ ...base, workers: { ...base.workers, shadow: false } }));
-    const live = JSON.parse(workerSettings()).permissions;
-    expect(live.allow.filter((r: string) => r === "mcp__linear__get_issue")).toHaveLength(1);
+  test("a session's settings: each allow rule once, and the write tools denied only in shadow mode", async () => {
+    const r = rig();
+    const profile = { owner: { name: "Alice" }, slack: { team: "Acme", workspace: "acme", me: "UME" }, tracker: { kind: "linear", workspace: "acme", prefixes: ["ENG"] }, workers: { allow: ["mcp__linear__get_issue"] } };
+    const permissions = async (shadow: boolean) => {
+      writeFileSync(join(r.state, "config.json"), JSON.stringify({ ...profile, workers: { ...profile.workers, shadow } }));
+      return (await inProcess(r, { claude: "app/claude.ts" }, "return JSON.parse(claude.workerSettings()).permissions;")) as { allow: string[]; deny?: string[] };
+    };
+    const live = await permissions(false);
+    expect(live.allow.filter((x) => x === "mcp__linear__get_issue")).toHaveLength(1);
     expect(live.deny).toBeUndefined();
-    useSettings(resolveSettings({ ...base, workers: { ...base.workers, shadow: true } }));
-    expect(JSON.parse(workerSettings()).permissions.deny).toContain("mcp__slack__conversations_add_message");
-  });
+    expect((await permissions(true)).deny).toContain("mcp__slack__conversations_add_message");
+  }, 20_000);
 });
