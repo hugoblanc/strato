@@ -31,7 +31,9 @@ Type the command in full every time (`$STRATO doctor` is `strato doctor`, or `bu
 | Command | Role |
 | --- | --- |
 | `$STRATO doctor` | The loaded profile, what is missing, the Slack token, the socket, `claude agents`, the state, the policy, the locale |
-| `$STRATO setup --check \| --detect \| --write <file.json> [--force] \| --live \| --slack-app \| --token \| --app-token` | The guided setup (below, "Setup"): prerequisites, what can be guessed, writing the profile, leaving shadow mode |
+| `$STRATO setup --check \| --detect \| --write <file.json> [--force] \| --live \| --slack-app [--team] \| --token \| --app-token` | The guided setup (below, "Setup"): prerequisites, what can be guessed, writing the profile, leaving shadow mode |
+| `$STRATO setup --providers` | The tools Strato can connect, the accounts of the profile, and each tool's sign-in methods with their trade-off, the default first |
+| `$STRATO setup --connect [<tool>] [--account <name>] [--auth <method>] [--client-id <id>] [--print]` | Connects an account, **in the owner's own terminal only** (it refuses a session or a pipe): opens the pages, reads the secrets without echo or runs OAuth with PKCE in the browser, verifies, stores the secrets (600) and writes the account into `config.json` |
 | `$STRATO demo [--port 4394] [--locale en\|fr] \| --clean` | A board of fictional Acme topics in a throwaway folder, no Slack, no session: to show what Strato does before any setup |
 | `$STRATO listen` | Socket Mode listener, to run through `Monitor`: one line per event to handle, received by WebSocket. The normal mode |
 | `$STRATO watch` | The same by polling every `slack.pollInterval` seconds. Fallback when the socket does not open |
@@ -80,7 +82,8 @@ The state folder holds:
 | --- | --- |
 | `owner.name` | The first name of the person served, read in prompts, cards and the board |
 | `workspace` | The work sessions' folder (cwd, CLAUDE.md, `.mcp.json`) |
-| `slack` | `team` (name returned by `auth.test`), `workspace` (subdomain), `me`, `subteams`, `teamAlias` (the team group as written, "@support"), `watchChannels`, `ignoreChannels`, `ignoreAuthors`, `teammates`, `appId`, `appTokenFile`, `userTokenFile` (written by `setup --token`), `pollInterval` |
+| `slack` | `team` (name returned by `auth.test`), `workspace` (subdomain), `me`, `subteams`, `teamAlias` (the team group as written, "@support"), `watchChannels`, `ignoreChannels`, `ignoreAuthors`, `teammates`, `appId`, `appTokenFile`, `userTokenFile` (written by `setup --token` and `setup --connect slack`), `pollInterval`, `clientId` (the team's Slack app, for `--auth oauth-pkce`) |
+| `providers` | Accounts beyond the main Slack workspace (`slack`) and the Linear links (`tracker`), by tool: `providers.slack.accounts.<name>` with `auth`, `team`, `workspace`, `me`… Written by `setup --connect <tool> --account <name>`; secrets never go there |
 | `tracker` | Linear: `workspace` and ticket `prefixes`. `null`: no tickets |
 | `forge` | GitLab: `host`, `repos` (short name -> project), `aliases`, `iidRanges` and `defaultRepo` for a bare "!N", `integrationBranch` and `releaseBranch`. `null`: no Delivery line |
 | `workers` | `skipPermissions` (false by default), `allow`, the permissions added to the sessions (read-only database, tracker), and `shadow` (true in a profile Strato creates, false when the key is absent from an older one): sessions prepare and post nothing, the board's Send and Go are off, the server refuses them; `setup --live` turns it off |
@@ -91,6 +94,7 @@ The state folder holds:
 | `ui.port` | Port of the board and of the panel; one per installation when several run on the same machine |
 | `ui.iterm` | iTerm2 button on the board, `dive`, sidebar panel. macOS only |
 | `ui.slackApp` | True by default: a Slack link clicked in the board or the panel opens in the app (`slack://`) |
+| `ui.oauthPort` | Port of the OAuth callback (`setup --connect … --auth oauth-pkce`), the one in the OAuth app's redirect URL; 0 (default): `ui.port` + 10, 4353 |
 
 **`policy/*.md`, the policy.** What sessions do with a message, how they write the card, what waits for a go: Markdown templates, not code.
 `scripts/policy/defaults/` holds a neutral policy in English; a file with the same name in `<state>/policy/` replaces it, file by file, in any language.
@@ -114,11 +118,34 @@ The goal is the profile of `examples/profile/` (read both files once before star
 - Talk in the language the owner writes in; write `config.json`, `local.md` and every file in the language they choose for `local.md` (English by default).
 - Rerun on an existing installation: start from the current `config.json` and `local.md`, and only revisit what the owner wants to change.
 
+### 0. Your tools
+
+Before anything else, ask which tools requests reach the owner through, and which tools they answer in, with your guess pre-filled from what you see (a Slack MCP server in `.mcp.json`, a Linear MCP server, git remotes).
+Set up only the tools they name, and skip every question about the others: no tracker question for someone without tickets, no forge question for someone without merge requests.
+
+| Tool | What Strato does with it | Set up in |
+| --- | --- | --- |
+| Slack, the main workspace | Reads requests, posts approved drafts | 1 (connection), then blocks b and e |
+| Slack, another workspace | The same, as a named account | 1, `--connect slack --account <name>` |
+| Linear | Recognizes ticket links and ids, opens ticket topics (sessions read tickets through the Linear MCP) | Block f, the `tracker` section |
+| GitLab | Follows merge requests to production on the board | Block f, the `forge` section |
+
+`$STRATO setup --providers` lists the tools Strato can connect and their sign-in methods; Linear says there that it is links only in this version.
+
 ### 1. Prerequisites
 
 `$STRATO setup --check`.
 A `MISS … [blocking]` line comes first: Bun or Claude Code missing, or no Slack user token.
-For the token, walk the owner through `SETUP.md` "Connect Slack": `setup --slack-app` opens the app creation with the manifest filled in, then the owner runs `$STRATO setup --token` **in their own terminal** and pastes the token there, so it never enters this transcript. Never ask for the token in the chat. Wait until `setup --check` shows `ok  slack`: without a token, `--detect` finds nothing from Slack.
+For each Slack workspace, offer the sign-in methods `setup --providers` prints, the default first, each with its trade-off in one sentence, and recommend:
+
+- `user-token` (the default) when the owner sets Strato up for themselves: their own app from the manifest, real time with Socket Mode.
+- `paste-token` when they already have a user token (`xoxp-`) of an app with the scopes of the manifest.
+- `oauth-pkce` when their team already has a Strato app (ask for its Client ID, which is not a secret), or when the workspace is out of app slots; it polls, no real time. Without a team app yet, whoever sets Strato up for the team runs `setup --slack-app --team` once (`SETUP.md`, "One Slack app for a whole team").
+
+Then the owner runs `$STRATO setup --connect slack [--account <name>] --auth <method>` (plus `--client-id <id>` for OAuth) **in their own terminal**: it refuses to run from this session, so a token never enters this transcript.
+`$STRATO setup --token` and `--app-token` remain the same as the default method, one token at a time.
+Never ask for a token in the chat.
+Wait until `setup --check` shows `ok  slack` (and `ok  slack@<name>` for another workspace): without a token, `--detect` finds nothing from Slack.
 Optional lines (`socket`, `glab`, `ttyd`, `iTerm2`) are mentioned once, in one sentence, never blocking.
 A `scopes` warning is worth fixing now if it lists `search:read`, a `*:history` scope or `chat:write`.
 
@@ -149,7 +176,7 @@ Each block says where the answer goes.
 | **c. Who owns what around you** | The neighbouring areas and their owner, so a session can say "not for you, it's X". Propose a skeleton from the channels and groups found; the owner fills names | `local.md` "Ownership map" (a table: area, owner, where to send people) |
 | **d. Never without your go** | Two things are always behind a go (a message on your behalf, a production write). Anything else? Customers, partners, executive channels, access grants, closing other people's tickets | `local.md` "Never without my go" |
 | **e. What to listen to** | Which of the active channels are requests for you (every message counts)? Channels never to raise? Bots that post in your channels and are noise? | `slack.watchChannels`, `slack.ignoreChannels` (channel IDs from `candidates`), `slack.ignoreAuthors` (display names) |
-| **f. Tracker and forge** | Confirm Linear workspace and prefixes, or no tracker. Confirm repositories, short names, integration and release branches, or no forge (GitHub: not wired, `forge: null`) | `tracker`, `forge` |
+| **f. Your other tools** | Only for the tools named in step 0. Linear: confirm workspace and prefixes. GitLab: confirm repositories, short names, integration and release branches (GitHub: not wired, `forge: null`). A tool not named stays `null`, without a question | `tracker`, `forge` |
 | **g. Session permissions** | Which read-only tools sessions may use without asking (tracker reads, read-only database). Then explain `skipPermissions` in two sentences: sessions would run any command and write any file without asking, while reading text written by third parties, so a hostile message could steer them. Recommend `false` | `workers.allow`, `workers.skipPermissions` |
 | **h. Language and tone** | Language of the board and of your messages (`en` or `fr`). Tone of drafts in a sentence or two. A voice file (how you write)? | `ui.locale`; `local.md` "Notes"; voice file: see below |
 

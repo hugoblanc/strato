@@ -67,6 +67,7 @@ claude -n strato "/strato setup"
 
 It checks the prerequisites, guesses what it can from Slack and git (`setup --detect`), asks only what is left (your role, your team, who owns what around you, what never goes out without your go), writes the profile in `<project>/.strato/`, rehearses on the last 24 hours, and starts in **shadow mode**: cards and drafts for real, nothing posted until `setup --live`.
 **[SETUP.md](SETUP.md)** is the step-by-step guide, Slack app included; [`examples/profile/`](examples/profile/) is a complete fictional profile.
+`strato setup --providers` lists how each tool connects, and `strato setup --connect slack`, in your own terminal, connects a workspace in one of three ways: your own Slack app, a user token you already have, or your team's shared app through OAuth with PKCE (Strato ships no app of its own).
 
 Every morning after that:
 
@@ -83,7 +84,7 @@ One codebase serves every installation; each installation is a profile.
 
 | File | Role |
 | --- | --- |
-| `config.json` | Written by `setup --write`. The profile: who is served (`owner.name`), the workspace, Slack (`team`, `workspace`, `me`, `subteams`, `teamAlias`, `watchChannels`, `teammates`…), the tracker, the forge, the work sessions' permissions, the board's port and language (`ui.locale`: `en` or `fr`) |
+| `config.json` | Written by `setup --write`. The profile: who is served (`owner.name`), the workspace, Slack (`team`, `workspace`, `me`, `subteams`, `teamAlias`, `watchChannels`, `teammates`…), the tracker, the forge, other accounts (`providers`, written by `setup --connect`), the work sessions' permissions, the board's port and language (`ui.locale`: `en` or `fr`) |
 | `policy/*.md` | Optional. Replaces a shipped template of `scripts/policy/defaults/` file by file: how sessions handle a message, write a card, what waits for a go |
 | `local.md` | Notes read by the master at startup: who you are, your team, the ownership map around you, what never goes out without your go |
 
