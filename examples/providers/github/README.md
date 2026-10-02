@@ -35,6 +35,7 @@ What that costs:
 - GitHub's search index lags behind by seconds to minutes; each poll searches again over the last ten minutes and skips what it already returned.
 - Every poll makes two search requests (GitHub allows 30 a minute) and one to four timeline requests per issue or pull request that moved.
   A thread with more than three pages of new events since the last poll keeps its newest three, and the poll says it is not complete.
+- An issue or pull request the search still lists but that can no longer be read (deleted, made private, or not shared with the token) is skipped and written to the account's log; the rest of the poll goes on.
 
 ## Creating the token
 
@@ -48,7 +49,7 @@ Choose the repositories, then these repository permissions:
 ## Files
 
 - `provider.ts`: the provider.
-- `provider.test.ts`: what the conformance harness does not reach (mentions in code, a capped poll, a long timeline, typed destinations); run `bun test` here.
+- `provider.test.ts`: what the conformance harness does not reach (mentions in code, a capped poll, a thread a poll cannot read, a long timeline, typed destinations); run `bun test` here.
 - `strato-provider.d.ts`: the types of the provider interface, as `strato provider types` prints them.
 - `fixtures/sample.json`: a pull request and an issue on `acme`, answered offline to the conformance harness, with GitHub's two kinds of 403 (a rate limit, a repository the token was not given) as error cases.
 - `fixtures/paged.json`: the same, with a timeline on two pages.

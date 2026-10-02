@@ -519,7 +519,18 @@ const provider: Provider = {
     let timelinesWhole = true;
     for (const { ref, issue } of threads.values()) {
       const t: Thread = { ref, title: issue.title, link: webLink(issue.html_url, issueUrl(ref)) };
-      const { events, complete: whole } = await timeline(ctx, ref, state.from);
+      let read: Awaited<ReturnType<typeof timeline>>;
+      try {
+        read = await timeline(ctx, ref, state.from);
+      } catch (e) {
+        // deleted, made private, or not shared with the token while the lagging index still lists it: skip that
+        // thread only, so one unreadable issue never holds the account's cursor
+        const code = (e as ProviderError)?.code;
+        if (code !== "not_found" && code !== "forbidden") throw e;
+        ctx.log("warn", `${threadId(ref)} skipped: ${(e as ProviderError).message}`);
+        continue;
+      }
+      const { events, complete: whole } = read;
       timelinesWhole &&= whole;
       const items = events.map((e) => itemOfEvent(ctx, t, me, e)).filter((x): x is Item => x !== null);
       if (timeOf(issue.created_at) >= state.from) items.push(openingItem(t, me, issue));

@@ -1,6 +1,7 @@
 /**
- * What the conformance harness does not reach: GitHub's 403 that is a rate limit, a 403 on one repository, the
- * mentions hidden in code, and the destinations a person types. Run with `bun test` in this folder.
+ * What the conformance harness does not reach: GitHub's 403 that is a rate limit, a 403 on one repository, a thread
+ * a poll cannot read, the mentions hidden in code, and the destinations a person types. Run with `bun test` in this
+ * folder.
  */
 import { describe, expect, test } from "bun:test";
 import type { AccountContext, ActInput, Item } from "./strato-provider.d.ts";
@@ -92,6 +93,27 @@ describe("poll", () => {
     expect(by("acme/api#3/c12")).toMatchObject({ mentionsMe: false, targetsOther: true });
     expect(by("acme/api#3/c13")).toMatchObject({ mentionsMe: true });
     expect(r.complete).toBe(true);
+  });
+
+  test("a thread that answers 404 or 403 is skipped and logged; the others still come in", async () => {
+    const gone = { ...issue, number: 4, title: "Deleted", html_url: "https://github.com/acme/api/issues/4" };
+    const hidden = { ...issue, number: 5, title: "Private now", html_url: "https://github.com/acme/api/issues/5" };
+    const logged: string[] = [];
+    const two = {
+      ...fakeCtx({
+        [q("involves:@me")]: { body: { total_count: 3, items: [gone, issue, hidden] } },
+        [q("review-requested:@me")]: { body: { total_count: 0, items: [] } },
+        "GET /repos/acme/api/issues/3/timeline?per_page=100&page=1": { body: timeline },
+        "GET /repos/acme/api/issues/4/timeline?per_page=100&page=1": { status: 404, body: { message: "Not Found" } },
+        "GET /repos/acme/api/issues/5/timeline?per_page=100&page=1": { status: 403, body: { message: "Resource not accessible by personal access token" } },
+      }),
+      log: (_level: string, message: string) => void logged.push(message),
+    };
+    const r = await provider.poll!(two, null, { since, maxItems: 50 });
+    expect(r.items.map((i) => i.id)).toEqual(["acme/api#3/c11", "acme/api#3/c12", "acme/api#3/c13"]);
+    expect(logged).toHaveLength(2);
+    expect(logged[0]).toContain("acme/api#4 skipped");
+    expect(logged[1]).toContain("acme/api#5 skipped");
   });
 
   test("a capped pass keeps the newest and says so", async () => {
