@@ -132,6 +132,59 @@ The manifest already enables Socket Mode and subscribes to `message.channels`, `
 
 The master then runs `strato.ts listen`; it falls back to `watch` if the socket does not open.
 
+### Other ways to connect Slack
+
+`strato setup --providers` lists every tool Strato can connect, its accounts in your profile, and its ways of signing in.
+`strato setup --connect slack` walks one of them: it asks which one, opens the pages you need, reads each token without showing it, checks it with Slack, stores it in a file readable by you only, and fills your profile.
+Run it in your own terminal: it refuses to run in a Claude session or from a pipe, so a token never enters a transcript.
+
+| Method | `--auth` | What you do | Trade-off |
+| --- | --- | --- | --- |
+| Your own app (default) | `user-token` | Create the app from the manifest above, install it, paste the user token, and the app-level token if you want real time | Real time and Slack's full rate limits; each person creates an app, and a free workspace allows ten |
+| A token you already have | `paste-token` | Paste a user token (`xoxp-`) of an app you already use, and its app-level token if it has Socket Mode | Nothing to create; that app needs the scopes of Strato's manifest |
+| Your team's app, with OAuth | `oauth-pkce` | Approve Strato in your browser | Nobody handles a token and one app serves the whole team; polling only, and someone creates the app once |
+
+`setup --token` and `setup --app-token` keep working: they are the first method, one token at a time.
+`--print` shows the links without opening them.
+
+### One Slack app for a whole team (OAuth with PKCE)
+
+Strato ships no Slack app and no client id of its own: a team creates its app once.
+
+1. Whoever sets Strato up for the team runs `strato setup --slack-app --team`, or opens **[the team app's creation link](https://api.slack.com/apps?new_app=1&manifest_yaml=display_information%3A%0A%20%20name%3A%20Strato%0A%20%20description%3A%20Routes%20your%20Slack%20to%20Claude%20Code%20work%20sessions%20on%20your%20machine.%20Posts%20only%20on%20your%20click.%0A%20%20background_color%3A%20%22%231b1406%22%0Aoauth_config%3A%0A%20%20redirect_urls%3A%0A%20%20%20%20-%20http%3A%2F%2Flocalhost%3A4353%2Foauth%2Fcallback%0A%20%20pkce_enabled%3A%20true%0A%20%20scopes%3A%0A%20%20%20%20user%3A%0A%20%20%20%20%20%20-%20search%3Aread%0A%20%20%20%20%20%20-%20channels%3Ahistory%0A%20%20%20%20%20%20-%20groups%3Ahistory%0A%20%20%20%20%20%20-%20im%3Ahistory%0A%20%20%20%20%20%20-%20mpim%3Ahistory%0A%20%20%20%20%20%20-%20channels%3Aread%0A%20%20%20%20%20%20-%20groups%3Aread%0A%20%20%20%20%20%20-%20im%3Aread%0A%20%20%20%20%20%20-%20mpim%3Aread%0A%20%20%20%20%20%20-%20users%3Aread%0A%20%20%20%20%20%20-%20usergroups%3Aread%0A%20%20%20%20%20%20-%20chat%3Awrite%0A%20%20%20%20%20%20-%20reactions%3Awrite%0Asettings%3A%0A%20%20interactivity%3A%0A%20%20%20%20is_enabled%3A%20false%0A%20%20org_deploy_enabled%3A%20false%0A%20%20socket_mode_enabled%3A%20false%0A%20%20token_rotation_enabled%3A%20false)**: Slack's app creation with [`examples/slack-team-app-manifest.yaml`](examples/slack-team-app-manifest.yaml) filled in.
+   Pick the workspace, **Next**, **Create**, then **Install to Workspace**.
+2. Keep the app internal to the workspace: do not turn on public distribution (**Manage Distribution**).
+3. Share its **Client ID** (**Basic Information** > **App Credentials**).
+   It is not a secret.
+   Strato never uses the Client Secret: do not share it.
+4. Each person runs, in their own terminal:
+
+   ```bash
+   strato setup --connect slack --auth oauth-pkce --client-id <Client ID>
+   ```
+
+   and approves Strato in the browser page that opens.
+   The client id is kept in `slack.clientId`, so the next connection needs only `--auth oauth-pkce`.
+
+What happens: Strato listens once on `http://localhost:4353/oauth/callback`, for five minutes at most, sends Slack a PKCE challenge (S256) and a random `state`, and exchanges the code for your own user token (`xoxp-`), stored like the others.
+The manifest declares that redirect URL and turns PKCE on, so Slack treats Strato as a desktop app and asks for no client secret ([Slack: using PKCE](https://docs.slack.dev/authentication/using-pkce)).
+The port is `ui.oauthPort`, the board's port + 10 by default; to use another one, change `ui.oauthPort` and the redirect URL in the app's **OAuth & Permissions** together.
+
+Rate limits, from Slack's documentation:
+
+- Slack counts Web API calls per app and per workspace ([rate limits](https://docs.slack.dev/apis/web-api/rate-limits)): people who share one app share its budget, and in a large team Strato may meet `ratelimited` answers, which it waits out and retries.
+- An internal app keeps Slack's full limits.
+  A distributed app that is not approved for the Slack Marketplace reads `conversations.history` and `conversations.replies` at one request a minute, 15 messages at a time, for every installation since March 2026 ([the change](https://docs.slack.dev/changelog/2025/05/29/rate-limit-changes-for-non-marketplace-apps/)): reading a thread would take minutes.
+  This is why Strato publishes no app of its own, and why the team app stays internal.
+- The team app has no Socket Mode: Slack spreads the events of one app across all its open connections, so with several people each listener would miss part of its own events.
+  Everyone polls, every `slack.pollInterval` seconds.
+
+### A second Slack workspace
+
+`strato setup --connect slack --account partners` connects another workspace as a named account: `providers.slack.accounts.partners` in `config.json`, its tokens in `~/.config/strato/slack-partners.env`.
+Your main workspace stays the `slack` section.
+`doctor` and `setup --check` print one line per named account, with the command that fixes it when it cannot connect.
+
 ## 4. Run the setup interview
 
 From the project folder:

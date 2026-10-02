@@ -77,7 +77,7 @@ describe("profile helpers", () => {
 
   test("validation: typos, wrong types and bad enums are named; the legacy flat format passes", () => {
     expect(profileErrors({ owner: { name: "Alice" }, slack: { watchChannel: ["C1"], subteams: "S1" }, ui: { locale: "de" }, workers: { shadow: "yes" } })).toEqual([
-      "slack.watchChannel: unknown field (known: team, workspace, me, subteams, teamAlias, watchChannels, ignoreChannels, ignoreAuthors, teammates, appId, appTokenFile, userTokenFile, pollInterval)",
+      "slack.watchChannel: unknown field (known: team, workspace, me, subteams, teamAlias, watchChannels, ignoreChannels, ignoreAuthors, teammates, appId, appTokenFile, userTokenFile, pollInterval, clientId)",
       "slack.subteams: expected array, got string",
       'ui.locale: "de" is not one of en, fr',
       "workers.shadow: expected boolean, got string",

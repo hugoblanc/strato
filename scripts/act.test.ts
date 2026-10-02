@@ -350,7 +350,8 @@ const WRITES = /^providers\/[^/]+\/act\.ts$/;
  * - `actorOf`, the registry's door to the writes, is named by app/act.ts and the registry only;
  * - Slack's write transport (`SlackClient.postWrite`) and Slack's write methods (chat.*, reactions.*, pins.*) are named
  *   in a provider's writes module only, and GraphQL mutations likewise;
- * - Slack's API host is named where the client and setup's own reads live, not anywhere a write could be built by hand.
+ * - Slack's API host is named where the client and setup's own reads live, not anywhere a write could be built by hand;
+ *   the one exception is the OAuth token endpoint, declared as data in Slack's descriptor and called by app/oauth.ts.
  */
 function actPathViolations(files: Scanned[]): string[] {
   const out: string[] = [];
@@ -361,7 +362,8 @@ function actPathViolations(files: Scanned[]): string[] {
     if (/\bpostWrite\b/.test(f.code) && !writer && f.file !== "app/slack.ts") out.push(`${f.file} names Slack's write transport`);
     if (/["'`](chat|reactions|pins)\./.test(f.code) && !writer) out.push(`${f.file} names a Slack write method`);
     if (/\bmutation\b/.test(f.code) && !writer) out.push(`${f.file} names a GraphQL mutation`);
-    if (/slack\.com\/api/.test(f.code) && f.file !== "app/slack.ts" && f.file !== "commands/setup.ts") out.push(`${f.file} names Slack's API host`);
+    const hostCode = f.file === "providers/slack/model.ts" ? f.code.replace('"https://slack.com/api/oauth.v2.access"', "") : f.code;
+    if (/slack\.com\/api/.test(hostCode) && f.file !== "app/slack.ts" && f.file !== "commands/setup.ts") out.push(`${f.file} names Slack's API host`);
   }
   return out;
 }

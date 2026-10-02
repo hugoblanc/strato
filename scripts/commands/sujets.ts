@@ -13,7 +13,8 @@ import { locale, t } from "../core/i18n.ts";
 import { canonicalKey, conversationOfKey, parseKey, sujetKey, threadOfKey, ticketUrl } from "../core/keys.ts";
 import { providerLabel } from "../core/links.ts";
 import { missingSettings, settings } from "../core/settings.ts";
-import { nextLine, short } from "./setup.ts";
+import { accountLines } from "./connect.ts";
+import { cliCommand, nextLine, short } from "./setup.ts";
 import { applyAssignments, attachThread, findSujet, parseAssignments, type Sujet, sujetKeys, type Trigger } from "../core/sujet.ts";
 import { reportFile, sessionName, truncate } from "../core/text.ts";
 import { DEFAULT_POLICY_DIR, followUpMessage, POLICY_TEMPLATES, policySource, shadowedPolicyNames, ticketPrompt, usesTopicWords, workerPrompt } from "../policy/prompts.ts";
@@ -41,6 +42,8 @@ export async function doctor() {
     out(`slack    : ${slackOk.team} · user ${slackOk.me}${fixes.length ? ` · to fix in config.json, ${fixes.join(", ")} (setup --detect proposes them)` : ""}`);
   }
   out(`socket   : ${appToken() ? "app token found, listen can open the socket" : "no app token (SLACK_APP_TOKEN or slack.appTokenFile): only watch, by polling, works"}`);
+  // one line per other account (named Slack workspaces, connected tools): none in a Slack-only profile
+  for (const line of await accountLines(cliCommand())) out(line);
   const rows = agentsBySession();
   out(`claude   : ${rows ? `${rows.size} active session(s)` : "claude agents --json does not answer"}`);
   out(`state    : ${short(STATE)} · ${loadSujets().length} topic(s)`);

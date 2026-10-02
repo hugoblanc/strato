@@ -4,8 +4,11 @@
  */
 import { DRAFT_MAX, draftDestination, humanize, slackAppLink } from "../../chat/slack-model.ts";
 import { t } from "../../core/i18n.ts";
+import { SLACK_SCOPES, slackAppLink as manifestLink } from "../../core/setup.ts";
+import manifestYaml from "../../../examples/slack-app-manifest.yaml" with { type: "text" };
+import teamManifestYaml from "../../../examples/slack-team-app-manifest.yaml" with { type: "text" };
 import { PROVIDER_API } from "../api.ts";
-import type { Account, Identity, LinkSpec, ProviderDescriptor, ProviderPure, RenderNames, Target, Text } from "../sdk.ts";
+import type { Account, AuthMethod, Identity, LinkSpec, ProviderDescriptor, ProviderPure, RenderNames, SecretSpec, Target, Text } from "../sdk.ts";
 
 const key = (k: string): Text => ({ key: `provider.slack.${k}` });
 
@@ -31,6 +34,79 @@ export const SLACK_LINKS: LinkSpec = {
   ],
 };
 
+/** Slack's app creation, with Strato's manifest filled in: one app per person (`setup --slack-app`). */
+export const SLACK_APP_LINK = manifestLink(manifestYaml);
+/** The same for one internal app a team shares, signed in through with OAuth and PKCE (`setup --slack-app --team`). */
+export const SLACK_TEAM_APP_LINK = manifestLink(teamManifestYaml);
+
+/** A user token, and the app-level token that opens Socket Mode. The environment variables are the default account's legacy sources. */
+const TOKEN_STORES: SecretSpec[] = [
+  { name: "SLACK_USER_TOKEN", env: ["STRATO_SLACK_TOKEN", "AIGUILLEUR_SLACK_TOKEN", "SLACK_MCP_XOXP_TOKEN"] },
+  { name: "SLACK_APP_TOKEN", env: ["SLACK_APP_TOKEN"] },
+];
+
+/** The app-level token, optional: without it the account is polled. */
+const APP_TOKEN_STEP = { kind: "paste", secret: "SLACK_APP_TOKEN", say: key("auth.appToken.paste"), shape: "xapp-", optional: true } as const;
+
+/**
+ * How a Slack account connects (docs/design/providers.md, section 12.1), official flows only: the person's own app from
+ * Strato's manifest (today's flow, the default), a user token they already have, or OAuth with PKCE through one
+ * internal app a team shares. Strato ships no client id: a project-wide app would be a distributed app, whose thread
+ * reads Slack slows to one request a minute.
+ */
+export const SLACK_AUTH: AuthMethod[] = [
+  {
+    id: "user-token",
+    kind: "user-token",
+    label: key("auth.userToken"),
+    tradeoff: key("auth.userToken.tradeoff"),
+    docs: "https://docs.slack.dev/authentication/tokens#user",
+    steps: [
+      { kind: "open", url: SLACK_APP_LINK, say: key("auth.userToken.open") },
+      { kind: "paste", secret: "SLACK_USER_TOKEN", say: key("auth.userToken.paste"), shape: "xoxp-" },
+      APP_TOKEN_STEP,
+      { kind: "verify" },
+    ],
+    stores: TOKEN_STORES,
+  },
+  {
+    id: "paste-token",
+    kind: "user-token",
+    label: key("auth.pasteToken"),
+    tradeoff: key("auth.pasteToken.tradeoff"),
+    docs: "https://docs.slack.dev/authentication/tokens#user",
+    steps: [{ kind: "paste", secret: "SLACK_USER_TOKEN", say: key("auth.userToken.paste"), shape: "xoxp-" }, APP_TOKEN_STEP, { kind: "verify" }],
+    stores: TOKEN_STORES,
+  },
+  {
+    id: "oauth-pkce",
+    kind: "oauth2",
+    label: key("auth.oauth"),
+    tradeoff: key("auth.oauth.tradeoff"),
+    docs: "https://docs.slack.dev/authentication/using-pkce",
+    steps: [
+      {
+        kind: "oauth",
+        authorizeUrl: "https://slack.com/oauth/v2/authorize",
+        tokenUrl: "https://slack.com/api/oauth.v2.access",
+        clientId: "setting",
+        pkce: true,
+        scopes: SLACK_SCOPES.map((x) => x.scope),
+        scopeParam: "user_scope",
+        scopeSeparator: ",",
+        // Slack treats a localhost redirect as a desktop app's when PKCE is on: no client secret
+        redirectHost: "localhost",
+        tokenField: "authed_user.access_token",
+        secret: "SLACK_USER_TOKEN",
+      },
+      { kind: "verify" },
+    ],
+    stores: [{ name: "SLACK_USER_TOKEN" }],
+    // one app shared by several people cannot use Socket Mode: Slack spreads its events across their connections
+    limits: { ingest: { push: false } },
+  },
+];
+
 export const SLACK_DESCRIPTOR: ProviderDescriptor = {
   id: "slack",
   label: key("label"),
@@ -47,23 +123,7 @@ export const SLACK_DESCRIPTOR: ProviderDescriptor = {
     edits: true,
     identity: true,
   },
-  auth: [
-    {
-      id: "user-token",
-      kind: "user-token",
-      label: key("auth.userToken"),
-      docs: "https://docs.slack.dev/authentication/tokens#user",
-      steps: [
-        { kind: "open", url: "https://api.slack.com/apps", say: key("auth.userToken.open") },
-        { kind: "paste", secret: "SLACK_USER_TOKEN", say: key("auth.userToken.paste"), shape: "xoxp-" },
-        { kind: "verify" },
-      ],
-      stores: [
-        { name: "SLACK_USER_TOKEN", env: ["STRATO_SLACK_TOKEN", "AIGUILLEUR_SLACK_TOKEN", "SLACK_MCP_XOXP_TOKEN"] },
-        { name: "SLACK_APP_TOKEN", env: ["SLACK_APP_TOKEN"] },
-      ],
-    },
-  ],
+  auth: SLACK_AUTH,
   settings: [
     { key: "team", type: "string", label: key("setting.team") },
     { key: "workspace", type: "string", label: key("setting.workspace") },
@@ -77,6 +137,7 @@ export const SLACK_DESCRIPTOR: ProviderDescriptor = {
     { key: "appId", type: "string", label: key("setting.appId"), default: "" },
     { key: "appTokenFile", type: "string", label: key("setting.appTokenFile"), default: "" },
     { key: "userTokenFile", type: "string", label: key("setting.userTokenFile"), default: "" },
+    { key: "clientId", type: "string", label: key("setting.clientId"), default: "" },
   ],
   vocabulary: {
     item: key("word.item"),

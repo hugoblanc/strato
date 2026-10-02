@@ -33,6 +33,8 @@ export const USAGE = `strato: routes Slack to Claude Code work sessions, one top
 
   strato doctor                         checks token, state, claude agents
   strato setup --check | --detect | --write <profile.json> [--force] | --live   guided setup (SKILL.md)
+  strato setup --providers | --connect [<tool>] [--account <name>] [--auth <method>] [--client-id <id>]
+                                        the tools Strato can connect; connect an account in your own terminal
   strato watch [interval]               for Monitor: one line per event, by polling
   strato listen [--sessions 5]          same over Socket Mode: messages by WebSocket, topics declared by hook
   strato hook                           called by Claude Code inside a topic session, reads the event on stdin

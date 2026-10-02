@@ -7,15 +7,15 @@
  * Every provider it hands out is a view without `act` and `undo`: the writes are reachable through `actorOf` only,
  * which app/act.ts alone imports, behind the gate (docs/design/providers.md, section 8.2; act.test.ts checks it).
  */
-import { chmodSync, closeSync, fsyncSync, mkdirSync, openSync, readFileSync, renameSync, writeSync } from "node:fs";
-import { basename, dirname, join } from "node:path";
+import { mkdirSync } from "node:fs";
+import { basename, join } from "node:path";
 import { envFileValue } from "../app/slack.ts";
-import { expandHome, F, readJson, writeJson } from "../app/env.ts";
+import { F, readJson, writeJson } from "../app/env.ts";
+import { writeSecret } from "../app/secrets.ts";
 import { formatKey, parseKey } from "../core/keys.ts";
 import { hostMatches, useProviders } from "../core/links.ts";
-import { locale } from "../core/i18n.ts";
+import { locale, t } from "../core/i18n.ts";
 import { type ResolvedAccount, resolveAccounts, type Settings, settings } from "../core/settings.ts";
-import { setEnvLine } from "../core/setup.ts";
 import { apiSupported } from "./api.ts";
 import { BUILTIN_PURE } from "./builtin.ts";
 import { linearProvider } from "./linear/index.ts";
@@ -57,6 +57,20 @@ export function addProvider(p: Provider): void {
 }
 
 const providerById = (id: string): ProviderView | null => BUILTIN[id] ?? addedViews[id] ?? null;
+
+/** A provider by id, built in or added, without its writes; null when unknown. */
+export const providerOf = (id: string): ProviderView | null => providerById(id);
+
+/** Every provider Strato can connect, built in first, without their writes. */
+export const providerViews = (): ProviderView[] => [...Object.values(BUILTIN), ...Object.values(addedViews)];
+
+/**
+ * Why a built-in provider cannot connect an account in this version, or null. Linear is a link and ticket id
+ * recognizer until the linear stage, which removes its entry.
+ */
+export function connectRefusal(id: string): string | null {
+  return id === "linear" ? t("cli.connect.linearLater") : null;
+}
 
 const descriptors = (): Record<string, ProviderDescriptor> => Object.fromEntries([...Object.entries(BUILTIN), ...Object.entries(addedViews)].map(([id, p]) => [id, p.descriptor]));
 
@@ -159,26 +173,6 @@ function secretFiles(entry: AccountEntry): string[] {
   return files.filter(Boolean);
 }
 
-/** `KEY=value` written into a secret file: folder 700, file 600, written then renamed. */
-function writeSecret(file: string, name: string, value: string): void {
-  const path = expandHome(file);
-  mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
-  let current = "";
-  try {
-    current = readFileSync(path, "utf8");
-  } catch {}
-  const tmp = `${path}.${process.pid}.tmp`;
-  const fd = openSync(tmp, "w", 0o600);
-  try {
-    writeSync(fd, setEnvLine(current, name, value));
-    fsyncSync(fd);
-  } finally {
-    closeSync(fd);
-  }
-  chmodSync(tmp, 0o600);
-  renameSync(tmp, path);
-}
-
 /** The hosts an account's API calls may reach: `{settings.baseUrl}` stands for the host of that setting. */
 function apiHostsOf(entry: AccountEntry): string[] {
   return (entry.provider?.descriptor.apiHosts ?? []).flatMap((h) => {
@@ -205,14 +199,18 @@ const masked = (text: string, secrets: string[]) => secrets.reduce((t, s) => (s.
 /**
  * What a provider receives for one account (docs/design/providers.md, section 4.11): never the state folder, other
  * accounts' secrets, the topics, nor a way to start a session. Tests pass a fake `fetchImpl`.
+ * With `candidates`, the context is setup's `verify` step: the secrets are the ones the person just gave and nothing
+ * else, a refreshed one stays in memory, and the store keeps nothing.
  */
-export function accountContext(entry: AccountEntry, opts: { identity?: Identity | null; signal?: AbortSignal; fetchImpl?: typeof fetch; log?: (line: string) => void } = {}): AccountContext {
+export function accountContext(entry: AccountEntry, opts: { identity?: Identity | null; signal?: AbortSignal; fetchImpl?: typeof fetch; log?: (line: string) => void; candidates?: Record<string, string> } = {}): AccountContext {
   const specs = secretSpecs(entry);
   const declared = (name: string) => specs.find((x) => x.name === name);
-  const known: string[] = [];
+  const known: string[] = Object.values(opts.candidates ?? {});
+  const candidates = opts.candidates;
   const secret = (name: string): string | null => {
     const spec = declared(name);
     if (!spec) return null;
+    if (candidates) return candidates[name] || null;
     const env = entry.account.id === "default" ? (spec.env ?? []) : [];
     const value = secretFiles(entry).map((file) => envFileValue(file, name)).find(Boolean) ?? env.map((v) => process.env[v]).find(Boolean) ?? null;
     if (value) known.push(value);
@@ -238,7 +236,8 @@ export function accountContext(entry: AccountEntry, opts: { identity?: Identity 
     secret,
     setSecret(name, value) {
       if (!declared(name)) throw new Error(`${label}: ${name} is not a secret of this account`);
-      writeSecret(entry.secretsFile, name, value);
+      if (candidates) candidates[name] = value;
+      else writeSecret(entry.secretsFile, name, value);
       known.push(value);
     },
     fetch: limitedFetch,
@@ -247,13 +246,15 @@ export function accountContext(entry: AccountEntry, opts: { identity?: Identity 
       (opts.log ?? ((line: string) => process.stderr.write(`${line}\n`)))(`[${label}] ${level}: ${masked(message, known)}`);
     },
     store: {
-      read: <T>(name: string, fallback: T) => readJson<T>(storeFile(entry.account, name), fallback),
+      read: <T>(name: string, fallback: T) => (candidates ? fallback : readJson<T>(storeFile(entry.account, name), fallback)),
       write(name, value) {
+        if (candidates) return;
         mkdirSync(accountDir(entry.account), { recursive: true });
         writeJson(storeFile(entry.account, name), value);
       },
     },
     signal,
     locale: locale(),
+    ...(candidates ? { verifying: true } : {}),
   };
 }

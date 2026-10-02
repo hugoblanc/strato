@@ -258,6 +258,8 @@ export interface AuthMethod {
   id: string;
   kind: AuthKind;
   label: Text;
+  /** Its trade-off in one sentence, shown next to the label when setup offers the methods. */
+  tradeoff?: Text;
   /** The official documentation of this flow, printed by setup. */
   docs: string;
   steps: AuthStep[];
@@ -284,12 +286,36 @@ export interface CapabilityLimits {
 export type AuthStep =
   /** Open a documented page (create an app from a manifest, create an API key). */
   | { kind: "open"; url: string; say: Text }
-  /** Read one secret without echo, in the person's own terminal (stdin is a TTY) or on the board's Connect page; never as an argument, never in a chat. */
-  | { kind: "paste"; secret: string; say: Text; shape?: string }
-  /** OAuth 2.0 authorization code on the loopback redirect of section 11.2. `pkce` wherever the service supports it (S256). A client secret only where the service requires one, pasted once and kept in the secret file under `clientSecret`. */
-  | { kind: "oauth"; authorizeUrl: string; tokenUrl: string; clientId: "setting" | string; clientSecret?: string; pkce: boolean; scopes: string[] }
+  /** Read one secret without echo, in the person's own terminal (stdin is a TTY) or on the board's Connect page; never as an argument, never in a chat. An `optional` one may be skipped. */
+  | { kind: "paste"; secret: string; say: Text; shape?: string; optional?: boolean }
+  /** OAuth 2.0 authorization code on the loopback redirect of section 11.2. */
+  | OAuthStep
   /** Check the candidate secrets with a throwaway `connect` (section 13.2 for exec providers); nothing is stored if it fails. */
   | { kind: "verify" };
+
+export interface OAuthStep {
+  kind: "oauth";
+  authorizeUrl: string;
+  tokenUrl: string;
+  /** "setting": the account's `clientId` setting (or `--client-id`). */
+  clientId: "setting" | string;
+  /** The secret holding a client secret, only where the service requires one even with PKCE: pasted once, kept in the secret file. */
+  clientSecret?: string;
+  /** S256, wherever the service supports it. */
+  pkce: boolean;
+  scopes: string[];
+  /** "scope" by default; Slack asks user scopes as "user_scope". */
+  scopeParam?: string;
+  /** A space by default; Slack and Linear take commas. */
+  scopeSeparator?: string;
+  /** "127.0.0.1" by default; Slack treats a "localhost" redirect as a desktop app's when PKCE is on. */
+  redirectHost?: "127.0.0.1" | "localhost";
+  /** Dotted path of the access token in the token response: "access_token" by default, "authed_user.access_token" for Slack. */
+  tokenField?: string;
+  /** The secrets the access token, and a refresh token when the provider refreshes it, are stored as. */
+  secret: string;
+  refreshSecret?: string;
+}
 
 export interface SecretSpec {
   /** Name in the secret file: `SLACK_USER_TOKEN`, `LINEAR_API_KEY`. */
@@ -593,6 +619,8 @@ export interface AccountContext {
   store: { read<T>(name: string, fallback: T): T; write(name: string, value: unknown): void };
   signal: AbortSignal;
   locale: "en" | "fr";
+  /** Setup's `verify` step: `secret` returns the candidates the person just gave, not stored yet, and `store` keeps nothing. */
+  verifying?: boolean;
 }
 ```
 
@@ -1288,18 +1316,18 @@ The current code, behind the interface; nothing changes for a person using it to
 
 | Auth method | Kind | What the person does | Stores |
 | --- | --- | --- | --- |
-| `user-token` (default) | `user-token` | Creates the app from `examples/slack-app-manifest.yaml`, installs it, pastes the User OAuth Token in `setup --token` | `SLACK_USER_TOKEN` |
-| `oauth-pkce` | `oauth2`, `pkce: true`, no client secret | Creates the same app with PKCE and Strato's callback URL, runs `setup --connect slack --auth oauth-pkce` or uses the Connect page, approves in the browser | `SLACK_USER_TOKEN` |
-| App-level token, add-on of either | | Generates the `xapp-` token in the app's Basic Information | `SLACK_APP_TOKEN` |
+| `user-token` (default) | `user-token` | Creates the app from `examples/slack-app-manifest.yaml`, installs it, pastes the User OAuth Token (`setup --token`, or `setup --connect slack`), and optionally the app-level token | `SLACK_USER_TOKEN`, `SLACK_APP_TOKEN` |
+| `paste-token` | `user-token` | Pastes a user token of an app they already use, and optionally its app-level token | `SLACK_USER_TOKEN`, `SLACK_APP_TOKEN` |
+| `oauth-pkce` | `oauth2`, `pkce: true`, no client secret, `limits.ingest.push: false` | Someone creates one internal app for the team from `examples/slack-team-app-manifest.yaml` (`setup --slack-app --team`: PKCE on, redirect `http://localhost:4353/oauth/callback`, no Socket Mode) and shares its client id; each person runs `setup --connect slack --auth oauth-pkce --client-id <id>` and approves in the browser | `SLACK_USER_TOKEN` |
 
-PKCE spares the copy and paste of a token; Slack supports it for desktop apps on a loopback redirect, with user scopes only, which is all Strato asks for.
+PKCE spares the copy and paste of a token; Slack supports it for desktop apps on a localhost redirect, with user scopes only, which is all Strato asks for: authorization at `https://slack.com/oauth/v2/authorize` with `user_scope`, exchange at `oauth.v2.access` without a client secret, the user token under `authed_user.access_token`.
 
 Which app, and why:
 
 | App model | Rate limits | Socket Mode | App slots | Verdict |
 | --- | --- | --- | --- | --- |
 | Per-person app (today) | full | yes | one per person; a free workspace allows at most 10 apps | the default |
-| One internal app for a team, each person connecting with PKCE | full, the app is not distributed (to confirm in the setup stage) | not for two people: Slack spreads the payloads of one app across its open connections, so each listener would miss the others' events | one | the fallback on a crowded free workspace: polling only |
+| One internal app for a team, each person connecting with PKCE | full: internal customer-built apps are exempt from the 2025 change, but Slack counts calls per app and per workspace, so the team shares one budget | not for two people: Slack spreads the payloads of one app across its open connections, so each listener would miss the others' events | one | the fallback on a crowded free workspace: polling only |
 | A distributed app published by the project | `conversations.history` and `conversations.replies` at 1 request per minute and 15 objects unless Marketplace-approved (`search.messages` is not affected) | yes | one | refused: context reads and the catch-up would starve |
 
 ### 12.2 Linear
@@ -1803,6 +1831,28 @@ Each stage is one or more commits that leave `bun run check` green and the guard
   `setup --connect` without a TTY refuses paste steps and points to the page; `--token` and `--app-token` print what they print today; `--detect` keeps its current fields and adds the providers' ones.
 - **Compatibility.** Every `setup` flag kept; the Slack token search order unchanged; `config.json` written only through `writeProfile`.
 - **Done when.** Check green; a fresh rig goes from no profile to a connected fake provider account, once with `setup --connect` and a TTY-like stdin, once through the Connect page.
+- **As built.** Where the stage departs from the text above, and why:
+  - The board's Connect page is not built (`server/connect.ts`, trust from the page, the loosening confirmations): this stage follows the narrower orchestrator task (flags, auth methods, doctor lines, interview).
+    `setup --connect` therefore refuses any stdin that is not a TTY and names the command to run in the person's own terminal, where the design pointed to the page; `cli.setup.provider.*` messages that name the Connect page keep their wording until it exists.
+  - Commands: `setup --providers` lists the tools, their accounts and their methods with a one-sentence trade-off (`AuthMethod.tradeoff`, new).
+    `setup --connect [<tool>] [--account <name>] [--auth <method>] [--client-id <id>] [--print]`: without a tool or a method it offers them, numbered, the default first; `--client-id` fills the account's `clientId` setting (`slack.clientId` for the main workspace, new), `--print` shows links without opening them.
+    `setup --slack-app --team` opens the team app's manifest (`examples/slack-team-app-manifest.yaml`, new, linked from SETUP.md with a test).
+  - Slack has three methods: `user-token` (the manifest flow, today's), `paste-token` (a user token the person already has) and `oauth-pkce`; the first two take an optional app-level token (`optional` on paste steps, new), checked with `apps.connections.open` (`appTokenRefusal` in `app/slack.ts`, also used by `setup --app-token`).
+    `oauth-pkce` limits push: the team app has no Socket Mode.
+  - The OAuth step gained `scopeParam`, `scopeSeparator`, `redirectHost`, `tokenField`, `secret` and `refreshSecret`, because Slack's flow differs from the plain one in each (section 4.3): the callback is `http://<redirectHost>:<ui.oauthPort>/oauth/callback`, `localhost` for Slack (listened on 127.0.0.1 and ::1), `127.0.0.1` by default.
+    The pure half is `core/oauth.ts`, the listener and the exchange `app/oauth.ts`: one answer only (a wrong `state` ends the flow), five minutes, `ui.oauthPort` (0 means `ui.port` + 10) refused when it is the board's port, endpoints https except a loopback test server.
+    A Slack token returned with an expiry and no refresh secret is stored with a warning, since no provider refreshes tokens yet.
+  - Verify is a throwaway `connect` on an account context whose secrets are the candidates (`accountContext(…, { candidates })`, `AccountContext.verifying`, new): nothing is stored before Slack accepts them, and the store keeps nothing.
+    The Slack provider's `connect` reads the candidate token on the default account too while verifying, and refuses a token of the wrong kind; its `setup.detect` gives `team`, `workspace` and `me` from `auth.test`, which `setup --connect` writes with the auth method (`core/connect.ts`, `connectPatch`).
+    The main workspace keeps its place: the `slack` section, its token file named as `setup --token` names it; a named account goes under `providers.slack.accounts.<name>` with its secrets in `~/.config/strato/slack-<name>.env`.
+  - `app/secrets.ts` holds the atomic 600 secret writer (from the registry), the masking and the stdin reader shared by every prompt of one command; `app/profile.ts` holds `writeProfile`, shared by every setup command.
+  - `doctor` and `setup --check` print one line per account beyond the main Slack workspace, links-only Linear excluded, so a Slack-only profile prints exactly what it printed; a down account names the command that connects it again.
+    `doctor`'s exit code 78 still depends on the main Slack workspace only: the listener cannot run without it yet, so "no source account" is not checked in this stage.
+    `--detect` adds the fields of every such account under `providers.<tool>.accounts.<name>.<field>`.
+  - Linear stays links only: `setup --connect linear` and its doctor line say so (`connectRefusal` in the registry, which the linear stage removes).
+  - The interview in SKILL.md starts with "0. Your tools" and sets up only the tools named; block f became "Your other tools".
+    The question of the person's role (block "a2") comes with the roles stage.
+  - `act.test.ts` lets Slack's descriptor name the OAuth token endpoint, its only `slack.com/api` URL, which is declared as data and called by `app/oauth.ts`; every other rule of the one act path is unchanged.
 
 ### linear
 
@@ -1855,7 +1905,8 @@ Each stage is one or more commits that leave `bun run check` green and the guard
    Hiding the token files from sessions (`Read` deny rules on `~/.config/strato/**`) narrows it; it does not close it.
 5. **Resumed sessions.** Whether `claude --bg --resume` keeps the settings a session was started with decides whether `route` must pass them again; the act stage checks it before relying on the allowlist and the caller variable.
 6. **Slack app model.** Per-person apps hit the 10-app cap of free workspaces in teams larger than that; the shared internal app gives up Socket Mode.
-   The rate limits of an internal app shared by several users, and Slack's PKCE details (accepted loopback redirects, token rotation), must be confirmed in the setup stage.
+   Checked in the setup stage against Slack's documentation: internal apps keep their limits, and limits are counted per app and per workspace, so people sharing an app share its budget; a localhost redirect is a desktop redirect when the app turns PKCE on, so no client secret is sent; Slack forces rotating tokens only for custom URI schemes, and `setup --connect` warns when a token comes back with an expiry it cannot refresh.
+   Still open: how many people one shared app serves before `search.messages` polls meet `ratelimited`; only a real team will tell.
 7. **Linear identifiers move.** An issue moved to another team changes identifier; the old one redirects.
    Keys stay `linear:<old>` and the new identifier is attached, but a search by the new link must find the topic: the provider resolves both through the API.
 8. **Rollback with new keys.** After `update --rollback`, an older binary meets keys of providers it does not know.

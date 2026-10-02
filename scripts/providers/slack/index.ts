@@ -5,13 +5,14 @@
  * names of users.json; a named account reads its tokens from its own secret file and goes through the fetch its
  * account context limits to Slack's API host. Writes (`act`, `undo`) join it in the act stage.
  */
-import { appToken, connexionSocket, defaultSlack, NO_TOKEN, probeSlack, REPLIES_MAX, SlackClient, SlackError } from "../../app/slack.ts";
+import { appToken, appTokenRefusal, connexionSocket, defaultSlack, NO_TOKEN, probeSlack, REPLIES_MAX, SlackClient, SlackError } from "../../app/slack.ts";
 import { bestText, channelLabel, conversationKind, nextSyncCursor, permalinkFor, slackItem, type SlackMatch } from "../../chat/slack-model.ts";
 import { linkOfNative } from "../../core/links.ts";
 import { settings } from "../../core/settings.ts";
+import { slackWorkspaceFromUrl, tokenKindProblem } from "../../core/setup.ts";
 import { truncate } from "../../core/text.ts";
 import { defineProvider } from "../api.ts";
-import type { AccountContext, ContextResult, Identity, IngestCursor, Item, PollResult, ProviderError } from "../sdk.ts";
+import type { AccountContext, ContextResult, Detected, Identity, IngestCursor, Item, PollResult, ProviderError } from "../sdk.ts";
 import { SLACK_DESCRIPTOR, slackDeepLink, slackParseTarget, slackRender, slackThreadInfo } from "./model.ts";
 
 /** A Slack failure as a provider error: Slack's own code, fatal when the token must be set up again. */
@@ -36,6 +37,12 @@ const named = new Map<string, SlackClient>();
  * setup is picked up without a restart; its people's names are kept in its own folder.
  */
 export function clientOf(ctx: AccountContext): SlackClient {
+  if (ctx.verifying) {
+    // setup's verify step: the candidate token, on a client that keeps nothing
+    const c = new SlackClient(() => ctx.fetch, new Map(), () => {});
+    c.token = ctx.secret("SLACK_USER_TOKEN") ?? "";
+    return c;
+  }
   if (ctx.account.id === "default") return defaultSlack;
   let c = named.get(ctx.account.id);
   if (!c) {
@@ -52,6 +59,23 @@ const cfgOf = (ctx: AccountContext) => ({ me: ctx.identity?.me ?? "", subteams: 
 
 const fail = (code: string, message: string, fatal = true): ProviderError => ({ code, message, retryable: !fatal, fatal });
 
+/**
+ * Setup's check of a candidate app-level token: Slack opens a Socket Mode connection URL for it (nothing is connected).
+ * No token given is fine: the account is then polled.
+ */
+async function checkAppToken(ctx: AccountContext): Promise<void> {
+  const xapp = ctx.secret("SLACK_APP_TOKEN");
+  if (!xapp) return;
+  if (!xapp.startsWith("xapp-")) throw fail("wrong_token_kind", "an App-Level Token starts with xapp- (Basic Information > App-Level Tokens, scope connections:write)");
+  let refusal: string | null;
+  try {
+    refusal = await appTokenRefusal(xapp, ctx.fetch);
+  } catch (e) {
+    throw fail("network", `Slack unreachable: ${(e as Error).message}`, false);
+  }
+  if (refusal) throw fail(refusal, `Slack refuses the app-level token: ${refusal}${refusal === "missing_scope" ? " (it needs connections:write)" : ""}`);
+}
+
 export const slackProvider = defineProvider({
   descriptor: SLACK_DESCRIPTOR,
 
@@ -67,7 +91,7 @@ export const slackProvider = defineProvider({
     let me: string;
     let tenant: string | undefined;
     let url = "";
-    if (ctx.account.id === "default") {
+    if (ctx.account.id === "default" && !ctx.verifying) {
       const cfg = settings().slack;
       const p = await probeSlack(cfg);
       if (!p.found) throw p.transient ? fail(p.transient, `no answer (${p.transient})`, false) : fail("invalid_auth", NO_TOKEN(cfg));
@@ -76,6 +100,8 @@ export const slackProvider = defineProvider({
       url = p.found.url ?? "";
     } else if (!client.token) {
       throw fail("invalid_auth", `Slack account "${ctx.account.id}": no SLACK_USER_TOKEN in its secret file`);
+    } else if (ctx.verifying && tokenKindProblem(client.token)) {
+      throw fail("wrong_token_kind", tokenKindProblem(client.token) as string);
     } else {
       let r: Record<string, unknown>;
       try {
@@ -88,6 +114,7 @@ export const slackProvider = defineProvider({
       tenant = String(r.team_id ?? "") || undefined;
       url = String(r.url ?? "").replace(/\/$/, "");
       if (typeof s.team === "string" && s.team && s.team !== team) throw fail("wrong_workspace", `Slack account "${ctx.account.id}": its token belongs to the workspace "${team}", not "${s.team}"`);
+      if (ctx.verifying) await checkAppToken(ctx);
     }
     if (url) client.base = url;
     const groups = Array.isArray(s.subteams) ? s.subteams.filter((x): x is string => typeof x === "string") : [];
@@ -221,6 +248,24 @@ export const slackProvider = defineProvider({
     } catch (e) {
       throw slackProviderError(e);
     }
+  },
+
+  setup: {
+    /** Who and where, read from the account's token: what `setup --connect` writes into the profile. */
+    async detect(ctx: AccountContext): Promise<Record<string, Detected>> {
+      let r: Record<string, unknown>;
+      try {
+        r = await clientOf(ctx).call("auth.test");
+      } catch (e) {
+        throw slackProviderError(e);
+      }
+      const workspace = typeof r.url === "string" ? slackWorkspaceFromUrl(r.url) : null;
+      return {
+        team: { value: String(r.team ?? ""), source: "auth.test", confidence: "high" },
+        ...(workspace ? { workspace: { value: workspace, source: "auth.test url", confidence: "high" as const } } : {}),
+        me: { value: String(r.user_id ?? ""), source: "auth.test", confidence: "high" },
+      };
+    },
   },
 
   parseTarget: (text, topic) => slackParseTarget(text, topic),

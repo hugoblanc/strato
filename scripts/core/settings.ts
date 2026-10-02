@@ -36,6 +36,11 @@ export interface SlackSettings {
   userTokenFile: string;
   /** Interval of `watch` (fallback polling), in seconds. */
   pollInterval: number;
+  /**
+   * Client id of the Slack app the person signs in through with OAuth (`setup --connect slack --auth oauth-pkce`):
+   * usually one internal app a team shares. Not a secret: PKCE needs no client secret.
+   */
+  clientId: string;
 }
 
 /** The issue tracker. Only Linear is wired: `kind` keeps room for others. */
@@ -134,6 +139,11 @@ export interface Settings {
     slackApp: boolean;
     /** Language of what the person served reads (board, and the master's messages to them): "en" or "fr". */
     locale: "en" | "fr";
+    /**
+     * Fixed port of the OAuth callback on the loopback (`setup --connect … --auth oauth-pkce`), the one written in the
+     * OAuth application's redirect URL. 0: `port` + 10. Never the board's own port.
+     */
+    oauthPort: number;
   };
 }
 
@@ -154,6 +164,7 @@ export const DEFAULT_SETTINGS: Settings = {
     appTokenFile: "",
     userTokenFile: "",
     pollInterval: 60,
+    clientId: "",
   },
   tracker: null,
   forge: null,
@@ -162,8 +173,11 @@ export const DEFAULT_SETTINGS: Settings = {
   refresh: { auto: true, staleDays: 3, graceMinutes: 20, everyMinutes: 30, maxParallel: 3 },
   gc: { everyMinutes: 60, idleHours: 12 },
   policy: {},
-  ui: { iterm: false, port: 4343, slackApp: true, locale: "en" },
+  ui: { iterm: false, port: 4343, slackApp: true, locale: "en", oauthPort: 0 },
 };
+
+/** The OAuth callback port in force: `ui.oauthPort`, else the board's port + 10 (4353 by default). */
+export const oauthPortOf = (s: Settings): number => (s.ui.oauthPort > 0 ? s.ui.oauthPort : s.ui.port + 10);
 
 /**
  * What a new installation's config.json starts from: the defaults, but in shadow mode. The resolved default stays

@@ -1,0 +1,49 @@
+# One Slack app for a whole team, each person signing in through it with OAuth and PKCE:
+# `strato setup --slack-app --team` opens the creation flow with this manifest filled in. Editing it? SETUP.md embeds
+# its link: a test says when it is stale.
+#
+# Whoever creates it installs it once, then shares its Client ID (Basic Information > App Credentials), which is not a
+# secret. Each person then runs `strato setup --connect slack --auth oauth-pkce --client-id <that id>` and approves in
+# their browser: Strato gets a user token (xoxp-) of their own, and nobody pastes a token.
+#
+# The app stays internal to your workspace: do not turn on public distribution. An internal app keeps Slack's full
+# rate limits; a distributed app that is not in the Slack Marketplace reads threads at one request a minute.
+# Socket Mode is off: Slack spreads the events of one app across its open connections, so with several people each
+# listener would miss the others' events. Everyone polls instead (`watch`, every minute).
+#
+# The redirect URL is Strato's OAuth callback on the default port (ui.oauthPort, the board's port + 10). With another
+# port, change it here and in the app's OAuth & Permissions page. Slack treats a localhost redirect as a desktop app's
+# when PKCE is on, which is why no client secret is ever needed.
+display_information:
+  name: Strato
+  description: Routes your Slack to Claude Code work sessions on your machine. Posts only on your click.
+  background_color: "#1b1406"
+oauth_config:
+  redirect_urls:
+    - http://localhost:4353/oauth/callback
+  pkce_enabled: true
+  scopes:
+    user:
+      # find and catch up on messages (watch, backlog, setup --detect)
+      - search:read
+      # read threads and channel names: public, private, DMs, group DMs
+      - channels:history
+      - groups:history
+      - im:history
+      - mpim:history
+      - channels:read
+      - groups:read
+      - im:read
+      - mpim:read
+      # people's names, and your Slack groups (setup --detect)
+      - users:read
+      - usergroups:read
+      # the board's Send (a draft, as you) and its check mark on a settled thread
+      - chat:write
+      - reactions:write
+settings:
+  interactivity:
+    is_enabled: false
+  org_deploy_enabled: false
+  socket_mode_enabled: false
+  token_rotation_enabled: false

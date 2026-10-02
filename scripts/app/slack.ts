@@ -386,6 +386,16 @@ export const nameOf = (uid: string): Promise<string> => defaultSlack.nameOf(uid)
 export const readable = (raw: string, keepLines = false): Promise<string> => defaultSlack.readable(raw, keepLines);
 
 /** The Socket Mode app token (xapp-): the environment first, then the profile's `slack.appTokenFile`. */
+/**
+ * Whether Slack accepts an app-level token: it hands out a Socket Mode connection URL for it, and nothing is connected.
+ * Null when accepted, else Slack's error code; a network failure throws.
+ */
+export async function appTokenRefusal(xapp: string, fetchImpl: typeof fetch = fetch): Promise<string | null> {
+  const res = await fetchImpl("https://slack.com/api/apps.connections.open", { method: "POST", headers: { Authorization: `Bearer ${xapp}` }, signal: AbortSignal.timeout(10_000) });
+  const body = (await res.json()) as { ok?: boolean; error?: string };
+  return body.ok ? null : (body.error ?? "unknown");
+}
+
 export function appToken(): string | null {
   if (process.env.SLACK_APP_TOKEN) return process.env.SLACK_APP_TOKEN;
   const file = settings().slack.appTokenFile;
