@@ -66,7 +66,7 @@ export const USAGE = `strato: routes Slack to Claude Code work sessions, one top
   strato policy-default <template>      prints a default policy template, to copy into <state>/policy/
   strato provider list | types | guide  external providers: where each stands, the SDK types and the guide for authors
   strato provider new <name> [--exec python] [--dir <folder>]   a provider that works as is, with fixtures and a README
-  strato provider test <name | path> [--fixtures <dir>] [--live [--account <name>]]   the offline conformance harness
+  strato provider test <name | path> [--fixtures <dir>] [--trace] [--live [--account <name>]]   the offline conformance harness
   strato provider trust <name>          trusts a configured provider's folder, in your own terminal
 
 <topic> = letter (A), any key of the topic (channel:ts, linear:ABC-123), short session id,

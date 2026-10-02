@@ -12,7 +12,7 @@ import readme from "./readme.md.txt" with { type: "text" };
 export const EXEC_LANGUAGES = ["python"] as const;
 export type ExecLanguage = (typeof EXEC_LANGUAGES)[number];
 
-/** `tickets` -> `Tickets`, `my-crm` -> `My Crm`. */
+/** `tickets` -> `Tickets`, `my-crm` -> `My Crm`: a first guess, which the templates mark as a TODO. */
 export const labelOf = (id: string) => id.split("-").map((w) => w.charAt(0).toUpperCase() + w.slice(1)).join(" ");
 /** The secret a scaffold stores: `tickets` -> `TICKETS_API_KEY`. */
 export const secretOf = (id: string) => `${id.toUpperCase().replace(/-/g, "_")}_API_KEY`;
@@ -23,12 +23,14 @@ const fill = (template: string, vars: Record<string, string>) => template.replac
  * The files of a new provider, by relative path. `sdk` is the SDK types file; `folder` is where they go, and `home`
  * whether it is the provider's own folder in the state, where config.json can name the entry file by a relative path.
  */
-export function scaffold(id: string, opts: { exec?: ExecLanguage; sdk: string; folder: string; home: boolean; cli: string }): { files: Record<string, string>; source: Record<string, unknown> } {
+export function scaffold(id: string, opts: { exec?: ExecLanguage; sdk: string; folder: string; home: boolean }): { files: Record<string, string>; source: Record<string, unknown> } {
   const entry = opts.exec ? "provider.py" : "provider.ts";
-  const where = opts.home ? entry : `${opts.folder}/${entry}`;
-  const source = opts.exec ? { exec: ["python3", where] } : { module: where };
-  const snippet = JSON.stringify({ providers: { [id]: { source } } }, null, 2).replace(/\n/g, "\n   ");
-  const vars = { id, label: labelOf(id), host: `${id}.example`, SECRET: secretOf(id), entry, snippet, test: `${opts.cli} provider test ${opts.folder}` };
+  const sourceOf = (where: string) => (opts.exec ? { exec: ["python3", where] } : { module: where });
+  // the terminal gets the real path; the README, which may be committed and shared, never an absolute local path
+  const source = sourceOf(opts.home ? entry : `${opts.folder}/${entry}`);
+  const shared = sourceOf(opts.home ? entry : `<path to this folder>/${entry}`);
+  const snippet = JSON.stringify({ providers: { [id]: { source: shared } } }, null, 2).replace(/\n/g, "\n   ");
+  const vars = { id, label: labelOf(id), host: `${id}.example`, SECRET: secretOf(id), entry, snippet };
   return {
     files: {
       [entry]: fill(opts.exec ? exec : module, vars),

@@ -8,7 +8,7 @@
  * provider's fetch is the fake; the secrets are the fixtures' fake ones. Writes go only through the gate (app/act.ts):
  * dry runs for every action kind, then real acts against the fake when every request went through it.
  */
-import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { actOnTask, dryRunTask, undoTask } from "../../app/act.ts";
@@ -20,18 +20,19 @@ import { contextProblem } from "../../core/context.ts";
 import { t } from "../../core/i18n.ts";
 import { canonicalKey, formatKey, parseKey } from "../../core/keys.ts";
 import { linkOfNative, parseLink, pureOf } from "../../core/links.ts";
+import { type ScopeRule, typedScope } from "../../core/targets.ts";
 import { resolveSettings, useSettings } from "../../core/settings.ts";
 import { STRATO_VERSION } from "../../core/build-info.ts";
-import { classifyItem, triageRules } from "../../core/triage.ts";
+import { classifyItem, type Kind, triageRules } from "../../core/triage.ts";
 import { findTask } from "../../core/tasks.ts";
-import { oneLine, truncate } from "../../core/text.ts";
+import { maskSecrets, oneLine, truncate } from "../../core/text.ts";
 import { effectiveCapabilities, providerError } from "../api.ts";
 import { descriptorProblems } from "../check.ts";
 import { describeExec, type ExecProvider, execProvider } from "../host/exec.ts";
 import { importModule, LoadError } from "../host/module.ts";
 import { accountContext, accountOf, addProvider, type AccountEntry, useBaseFetch } from "../registry.ts";
 import type { ActionKind, AccountContext, Item, PollResult, Provider, ProviderDescriptor } from "../sdk.ts";
-import { FakeTool, type Fixture, type Recorded } from "./fake.ts";
+import { type Exchange, FakeTool, type Fixture, type Recorded } from "./fake.ts";
 
 /** What `provider test` hands its harness process, in `<state>/harness.json`. */
 export interface HarnessSpec {
@@ -44,11 +45,30 @@ export interface HarnessSpec {
   live: { settings: Record<string, unknown>; secretsFile: string; auth: string } | null;
   /** The person's language, for the lines. */
   locale: "en" | "fr";
+  /** `--trace`: every call to the provider and its answer, every request it made, and an executable's log. */
+  trace?: boolean;
 }
 
-export type Status = "ok" | "fail" | "skip" | "offline";
+export type Status = "ok" | "fail" | "skip" | "offline" | "trace";
 
-const SAMPLE_TEXT = "Strato conformance check";
+/** The text the act checks write when a fixture's `act.text` gives none. */
+export const SAMPLE_TEXT = "Strato conformance check";
+/** The poll the harness asks for first, and again from each cursor; the capped one asks for one item. */
+export const HARNESS_POLL = { since: 0, maxItems: 50 } as const;
+/** The longest cursor value a provider may return. */
+export const CURSOR_MAX = 64 * 1024;
+/** The action kinds a task can carry, so the harness reaches them; any other is never called by Strato. */
+const TASK_KINDS: ActionKind[] = ["post", "reply", "comment", "setStatus", "assign"];
+
+/**
+ * The English names a fixture may give triage kinds, next to the stored ones (core/triage.ts): `followup` and `mine`
+ * for a thread of an open topic (by someone else, by the person), `watched` for a watched conversation, `thread` for
+ * one the person takes part in or follows, `others` for an item that targets someone else.
+ */
+const KIND_ALIASES: Record<string, Kind> = { followup: "suite", mine: "moi", watched: "canal", thread: "fil", others: "tiers" };
+const KIND_WORDS: Record<Kind, string> = { suite: "followup", moi: "mine", canal: "watched", fil: "thread", tiers: "others", dm: "dm", mention: "mention", bot: "bot" };
+const kindOf = (k: string | null): string | null => (k === null ? null : (KIND_ALIASES[k] ?? k));
+const kindWord = (k: Kind | null): string => (k === null ? "null" : KIND_WORDS[k] === k ? k : `${KIND_WORDS[k]} (${k})`);
 /** Characters a provider string never carries: control characters other than a tab or a line break in a text. */
 // biome-ignore lint/suspicious/noControlCharactersInRegex: control characters are what this finds
 const CONTROL = /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/;
@@ -62,6 +82,7 @@ class Report {
   line(status: Status, check: string, detail = ""): void {
     if (status === "fail") this.failed = true;
     const word = t(`cli.provider.test.${status}` as Parameters<typeof t>[0]);
+    if (status === "trace") return this.say(`${word.padEnd(7)} ${oneLine(truncate(check, 600))}`);
     // a provider's own words (its errors, its dry descriptions) stay on the line they belong to
     this.say(`${word.padEnd(7)} ${check}${detail ? `: ${oneLine(truncate(detail, 500))}` : ""}`);
   }
@@ -115,7 +136,9 @@ export async function runHarness(spec: HarnessSpec, say: (line: string) => void)
   const report = new Report(say);
   const loaded = await load(spec, report);
   if (!loaded) return false;
-  const { provider, exec } = loaded;
+  const { exec } = loaded;
+  const secrets: string[] = [];
+  const provider = spec.trace ? traced(loaded.provider, report, secrets) : loaded.provider;
   const d = provider.descriptor;
   report.line("ok", "descriptor");
   try {
@@ -126,10 +149,52 @@ export async function runHarness(spec: HarnessSpec, say: (line: string) => void)
   }
   for (const { name, fixture } of spec.live ? [{ name: "", fixture: {} as Fixture }] : fixtures(spec.fixturesDir)) {
     if (name) say(t("cli.provider.test.fixture", { name }));
+    secrets.splice(0, secrets.length, ...Object.values(fixture.secrets ?? {}));
     await runFixture(spec, provider, exec, d, fixture, report);
+    // each fixture file starts a new process, initialized with its own settings and secrets
+    await exec?.stopAll();
+    if (spec.trace && exec) traceLog(report);
   }
-  await exec?.stopAll();
   return !report.failed;
+}
+
+/** The provider with every call and its answer traced, for `--trace`; secrets masked. Its pure parts stay as they are. */
+function traced(p: Provider, report: Report, secrets: string[]): Provider {
+  const show = (v: unknown) => maskSecrets(JSON.stringify(v) ?? "undefined", secrets);
+  const wrap = <F extends (...a: never[]) => Promise<unknown>>(name: string, f: F | undefined): F | undefined =>
+    f &&
+    ((async (...args: Parameters<F>) => {
+      report.line("trace", `→ ${name} ${show(args.slice(1))}`);
+      try {
+        const r = await f(...args);
+        report.line("trace", `← ${name} ${show(r)}`);
+        return r;
+      } catch (e) {
+        report.line("trace", `← ${name} ${t("cli.provider.test.traceError")} ${show(providerError(e))}`);
+        throw e;
+      }
+    }) as F);
+  const out: Provider = { ...p };
+  for (const m of ["connect", "poll", "replies", "complete", "participated", "context", "act", "undo"] as const) {
+    const f = wrap(m, p[m] as ((...a: never[]) => Promise<unknown>) | undefined);
+    if (f) (out as unknown as Record<string, unknown>)[m] = f;
+  }
+  if (p.subscribe) out.subscribe = (ctx, onItems, events) => {
+    report.line("trace", "→ subscribe");
+    return p.subscribe!(ctx, (items, cursor) => {
+      report.line("trace", `← items ${show({ items, cursor })}`);
+      onItems(items, cursor);
+    }, events);
+  };
+  return out;
+}
+
+/** An executable's log of the fixture just run (its stderr, its log notifications), for `--trace`; then cleared. */
+function traceLog(report: Report): void {
+  const file = join(F.providers, "provider.log");
+  if (!existsSync(file)) return;
+  for (const l of readFileSync(file, "utf8").split("\n").filter(Boolean)) report.line("trace", `log ${l}`);
+  rmSync(file, { force: true });
 }
 
 /** One fixture: its account, then the checks in order. */
@@ -150,6 +215,10 @@ async function runFixture(spec: HarnessSpec, provider: Provider, exec: ExecProvi
   const entry = accountOf(d.id, "default") as AccountEntry;
   // every account context of this process answers from the fake, the gate's included: nothing reaches a network
   if (!spec.live) useBaseFetch(fake.fetch);
+  if (spec.trace) {
+    const masked = (v: string) => maskSecrets(v, Object.values(fx.secrets ?? {}));
+    fake.onRequest = (r) => report.line("trace", `http ${r.method} ${masked(r.url)}${r.body ? ` ${masked(r.body)}` : ""}`);
+  }
   const ctx = (o: { signal?: AbortSignal } = {}): AccountContext => accountContext(entry, { ...o, log: () => {} });
   const caps = effectiveCapabilities(d, auth);
   const live = !!spec.live;
@@ -184,19 +253,19 @@ async function runFixture(spec: HarnessSpec, provider: Provider, exec: ExecProvi
     mark = fake.since();
     const poll = provider.poll.bind(provider);
     try {
-      const first = await poll(ctx(), null, { since: 0, maxItems: 50 });
+      const first = await poll(ctx(), null, { ...HARNESS_POLL });
       const problems = pollProblems(first);
       items = Array.isArray(first?.items) ? first.items.filter(isItem) : [];
       if (!problems.length) {
-        const again = await poll(ctx(), first.cursor, { since: 0, maxItems: 50 });
+        const again = await poll(ctx(), first.cursor, { ...HARNESS_POLL });
         const seen = new Set(items.map((i) => i.id));
         const repeated = (again?.items ?? []).filter((i) => seen.has(i?.id)).length;
         if (repeated) problems.push(t("cli.provider.test.repeated", { n: repeated }));
         if (items.length >= 2) {
-          const capped = await poll(ctx(), null, { since: 0, maxItems: 1 });
+          const capped = await poll(ctx(), null, { since: HARNESS_POLL.since, maxItems: 1 });
           if ((capped?.items ?? []).length > 1 || capped?.complete !== false) problems.push(t("cli.provider.test.cap"));
           else {
-            const next = await poll(ctx(), capped.cursor, { since: 0, maxItems: 50 });
+            const next = await poll(ctx(), capped.cursor, { ...HARNESS_POLL });
             if (next?.complete !== true) problems.push(t("cli.provider.test.noProgress"));
           }
         }
@@ -231,7 +300,9 @@ async function runFixture(spec: HarnessSpec, provider: Provider, exec: ExecProvi
       // a long native id becomes a hash the registry maps back: the key only has to be its own canonical form
       return !key || !p || p.provider !== d.id || p.account !== "default" || (!p.long && p.native !== th) || canonicalKey(key) !== key;
     });
-    report.line(broken.length ? "fail" : "ok", "keys", broken.length ? t("cli.provider.test.keys", { threads: broken.join(", ") }) : "");
+    // the keys as a session writes them in `to=`, so an author sees how Strato escapes their ids
+    const keys = threads.slice(0, 5).map((th) => formatKey(d.id, "default", th) ?? th);
+    report.line(broken.length ? "fail" : "ok", "keys", broken.length ? t("cli.provider.test.keys", { threads: broken.join(", ") }) : `${keys.join(", ")}${threads.length > 5 ? ", …" : ""}`);
   }
 
   // ---- triage
@@ -244,7 +315,8 @@ async function runFixture(spec: HarnessSpec, provider: Provider, exec: ExecProvi
       if (!item) return [t("cli.provider.test.itemMissing", { id: x.id })];
       const key = formatKey(d.id, "default", item.thread) ?? item.thread;
       const kind = classifyItem(item, key, { ...rules, ...(x.rules ?? {}) }, new Set(), new Set());
-      return kind === x.kind ? [] : [t("cli.provider.test.kind", { id: x.id, got: String(kind), want: String(x.kind) })];
+      const want = kindOf(x.kind) as Kind | null;
+      return kind === want ? [] : [t("cli.provider.test.kind", { id: x.id, got: kindWord(kind), want: kindWord(want) })];
     });
     report.line(wrong.length ? "fail" : "ok", "triage", wrong.join("; "));
   }
@@ -283,16 +355,17 @@ async function runFixture(spec: HarnessSpec, provider: Provider, exec: ExecProvi
   }
 
   // ---- acts, through the gate
-  if (live) report.line("skip", "act", t("cli.provider.test.liveNoAct"));
   // a real write runs only for a provider seen talking through the fake, and never when items came without a request
-  else await actChecks(provider, d, caps.actions, caps.undo, caps.idempotent, fx, thread, fake, report, pollOffline || (connectRequests === 0 && pollRequests === 0));
+  const actsOffline = pollOffline || (connectRequests === 0 && pollRequests === 0);
+  if (live) report.line("skip", "act", t("cli.provider.test.liveNoAct"));
+  else await actChecks(provider, d, caps.actions, caps.undo, caps.idempotent, fx, thread, items, fake, report, actsOffline);
 
   // ---- errors: a 401 needs setup, a 429 says when, a timeout is retried
   if (live) report.line("skip", "errors", t("cli.provider.test.liveNoAct"));
   else if (!connectRequests) report.line("offline", "errors", t("cli.provider.test.noRequest"));
   else {
     const problems: string[] = [];
-    const attempt = async (mode: "401" | "429" | "timeout", run: () => Promise<unknown>) => {
+    const attempt = async (mode: "401" | "429" | "timeout" | "custom", run: () => Promise<unknown>) => {
       fake.mode = mode;
       try {
         await run();
@@ -311,6 +384,12 @@ async function runFixture(spec: HarnessSpec, provider: Provider, exec: ExecProvi
     const eTimeout = await attempt("timeout", read);
     if (!eTimeout?.retryable || eTimeout.fatal) problems.push(t("cli.provider.test.eTimeout"));
     report.line(problems.length ? "fail" : "ok", "errors", problems.join("; "));
+    // the fixture's own error answers: what this tool returns that the three above do not cover
+    for (const c of fx.errors ?? []) {
+      fake.custom = c.response;
+      const e = await attempt("custom", read);
+      report.line(errorProblems(e, c.expect).length ? "fail" : "ok", `errors, ${c.name}`, errorProblems(e, c.expect).join("; "));
+    }
   }
 
   // ---- push
@@ -339,17 +418,38 @@ async function runFixture(spec: HarnessSpec, provider: Provider, exec: ExecProvi
     }
   }
 
-  // ---- network: every request matched a fixture
+  // ---- network: every request matched a fixture, and every exchange that answers once was reached
   if (!live) {
     const unmatched = fake.unmatched;
-    report.line(unmatched.length ? "fail" : "ok", "network", unmatched.length ? t("cli.provider.test.unmatched", { requests: unmatched.slice(0, 5).map((r) => `${r.method} ${r.url}`).join(", ") }) : t("cli.provider.test.requests", { n: fake.requests.length }));
+    // the writes of a run whose acts were not verifiable offline could not be reached: they are not reported
+    const unused = fake.unused().filter((x) => !actsOffline || isSafe(x.exchange));
+    const problems = [
+      ...(unmatched.length ? [t("cli.provider.test.unmatched", { requests: unmatched.slice(0, 5).map((r) => `${r.method} ${r.url}`).join(", ") })] : []),
+      ...(unused.length ? [t("cli.provider.test.unused", { exchanges: unused.slice(0, 5).map((x) => `#${x.index + 1} ${x.exchange.request.method} ${x.exchange.request.url}`).join(", ") })] : []),
+    ];
+    report.line(problems.length ? "fail" : "ok", "network", problems.length ? problems.join("; ") : t("cli.provider.test.requests", { n: fake.requests.length }));
   }
+}
+
+/** An exchange that writes nothing: a GET, a HEAD or an OPTIONS, or one marked safe. */
+const isSafe = (ex: Exchange) => ex.safe === true || /^(GET|HEAD|OPTIONS)$/i.test(ex.request.method);
+
+/** What differs between an error a provider gave and what a fixture's error case expects; no error is itself wrong. */
+function errorProblems(e: ReturnType<typeof providerError> | null, want: NonNullable<Fixture["errors"]>[number]["expect"]): string[] {
+  if (!e) return [t("cli.provider.test.eNone")];
+  const out: string[] = [];
+  if (want.code !== undefined && e.code !== want.code) out.push(t("cli.provider.test.eField", { field: "code", got: e.code, want: want.code }));
+  if (want.fatal !== undefined && !!e.fatal !== want.fatal) out.push(t("cli.provider.test.eField", { field: "fatal", got: String(!!e.fatal), want: String(want.fatal) }));
+  if (want.retryable !== undefined && !!e.retryable !== want.retryable) out.push(t("cli.provider.test.eField", { field: "retryable", got: String(!!e.retryable), want: String(want.retryable) }));
+  if (want.retryAfterMs && !(e.retryAfterMs && e.retryAfterMs > 0)) out.push(t("cli.provider.test.eRetryAfter"));
+  return out;
 }
 
 /** What is wrong in a poll's answer: its shape, items Strato cannot read, their order. */
 function pollProblems(r: PollResult | null | undefined): string[] {
   const out: string[] = [];
   if (!r || !Array.isArray(r.items) || !r.cursor || typeof r.cursor.value !== "string" || typeof r.cursor.at !== "number" || typeof r.complete !== "boolean") return [t("cli.provider.test.pollShape")];
+  if (r.cursor.value.length > CURSOR_MAX) out.push(t("cli.provider.test.cursorSize", { n: r.cursor.value.length, max: CURSOR_MAX }));
   const bad = r.items.filter((i) => !isItem(i)).length;
   if (bad) out.push(t("cli.provider.test.badItems", { n: bad }));
   const items = r.items.filter(isItem);
@@ -406,20 +506,31 @@ function planOf(key: string, taskId: string): { sha: string; kind: ActionKind } 
  * through it (its connect or its poll made requests there, and no poll gave items without one): the write must carry
  * the text and, for an idempotent kind, the idempotency key; an undoable kind is then undone; a write that times out
  * must never say it surely did not happen. `offline`: no such evidence, the real write is reported not verifiable.
+ * A text goes to the thread's key, then, when `post` is declared and not reached yet, to its conversation's key. A
+ * declared kind that no task reached fails, with the rule that sent the text elsewhere.
  */
-async function actChecks(provider: Provider, d: ProviderDescriptor, actions: ActionKind[], undo: ActionKind[], idempotent: ActionKind[], fx: Fixture, thread: string | null, fake: FakeTool, report: Report, offline: boolean): Promise<void> {
+async function actChecks(provider: Provider, d: ProviderDescriptor, actions: ActionKind[], undo: ActionKind[], idempotent: ActionKind[], fx: Fixture, thread: string | null, items: Item[], fake: FakeTool, report: Report, offline: boolean): Promise<void> {
   if (!actions.length) return report.line("skip", "act", t("cli.provider.test.notDeclared"));
   if (!thread) return report.line("skip", "act", t("cli.provider.test.noThread"));
   const key = formatKey(d.id, "default", thread);
   if (!key) return report.line("fail", "act", t("cli.provider.test.noKey", { thread }));
   const text = fx.act?.text ?? SAMPLE_TEXT;
-  const tasks: { name: string; task: Record<string, unknown>; carries: string }[] = [{ name: "text", task: { id: "t1", kind: "draft", draft: text, to: key }, carries: text }];
-  if (actions.includes("setStatus")) tasks.push({ name: "setStatus", task: { id: "t1", kind: "action", act: "setStatus", value: fx.act?.status ?? "Done", to: key }, carries: fx.act?.status ?? "Done" });
-  if (actions.includes("assign")) tasks.push({ name: "assign", task: { id: "t1", kind: "action", act: "assign", value: fx.act?.assignee ?? "me", to: key }, carries: "" });
-  const unreachable = actions.filter((k) => !["post", "reply", "comment", "setStatus", "assign"].includes(k));
+  const who = { ...(fx.act?.audience ? { audience: fx.act.audience } : {}), ...(fx.act?.subject ? { subject: fx.act.subject } : {}) };
+  const textTask = (to: string) => ({ id: "t1", kind: "draft", draft: text, to, ...who });
+  const tasks: { name: string; task: Record<string, unknown>; carries: string; native: string; extra?: boolean }[] = [{ name: "text", task: textTask(key), carries: text, native: thread }];
+  // a separate message, on the conversation of the thread, for a tool that declares one
+  const conversation = items.find((i) => i.thread === thread)?.conversation.id;
+  const conversationKey = conversation ? formatKey(d.id, "default", conversation) : null;
+  if (actions.includes("post") && conversation && conversationKey && conversationKey !== key) tasks.push({ name: "text, new message", task: textTask(conversationKey), carries: text, native: conversation, extra: true });
+  if (actions.includes("setStatus")) tasks.push({ name: "setStatus", task: { id: "t1", kind: "action", act: "setStatus", value: fx.act?.status ?? "Done", to: key }, carries: fx.act?.status ?? "Done", native: thread });
+  if (actions.includes("assign")) tasks.push({ name: "assign", task: { id: "t1", kind: "action", act: "assign", value: fx.act?.assignee ?? "me", to: key }, carries: "", native: thread });
+  const unreachable = actions.filter((k) => !TASK_KINDS.includes(k));
   if (unreachable.length) report.line("skip", "act", t("cli.provider.test.unreachable", { kinds: unreachable.join(", ") }));
 
-  for (const { name, task, carries } of tasks) {
+  const reached = new Set<ActionKind>();
+  /** Where each text task went, and why: what a declared kind that no task reached is told. */
+  const routes: { name: string; kind: ActionKind; rule: ScopeRule }[] = [];
+  for (const { name, task, carries, native, extra } of tasks) {
     writeTopic(key, task);
     const plan = planOf(key, "t1");
     if (!plan) {
@@ -427,10 +538,14 @@ async function actChecks(provider: Provider, d: ProviderDescriptor, actions: Act
       continue;
     }
     const { sha, kind } = plan;
+    const rule = typedScope(d.id, native).rule;
+    if (name.startsWith("text")) routes.push({ name, kind, rule });
+    if (extra && reached.has(kind)) continue;
     if (!actions.includes(kind)) {
-      report.line("skip", `act ${name}`, t("cli.provider.test.kindNotDeclared", { kind }));
+      report.line("skip", `act ${name}`, t("cli.provider.test.kindNotDeclared", { kind, why: t(`cli.provider.test.scope.${rule}`) }));
       continue;
     }
+    reached.add(kind);
     // dry: validated and described, nothing written
     let mark = fake.since();
     const dry = await dryRunTask({ key, taskId: "t1", sha, by: "board" });
@@ -463,15 +578,24 @@ async function actChecks(provider: Provider, d: ProviderDescriptor, actions: Act
       else report.line(made.length ? "ok" : "fail", `undo ${kind}`, made.length ? "" : t("cli.provider.test.noWrite"));
     } else if (undo.includes(kind)) report.line("skip", `undo ${kind}`, t("cli.provider.test.noAct"));
 
-    // a write that times out may have happened: it never says it surely did not
-    writeTopic(key, task);
+    // a write that times out may have happened: it never says it surely did not. Only the writes time out, so a
+    // provider that reads before it writes (the thread to answer) reaches its write; a second attempt, so an
+    // idempotent provider does not answer from its record of the first
+    writeTopic(key, { ...task, attempt: 2 });
     mark = fake.since();
-    fake.mode = "timeout";
+    fake.mode = "timeoutWrites";
     const late = await actOnTask({ key, taskId: "t1", sha, by: "board" });
     fake.mode = "fixtures";
     const said = !late.ok && "failed" in late ? late.failed.outcome : null;
-    if (!fake.madeSince(mark).length) report.line("skip", `act ${kind}, timeout`, t("cli.provider.test.noRequest"));
+    if (!fake.madeSince(mark).some((r) => r.mode === "timeout")) report.line("skip", `act ${kind}, timeout`, t("cli.provider.test.noWriteTried"));
     else report.line(late.ok || said === "none" ? "fail" : "ok", `act ${kind}, timeout`, late.ok || said === "none" ? t("cli.provider.test.timeoutNone") : "");
   }
   writeJson(F.sujets, []);
+
+  // a declared kind that no task reached: the provider's write path for it is never checked
+  for (const kind of actions.filter((k) => (k === "post" || k === "reply" || k === "comment") && !reached.has(k))) {
+    const route = routes[0];
+    const why = route ? t("cli.provider.test.unreached", { kind, got: route.kind, why: t(`cli.provider.test.scope.${route.rule}`) }) : t("cli.provider.test.unreachedPlain", { kind });
+    report.line("fail", `act ${kind}`, why);
+  }
 }

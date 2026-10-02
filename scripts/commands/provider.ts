@@ -6,11 +6,13 @@
  *   provider types                       the SDK types file, for an author's editor (`sdk` is the same)
  *   provider guide                       the author guide, docs/providers/authoring.md, embedded in the binary
  *   provider new <name> [--exec python] [--dir <folder>]
- *                                        a provider that works as is against its fixtures, with its README
+ *                                        a provider that works as is against its fixtures, with its README, in
+ *                                        <state>/providers/<name>/ or in the folder --dir names
  *   provider trust <id>                  shows a configured provider's folder, hash and descriptor, and trusts it on a
  *                                        typed "yes", in the person's own terminal
  *   provider test <id | path>            the offline conformance harness (providers/harness/run.ts); `--live` runs its
- *                                        read checks against the person's own account, never its writes
+ *                                        read checks against the person's own account, never its writes; `--trace`
+ *                                        prints every call, its answer and every request, secrets masked
  *
  * A work session never trusts, scaffolds nor tests provider code: those subcommands refuse a session caller
  * (`STRATO_CALLER=session`, set in every session's environment). That is a convention a session with a shell could
@@ -79,7 +81,7 @@ export async function provider(args: string[]): Promise<void> {
       refuseSession("test");
       return harness();
     default:
-      fail(`usage: provider list | types | guide | new <name> [--exec python] [--dir <folder>] | trust <id> | test <id | path> [--fixtures <dir>] [--live [--account <name>]]`, 64);
+      fail(`usage: provider list | types | guide | new <name> [--exec python] [--dir <folder>] | trust <id> | test <id | path> [--fixtures <dir>] [--trace] [--live [--account <name>]]`, 64);
   }
 }
 
@@ -193,8 +195,15 @@ function targetOfPath(path: string): { target: HarnessSpec["target"]; folder: st
  */
 async function test(args: string[]): Promise<void> {
   const { positional, opts } = flags(args);
+  // --live and --trace take no value: a word after one of them is the provider (`provider test --trace ./github`)
+  for (const flag of ["live", "trace"]) {
+    if (opts[flag] !== undefined && opts[flag] !== "true") {
+      positional.unshift(opts[flag]);
+      opts[flag] = "true";
+    }
+  }
   const ref = positional[0];
-  if (!ref) fail("usage: provider test <id | path> [--fixtures <dir>] [--live [--account <name>]]", 64);
+  if (!ref) fail("usage: provider test <id | path> [--fixtures <dir>] [--trace] [--live [--account <name>]]", 64);
   const live = opts.live === "true";
   if (live && !process.stdin.isTTY) fail(t("cli.provider.test.liveNoTty", { cmd: `${cliCommand()} provider test ${ref} --live` }), 64);
   const source = BUILTIN[ref] ? undefined : settings().providers[ref]?.source;
@@ -230,6 +239,7 @@ async function test(args: string[]): Promise<void> {
       fixturesDir: opts.fixtures && opts.fixtures !== "true" ? resolve(opts.fixtures) : join(found.folder, "fixtures"),
       live: liveSpec,
       locale: locale(),
+      ...(opts.trace === "true" ? { trace: true } : {}),
     };
     writeJson(join(state, "harness.json"), spec);
     const p = Bun.spawn([...selfArgv(), "provider", "_harness"], {
@@ -257,7 +267,10 @@ async function harness(): Promise<void> {
 
 // ------------------------------------------------------------------ new
 
-/** `provider new <name>`: the scaffold, in `<state>/providers/<name>/` or `<folder>/<name>/`, never over existing files. */
+/**
+ * `provider new <name>`: the scaffold, in `<state>/providers/<name>/` or in the folder `--dir` names (that folder
+ * itself, created if needed), never over existing files. The folder is said before anything is written.
+ */
 async function scaffoldCommand(args: string[]): Promise<void> {
   const { positional, opts } = flags(args);
   const id = positional[0];
@@ -266,9 +279,10 @@ async function scaffoldCommand(args: string[]): Promise<void> {
   if (BUILTIN[id]) fail(t("cli.provider.new.builtin", { id }), 64);
   const language = opts.exec && opts.exec !== "true" ? opts.exec : opts.exec === "true" ? "python" : null;
   if (language && !(EXEC_LANGUAGES as readonly string[]).includes(language)) fail(t("cli.provider.new.language", { language, languages: EXEC_LANGUAGES.join(", ") }), 64);
-  const folder = opts.dir && opts.dir !== "true" ? join(resolve(expandHome(opts.dir)), id) : providerHome(id);
+  const folder = opts.dir && opts.dir !== "true" ? resolve(expandHome(opts.dir)) : providerHome(id);
   if (existsSync(folder) && readdirSync(folder).length) fail(t("cli.provider.new.exists", { path: short(folder) }));
-  const { files, source } = scaffold(id, { ...(language ? { exec: language as ExecLanguage } : {}), sdk: SDK_TYPES, folder, home: folder === providerHome(id), cli: cliCommand() });
+  out(t("cli.provider.new.into", { path: short(folder) }));
+  const { files, source } = scaffold(id, { ...(language ? { exec: language as ExecLanguage } : {}), sdk: SDK_TYPES, folder, home: folder === providerHome(id) });
   for (const [rel, content] of Object.entries(files)) {
     mkdirSync(dirname(join(folder, rel)), { recursive: true });
     writeFileSync(join(folder, rel), content);

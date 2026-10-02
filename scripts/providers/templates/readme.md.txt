@@ -4,7 +4,7 @@ A Strato provider, made with `strato provider new {{id}}`.
 It already works against the fake answers in `fixtures/sample.json`: check it before changing anything.
 
 ```
-{{test}}
+strato provider test <path to this folder>
 ```
 
 ## Files

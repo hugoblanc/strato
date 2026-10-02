@@ -15,7 +15,7 @@ const PYTHON = Bun.which("python3");
 
 /** A scaffold of `demo` in the rig, its folder. */
 async function scaffold(r: Rig, extra: string[] = []): Promise<string> {
-  const res = await cli(r, ["provider", "new", "demo", "--dir", join(r.dir, "src"), ...extra]);
+  const res = await cli(r, ["provider", "new", "demo", "--dir", join(r.dir, "src", "demo"), ...extra]);
   if (res.code !== 0) throw new Error(res.err);
   return join(r.dir, "src", "demo");
 }
@@ -65,6 +65,22 @@ describe("provider new", () => {
     expect(h.code).toBe(0);
   }, 60_000);
 
+  test("--dir is the provider's folder itself, said before writing; its README names no local path and the label is a guess to check", async () => {
+    const r = rig();
+    const folder = join(r.dir, "src", "tickets");
+    const res = await cli(r, ["provider", "new", "tickets", "--dir", folder]);
+    expect(res.code).toBe(0);
+    expect(res.out.split("\n")[0]).toContain("Writing the provider into");
+    expect(existsSync(join(folder, "provider.ts"))).toBe(true);
+    // the terminal names the real path, for the person; the files they may commit do not
+    expect(res.out).toContain(join(folder, "provider.ts"));
+    for (const f of ["README.md", "provider.ts", "fixtures/sample.json"]) expect(readFileSync(join(folder, f), "utf8")).not.toContain(r.dir);
+    const readme = readFileSync(join(folder, "README.md"), "utf8");
+    expect(readme).toContain("strato provider test <path to this folder>");
+    expect(readme).toContain('"module": "<path to this folder>/provider.ts"');
+    expect(readFileSync(join(folder, "provider.ts"), "utf8")).toContain('label: text("Tickets"), // TODO');
+  }, 60_000);
+
   test("by default in the provider's own folder, with a relative source; never over existing files; a session cannot", async () => {
     const r = rig();
     const res = await cli(r, ["provider", "new", "demo"]);
@@ -107,6 +123,71 @@ describe("provider test fails a broken provider on the check it breaks", () => {
       expect(failed.some((l) => l.includes(` ${c.check}`) && l.includes(c.says))).toBe(true);
     }, 60_000);
   }
+
+  test("a declared action kind that no task reaches fails, and says which rule sent the text elsewhere", async () => {
+    const r = rig();
+    const folder = await scaffold(r);
+    patch(folder, 'actions: ["comment"],', 'actions: ["comment", "reply"],');
+    const h = await harness(r, folder);
+    expect(h.code).toBe(1);
+    expect(line(h, "act reply")).toBe("fail    act reply: declared, but no task reaches it: a text on the thread's key goes out as comment, since on a tracker a key names a ticket, so the text is a comment");
+    const chat = await scaffold(rig());
+    patch(chat, 'kinds: ["tracker"],', 'kinds: ["chat"],');
+    const c = await harness(rig(), chat);
+    expect(line(c, "act text")).toContain("skip    act text: a task's text goes out as post on this tool, which it does not declare: without threadInfo");
+    expect(line(c, "act comment")).toContain("fail    act comment: declared, but no task reaches it");
+  }, 60_000);
+
+  test("a fixture's own error answers, an exchange never reached, a cursor too large, English triage kinds", async () => {
+    const r = rig();
+    const folder = await scaffold(r);
+    const file = join(folder, "fixtures", "sample.json");
+    const fx = JSON.parse(readFileSync(file, "utf8"));
+    fx.errors = [{ name: "403 on one project", response: { status: 403, body: { error: "forbidden" } }, expect: { fatal: false, code: "forbidden" } }];
+    fx.expect.items[2].kind = "watched";
+    writeFileSync(file, JSON.stringify(fx));
+    const good = await harness(r, folder);
+    expect(good.out).toContain("ok      errors, 403 on one project");
+    expect(good.out).toContain("ok      triage");
+    expect(good.code).toBe(0);
+    // the 403 read as a dead key, a pagination page the provider never asks for, a cursor that copies everything
+    patch(folder, 'if (res.status === 403) throw { code: "forbidden", message: `${method} ${path}: forbidden` };', 'if (res.status === 403) throw { code: "forbidden", message: "forbidden", fatal: true };');
+    patch(folder, "cursor: { value: String(at), at }", 'cursor: { value: String(at).padEnd(70_000, " "), at }');
+    fx.exchanges.push({ request: { method: "GET", url: "https://demo.example/api/activity?page=2" }, response: { body: [] } });
+    fx.expect.items[2].kind = "thread";
+    writeFileSync(file, JSON.stringify(fx));
+    const bad = await harness(r, folder);
+    expect(bad.code).toBe(1);
+    expect(line(bad, "errors, 403 on one project")).toBe("fail    errors, 403 on one project: fatal is true, expected false");
+    expect(line(bad, "network")).toContain("exchanges never reached: #6 GET https://demo.example/api/activity?page=2");
+    expect(line(bad, "poll")).toContain("the cursor is 70000 characters long");
+    expect(line(bad, "triage")).toBe("fail    triage: a-2 is triaged watched (canal), expected thread (fil)");
+  }, 60_000);
+
+  test("--trace prints each call, its answer and each request, secrets masked; the keys line shows the keys", async () => {
+    const r = rig();
+    const folder = await scaffold(r);
+    const res = await cli(r, ["provider", "test", "--trace", folder]);
+    expect(res.code).toBe(0);
+    expect(res.out).toContain("trace   → connect []");
+    expect(res.out).toContain("trace   http GET https://demo.example/api/me");
+    expect(res.out).toContain('trace   → act [{"action":{"kind":"comment"');
+    expect(res.out).toContain("ok      keys: demo:OPS-7, demo:DOC-3");
+    expect(res.out).not.toContain("test-key-not-a-real-one");
+  }, 60_000);
+
+  test.skipIf(!PYTHON)("an executable is started again for each fixture file, with that file's settings", async () => {
+    const r = rig();
+    const folder = await scaffold(r, ["--exec", "python"]);
+    const fx = JSON.parse(readFileSync(join(folder, "fixtures", "sample.json"), "utf8"));
+    // as bob, the mention of alice is no longer the person's: the second file's settings reach the process
+    fx.settings.me = "u-bob";
+    fx.expect.items = [{ id: "a-1", kind: null }];
+    writeFileSync(join(folder, "fixtures", "zz-bob.json"), JSON.stringify(fx));
+    const h = await harness(r, folder);
+    expect(h.out).not.toContain("fail");
+    expect(h.code).toBe(0);
+  }, 60_000);
 
   test("items that come without any request through the fake are not verifiable offline, and nothing is written for real", async () => {
     const r = rig();
@@ -187,6 +268,34 @@ describe("provider test fails a broken provider on the check it breaks", () => {
     writeFileSync(join(r.state, "harness.json"), JSON.stringify({ nonce: "n", target: { shape: "module", file: join(folder, "provider.ts") }, fixturesDir: null, live: null, locale: "en" }));
     expect((await cli(r, ["provider", "_harness"], { STRATO_HARNESS_NONCE: "other" })).code).toBe(64);
   }, 60_000);
+});
+
+describe("the fake tool, beyond the fixtures", () => {
+  test("queryContains matches a list endpoint whose query carries a date, by substrings of the decoded query", () => {
+    const ex = { request: { method: "GET", url: "https://t.example/search", queryContains: ["q=involves:@me", "per_page=100"] } };
+    expect(matches(ex, { method: "GET", url: "https://t.example/search?q=involves%3A%40me+updated%3A%3E%3D2026-09-21T14%3A11%3A40Z&per_page=100", body: "" })).toBe(true);
+    expect(matches(ex, { method: "GET", url: "https://t.example/search?q=review-requested%3A%40me&per_page=100", body: "" })).toBe(false);
+    expect(matches(ex, { method: "GET", url: "https://t.example/other?q=involves%3A%40me&per_page=100", body: "" })).toBe(false);
+  });
+
+  test("write timeouts answer the reads; a custom answer; the exchanges never reached", async () => {
+    const fake = new FakeTool([
+      { request: { method: "GET", url: "https://t.example/a" }, response: { body: { n: 1 } } },
+      { request: { method: "POST", url: "https://t.example/b" }, response: { status: 201 } },
+      { request: { method: "POST", url: "https://t.example/c" }, response: { status: 200 }, safe: true },
+    ]);
+    fake.mode = "timeoutWrites";
+    expect((await fake.fetch("https://t.example/a")).status).toBe(200);
+    expect(await fake.fetch("https://t.example/b", { method: "POST" }).catch((e) => (e as Error).name)).toBe("TimeoutError");
+    expect((await fake.fetch("https://t.example/c", { method: "POST" })).status).toBe(200);
+    expect(fake.requests.map((r) => r.mode)).toEqual(["timeoutWrites", "timeout", "timeoutWrites"]);
+    expect(fake.unused().map((x) => x.index)).toEqual([1]);
+    fake.mode = "custom";
+    fake.custom = { status: 403, headers: { "x-ratelimit-remaining": "0" } };
+    const res = await fake.fetch("https://t.example/b", { method: "POST" });
+    expect([res.status, res.headers.get("x-ratelimit-remaining")]).toEqual([403, "0"]);
+    expect(fake.unmatched.length).toBe(0);
+  });
 });
 
 describe("the fake tool", () => {

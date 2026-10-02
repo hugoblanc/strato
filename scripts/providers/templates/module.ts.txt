@@ -18,7 +18,7 @@ const text = (en: string) => ({ en });
 
 const descriptor: ProviderDescriptor = {
   id: "{{id}}",
-  label: text("{{label}}"),
+  label: text("{{label}}"), // TODO: the tool's name as its makers write it
   api: { min: 1, max: 1 },
   kinds: ["tracker"],
   capabilities: {
@@ -65,7 +65,9 @@ async function api(ctx: AccountContext, method: string, path: string, body?: unk
     // a timeout or a network failure: worth retrying
     throw { code: "network", message: String((e as Error)?.message ?? e), retryable: true };
   }
-  if (res.status === 401 || res.status === 403) throw { code: "invalid_auth", message: "the API key was refused", fatal: true };
+  if (res.status === 401) throw { code: "invalid_auth", message: "the API key was refused", fatal: true };
+  // a 403 refuses one resource (or is a rate limit, on some tools): the key still works elsewhere, so it is not fatal
+  if (res.status === 403) throw { code: "forbidden", message: `${method} ${path}: forbidden` };
   if (res.status === 429) throw { code: "rate_limited", message: "rate limited", retryable: true, retryAfterMs: Number(res.headers.get("retry-after") ?? 1) * 1000 };
   if (res.status === 404) throw { code: "not_found", message: `${method} ${path}: not found` };
   if (res.status >= 400) throw { code: "http", message: `${method} ${path}: HTTP ${res.status}`, retryable: res.status >= 500 };
