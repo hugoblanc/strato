@@ -211,7 +211,8 @@ function providersErrors(v: unknown, root: Raw, external: ExternalProviders, out
       const okSource = isObject(source) && (typeof source.module === "string" || (Array.isArray(source.exec) && source.exec.length > 0 && source.exec.every((x) => typeof x === "string"))) && (source.sha256 === undefined || typeof source.sha256 === "string");
       if (!okSource || builtin) out.push(t("cli.setup.provider.source", { path: `${path}.source` }));
       else if (external[id]?.changed) out.push(t("cli.setup.provider.changed", { id, path: `${path}.source` }));
-    } else if (!builtin) out.push(t("cli.setup.provider.notBuiltin", { id, builtins: builtins.map((d) => d.id).join(", "), path }));
+      // an account added to a provider the profile already sources (setup --connect writes only the account)
+    } else if (!builtin && !external[id]) out.push(t("cli.setup.provider.notBuiltin", { id, builtins: builtins.map((d) => d.id).join(", "), path }));
     if (entry.accounts === undefined) continue;
     if (!isObject(entry.accounts)) {
       out.push(t("cli.setup.provider.expected", { path: `${path}.accounts`, expected: "object", got: kindOf(entry.accounts) }));
@@ -224,7 +225,7 @@ function providersErrors(v: unknown, root: Raw, external: ExternalProviders, out
       else if (name !== "default" && !ACCOUNT_ID.test(name)) out.push(t("cli.setup.provider.account", { path: at }));
       else if (!isObject(account)) out.push(t("cli.setup.provider.expected", { path: at, expected: "object", got: kindOf(account) }));
       else if (d) accountErrors(d, name, account, at, tracked, out);
-      else if (source !== undefined && !external[id]?.changed) out.push(t("cli.setup.provider.untrusted", { id, path: at }));
+      else if ((source !== undefined || external[id]) && !external[id]?.changed) out.push(t("cli.setup.provider.untrusted", { id, path: at }));
     }
   }
 }

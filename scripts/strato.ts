@@ -17,6 +17,7 @@ import { backlog, digest, listen, watch } from "./commands/watch.ts";
 import { cardLines } from "./core/cards.ts";
 import { type MasterRequest } from "./core/master.ts";
 import { serve } from "./server/serve.ts";
+import { loadExternalProviders } from "./providers/external.ts";
 import { setup } from "./commands/setup.ts";
 import { task } from "./commands/tasks.ts";
 import { mkdirSync, writeFileSync } from "node:fs";
@@ -62,6 +63,8 @@ export const USAGE = `strato: routes Slack to Claude Code work sessions, one top
   strato version                        version, commit and install mode
   strato iterm-mark                     marks the master's iTerm2 tab (amber tab and badge)
   strato policy-default <template>      prints a default policy template, to copy into <state>/policy/
+  strato provider list | types | trust <id>   external providers: where each stands, the SDK types for authors,
+                                        trusting a configured one in your own terminal
 
 <topic> = letter (A), any key of the topic (channel:ts, linear:ABC-123), short session id,
 sessionId or Slack link of one of its threads.
@@ -69,6 +72,9 @@ Exit code 3 on relay/send: the session is alive, the master must use SendMessage
 with the printed name and message.
 
 In a development clone, \`strato\` is \`bun scripts/strato.ts\`; \`scripts/aiguilleur.ts\` is its legacy alias.`;
+
+/** Commands that never read a tool: they start without loading external providers. */
+const WITHOUT_PROVIDERS = new Set(["hook", "help", "--help", "-h", "version", "--version", "iterm-mark", "policy-default", "install-skill", "update", "brand", "provider", ""]);
 
 // lock unavailable or unreadable state file: the command stops on one clear line, exit code 1, no stack
 process.on("uncaughtException", (e) => {
@@ -78,6 +84,9 @@ process.on("uncaughtException", (e) => {
 });
 
 const [cmd, ...rest] = process.argv.slice(2);
+// the trusted external providers of the profile, before any command reads keys, links or accounts; a hook never needs
+// them, and the commands below that do not read the profile's tools skip the import of their code
+if (!WITHOUT_PROVIDERS.has(cmd ?? "")) await loadExternalProviders();
 switch (cmd) {
   case "doctor":
     await doctor();
@@ -205,6 +214,9 @@ switch (cmd) {
     const p = Bun.spawn(["zsh", "-c", itermMark, "iterm-mark"], { stdin: "inherit", stdout: "inherit", stderr: "inherit" });
     process.exit(await p.exited);
   }
+  case "provider":
+    await (await import("./commands/provider.ts")).provider(rest);
+    break;
   case "policy-default": {
     const name = rest[0] as PolicyTemplate;
     if (!POLICY_TEMPLATES.includes(name)) fail(`usage: policy-default <${POLICY_TEMPLATES.join("|")}>`);

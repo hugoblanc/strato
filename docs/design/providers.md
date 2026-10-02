@@ -1896,6 +1896,25 @@ Each stage is one or more commits that leave `bun run check` green and the guard
   Loading a module from a compiled binary runs in a test gated by `STRATO_TEST_COMPILE=1`, because compiling takes too long for every run.
 - **Compatibility.** Nothing loads without a `source` in the profile.
 - **Done when.** Check green; `strato provider new demo` then `strato provider test` passes with no edit, for both shapes.
+- **As built.** Where the stage departs from the text above, and why:
+  - Folders: a source's relative paths are read from `<state>/providers/<id>/`, the provider's own folder, where `provider new` writes a scaffold; `~` and absolute paths point anywhere else.
+    The trust records live in one file, `<state>/providers/trusted.json` (`{ <id>: { sha256, source, descriptor, at } }`), not in `<state>/providers/<id>/trusted.json`: that folder is now the provider's code, whose hash the record pins.
+    A record also keeps the source it was given for: the same folder reached by another source line is not trusted.
+    A `sha256` in config.json is optional; when present, the folder's hash must start with it.
+  - The pin of an exec provider: the first argument after the command that names a file; else the command itself when it is a relative path (`./provider`); an interpreter's absolute path (`/usr/bin/python3`) never makes its folder the provider's.
+    That word is passed as an absolute path, and the process runs in its folder.
+  - Loading: every command but a few that never read a tool (`hook`, `help`, `version`, `update`…) loads the trusted external providers of the profile at startup, those with a source and an enabled account or no account yet (a provider is trusted before `setup --connect` adds its first account).
+    Whatever fails becomes the reason its accounts show on `doctor` and `provider list`; loading never fails a command.
+    The loader checks a descriptor without timing its link patterns, which runs at every command; trust and the harness time them.
+  - Exec providers have no pure functions: `parseTarget` is not part of the protocol, because the board, the panel and the gate resolve destinations synchronously (`core/targets.ts`), and the exec form of `parseTarget` the text above keeps for asynchronous paths has no caller; their destinations are typed keys (`to=<key>`).
+    Their text is shown as plain text.
+    A module's `render.html` is not used either: the board shows its `render.plain`, escaped by Strato, so a module's markup never reaches the page as HTML; its `parseTarget`, `threadInfo` and `render.plain` are wrapped so that a throw reads as "nothing to say" on the board's synchronous paths.
+  - `replies` and `complete` of an exec provider are asked; a process that answers -32601 is not asked again, and the catch-up reads nothing / the items stay as they are. A `complete` that returns another number of items is ignored.
+  - An exec provider's `store.*` names (`^[a-z0-9-]{1,40}$`) are kept as `provider-<name>.json` in the account's folder, apart from the core's own files.
+  - A handshake that fails on the protocol version or the descriptor's id marks the account down at once (no restart loop); any other crash counts towards the backoff.
+  - The caller: sessions are started with `STRATO_CALLER=session` in their settings' environment, and `provider trust`, `provider new` and `provider test` refuse that caller (exit 77); trust needs a TTY on top.
+    The rest of section 8.6 (the allowlist of subcommands, the switches) stays with the second act stage.
+  - `strato provider types` prints the SDK file; `strato provider sdk` is the same command.
 
 ### proof
 

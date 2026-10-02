@@ -482,3 +482,95 @@ export interface AccountContext {
    */
   verifying?: boolean;
 }
+
+// ------------------------------------------------------------------ the exec protocol
+
+/*
+ * An executable provider, in any language, speaks JSON-RPC 2.0 with Strato: one message per line, UTF-8, on its stdin
+ * and stdout, at most 4 MiB a line. Stdout carries protocol messages only; stderr is free text, kept as the provider's
+ * log. Strato sends one request at a time (unless `describe` answers `concurrent: true`) and answers the provider's
+ * own requests (`http.fetch`, `store.*`, `secret.set`) while its request is pending.
+ */
+
+/** A request: from Strato (`describe`, `poll`…) or from the provider (`http.fetch`…). */
+export interface RpcRequest<P = unknown> {
+  jsonrpc: "2.0";
+  id: number | string;
+  method: string;
+  params?: P;
+}
+
+/** A notification: no id, no answer (`items`, `log`, `$/cancel`…). */
+export interface RpcNotification<P = unknown> {
+  jsonrpc: "2.0";
+  method: string;
+  params?: P;
+}
+
+export interface RpcError {
+  /** -32700, -32600, -32601, -32602, or one of `RpcErrorCode`'s values. */
+  code: number;
+  message: string;
+  /** A `ProviderError`, for a provider error (-32000) and the codes that carry details. */
+  data?: Partial<ProviderError>;
+}
+
+export type RpcResponse<R = unknown> = { jsonrpc: "2.0"; id: number | string; result: R } | { jsonrpc: "2.0"; id: number | string; error: RpcError };
+
+/**
+ * The error codes of the protocol beyond JSON-RPC's own: -32000 a provider error (details in `data`), -32001 no common
+ * protocol version, -32002 the account needs setup (`fatal`), -32003 rate limited (`retryAfterMs`), -32004 cancelled.
+ * -32601 (method not found) says the capability is absent: it must then be absent from the descriptor too.
+ */
+export type RpcErrorCode = -32000 | -32001 | -32002 | -32003 | -32004;
+
+/** The methods Strato calls, their params and results. */
+export interface ExecMethods {
+  /** No secret, no account: the descriptor, for trust, validation and the harness. `apis`: the versions Strato speaks. */
+  describe: { params: { apis: number[] }; result: { api: number; descriptor: ProviderDescriptor; concurrent?: boolean } };
+  /** One account and its secrets, once per process. `offline`: the conformance harness runs it, against fixtures. */
+  initialize: {
+    params: { api: number; strato: string; locale: "en" | "fr"; account: { id: string; label: string; auth: string; settings: Record<string, unknown> }; secrets: Record<string, string>; offline: boolean };
+    result: { ok: true };
+  };
+  connect: { params: Record<string, never>; result: Identity };
+  poll: { params: { cursor: IngestCursor | null; since: number; maxItems: number }; result: PollResult };
+  /** Answers once the connection is open; items then come as `items` notifications, until `subscription.end`. */
+  subscribe: { params: Record<string, never>; result: { ok: true } };
+  unsubscribe: { params: Record<string, never>; result: { ok: true } };
+  participated: { params: { days: number }; result: { threads: string[] } };
+  replies: { params: { thread: string; since: number; max: number }; result: { items: Item[] } };
+  complete: { params: { items: Item[] }; result: { items: Item[] } };
+  context: { params: { thread: string; since?: number; max: number }; result: ContextResult };
+  act: { params: ActInput; result: ActResult };
+  undo: { params: { token: string }; result: ActResult };
+  "setup.detect": { params: Record<string, never>; result: { fields: Record<string, Detected> } };
+  "setup.check": { params: Record<string, never>; result: { items: CheckItem[] } };
+  /** Answers, then the process exits. */
+  shutdown: { params: Record<string, never>; result: { ok: true } };
+}
+
+/** The methods a provider calls on Strato while one of Strato's requests is pending, or while it is subscribed. */
+export interface HostMethods {
+  /** Only to the descriptor's `apiHosts`, over https; `body` as text, or `bodyBase64` for bytes. */
+  "http.fetch": {
+    params: { method: string; url: string; headers?: Record<string, string>; body?: string; bodyBase64?: string };
+    result: { status: number; headers: Record<string, string>; body: string };
+  };
+  /** A small JSON value of the account's own folder, or null. Names: `^[a-z0-9-]{1,40}$`. */
+  "store.read": { params: { name: string }; result: { value: unknown } | null };
+  "store.write": { params: { name: string; value: unknown }; result: { ok: true } };
+  /** A refreshed secret (OAuth): only the names the auth method declares in `stores`. */
+  "secret.set": { params: { name: string; value: string }; result: { ok: true } };
+}
+
+/** The notifications a provider sends. */
+export interface ProviderNotifications {
+  /** Pushed items, with the tool's cursor when it has one; an empty list says the connection is alive. */
+  items: { items: Item[]; cursor?: IngestCursor };
+  /** The push connection ended: the exec form of `subscribe`'s result. */
+  "subscription.end": { end: "clean" | "cut" | "fatal"; retryAfterMs?: number; refused?: string };
+  log: { level: "debug" | "info" | "warn" | "error"; message: string };
+  /** Informative, for `doctor`: it never ends a subscription. */
+  health: { status: "ok" | "degraded" | "down"; detail?: string };
+}

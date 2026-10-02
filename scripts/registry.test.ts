@@ -39,13 +39,21 @@ describe("registry", () => {
       tracker: { kind: "linear", workspace: "acme", prefixes: ["ENG"] },
       providers: { tickets: { source: { exec: ["./t"] }, accounts: { default: {} } }, nothing: { accounts: { default: {} } } },
     });
-    const out = await script(r, "return registry.accounts().map((a) => [a.account.provider, a.account.id, a.provider?.descriptor.id ?? null, a.problem]);");
-    expect(out).toEqual([
+    const out = await script(
+      r,
+      `const rows = () => registry.accounts().map((a) => [a.account.provider, a.account.id, a.provider?.descriptor.id ?? null, a.problem]);
+      const before = rows();
+      await (await import(${JSON.stringify(join(SCRIPTS, "providers/external.ts"))})).loadExternalProviders();
+      return { before, after: rows() };`,
+    );
+    expect(out.before).toEqual([
       ["slack", "default", "slack", null],
       ["linear", "default", "linear", null],
-      ["tickets", "default", null, "tickets: external providers are not loaded by this version"],
+      ["tickets", "default", null, "tickets: not loaded; strato provider list says why"],
       ["nothing", "default", null, "nothing: not a built-in tool"],
     ]);
+    // once the loader ran, the reason is its own: here, the command names no file that exists
+    expect(out.after[2]).toEqual(["tickets", "default", null, "tickets: its code is not there (./t)"]);
   });
 
   test("a named Slack account connects with its own token only, and a links-only Linear account does not connect", async () => {

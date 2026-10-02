@@ -24,8 +24,9 @@ export function workerSettings(): string {
   return JSON.stringify({
     enableAllProjectMcpServers: true,
     crossSessionInbound: "accept",
-    // the session's commands and hooks get the installation explicitly: they never have to guess it from their cwd
-    env: { STRATO_STATE: STATE, STRATO_WORKSPACE: WORKSPACE },
+    // the session's commands and hooks get the installation explicitly: they never have to guess it from their cwd.
+    // STRATO_CALLER tells Strato a session runs the command: it never trusts nor runs provider code on its behalf
+    env: { STRATO_STATE: STATE, STRATO_WORKSPACE: WORKSPACE, STRATO_CALLER: "session" },
     // The session declares its own transitions: Strato does not have to poll it.
     // Only these events matter; a hook on PreToolUse would cost one process per tool call.
     hooks: Object.fromEntries(

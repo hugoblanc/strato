@@ -1,8 +1,8 @@
 /**
  * The registry: the built-in providers, the accounts of the profile resolved to provider instances, and what Strato
  * gives each account (its secrets, a fetch limited to its API hosts, its own folder, the map of its long keys).
- * Loading external providers comes with the external stage: until then their accounts are listed, with the reason
- * they cannot run.
+ * External providers are added by providers/external.ts once trusted and loaded; until then, and when they cannot be,
+ * their accounts are listed with the reason.
  *
  * Every provider it hands out is a view without `act` and `undo`: the writes are reachable through `actorOf` only,
  * which app/act.ts alone imports, behind the gate (docs/design/providers.md, section 8.2; act.test.ts checks it).
@@ -14,7 +14,7 @@ import { F, readJson, writeJson } from "../app/env.ts";
 import { writeSecret } from "../app/secrets.ts";
 import { formatKey, parseKey } from "../core/keys.ts";
 import { hostMatches, useProviders } from "../core/links.ts";
-import { locale } from "../core/i18n.ts";
+import { locale, t } from "../core/i18n.ts";
 import { type ResolvedAccount, resolveAccounts, type Settings, settings } from "../core/settings.ts";
 import { apiSupported } from "./api.ts";
 import { BUILTIN_PURE } from "./builtin.ts";
@@ -59,6 +59,15 @@ export function addProvider(p: Provider): void {
 
 const providerById = (id: string): ProviderView | null => BUILTIN[id] ?? addedViews[id] ?? null;
 
+/** Why an external provider cannot run, by id, as providers/external.ts found when loading it. */
+const externalProblems: Record<string, string> = {};
+
+/** Records why an external provider cannot run (null: it loaded). */
+export function setExternalProblem(id: string, problem: string | null): void {
+  if (problem) externalProblems[id] = problem;
+  else delete externalProblems[id];
+}
+
 /** A provider by id, built in or added, without its writes; null when unknown. */
 export const providerOf = (id: string): ProviderView | null => providerById(id);
 
@@ -93,7 +102,7 @@ export function accounts(s: Settings = settings()): AccountEntry[] {
         ? null
         : `${a.account.provider}: written for another version of the provider interface`
       : source
-        ? `${a.account.provider}: external providers are not loaded by this version`
+        ? (externalProblems[a.account.provider] ?? t("cli.provider.load.notLoaded", { id: a.account.provider }))
         : `${a.account.provider}: not a built-in tool`;
     return { ...a, provider: problem ? null : known, problem };
   });

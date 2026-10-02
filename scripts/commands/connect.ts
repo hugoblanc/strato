@@ -22,6 +22,7 @@ import { textOf } from "../core/links.ts";
 import { type CheckItem, type Detected, profileErrors, shortPath } from "../core/setup.ts";
 import { oauthPortOf, settings, TRACKER_LINK_FIELDS } from "../core/settings.ts";
 import { ACCOUNT_ID, providerError } from "../providers/api.ts";
+import { externalKnowledge } from "../providers/external.ts";
 import { accountContext, accounts, type AccountEntry, providerOf, providerViews, type ProviderView } from "../providers/registry.ts";
 import type { AuthMethod, Identity } from "../providers/sdk.ts";
 
@@ -253,7 +254,7 @@ export async function connectCommand(opts: Record<string, string>, cli: string):
   const s = settings();
   const file = defaultSlack ? s.slack.userTokenFile || s.slack.appTokenFile || `~/.config/strato/${workspace}.env` : entry.secretsFile;
   const patch = connectPatch({ provider: d.id, account: accountId, method: method.id, settings: values, ...(flagClientId ? { clientId: flagClientId } : {}), ...(defaultSlack ? { slackFile: { path: file, appToken: Boolean(candidates.SLACK_APP_TOKEN) } } : {}) });
-  const errors = profileErrors(patch);
+  const errors = profileErrors(patch, externalKnowledge({ providers: settings().providers }));
   if (errors.length) fail(`--connect refused, nothing stored:\n  ${errors.join("\n  ")}`);
 
   for (const [name, value] of Object.entries(candidates)) writeSecret(file, name, value);

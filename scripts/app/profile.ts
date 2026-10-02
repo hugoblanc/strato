@@ -7,14 +7,16 @@ import { mergeProfile, profileDiff, profileErrors } from "../core/setup.ts";
 import { missingSettings, NEW_INSTALL_PROFILE, resolveSettings, useSettings } from "../core/settings.ts";
 import { F, fail, out, readJson, writeJson } from "./env.ts";
 import { createStateDir } from "./store.ts";
+import { externalKnowledge } from "../providers/external.ts";
 
 /** Writes `incoming` into config.json: created, merged into the existing file, or replaced with `force`. */
 export function writeProfile(incoming: unknown, force: boolean, label: string): void {
-  const errors = profileErrors(incoming);
-  if (errors.length) fail(`${label} refused, nothing written:\n  ${errors.join("\n  ")}`);
-  createStateDir();
   const existed = existsSync(F.config);
   const before = existed ? readJson<unknown>(F.config, {}) : {};
+  // an external provider's accounts are checked against the descriptor trusted for the source the profile will have
+  const errors = profileErrors(incoming, externalKnowledge(force ? incoming : mergeProfile(before, incoming)));
+  if (errors.length) fail(`${label} refused, nothing written:\n  ${errors.join("\n  ")}`);
+  createStateDir();
   // a profile created here starts in shadow mode unless it says otherwise: the first day posts nothing
   const next = existed ? (force ? incoming : mergeProfile(before, incoming)) : mergeProfile(NEW_INSTALL_PROFILE, incoming);
   const diff = profileDiff(before, next);
