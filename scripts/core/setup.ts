@@ -369,11 +369,50 @@ export function tokenKindProblem(token: string): string | null {
   return `not a Slack user token: copy ${USER_TOKEN_WHERE}`;
 }
 
-/** `KEY=value` set in an env file's text: the line replaced where it is, else appended; every other line kept. */
+/** A key as a regular expression matches it literally. */
+const escapeKey = (key: string) => key.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+/** The line of `key` in an env file's text, with or without `export`: group 1 is the value as written. */
+export const envLineRe = (key: string): RegExp => new RegExp(`^\\s*(?:export\\s+)?${escapeKey(key)}=(.*)$`, "m");
+
+/** A value that reads back as is unquoted: no whitespace, quote, `#`, `$`, backquote nor backslash. */
+const PLAIN_VALUE = /^[^\s"'#$`\\]*$/;
+
+/**
+ * A value as an env file line carries it: as is when it reads back as is, else double-quoted with JSON escapes, which
+ * `envValue` decodes. Throws on a line break or a NUL, which no line can carry.
+ */
+export function envFileForm(value: string): string {
+  // biome-ignore lint/suspicious/noControlCharactersInRegex: refused characters
+  if (/[\r\n\u0000]/.test(value)) throw new Error("a line break or a NUL character cannot be stored");
+  return PLAIN_VALUE.test(value) ? value : JSON.stringify(value);
+}
+
+/**
+ * The value of an env file line as written (`envLineRe`'s group 1): a double-quoted value decoded as `envFileForm`
+ * wrote it, a single-quoted one taken as is, else trimmed and stripped of a stray leading or trailing quote, as
+ * hand-written files always were read.
+ */
+export function envValue(written: string): string {
+  const v = written.trim();
+  if (v.length >= 2 && v.startsWith('"') && v.endsWith('"')) {
+    try {
+      const decoded = JSON.parse(v);
+      if (typeof decoded === "string") return decoded;
+    } catch {}
+  }
+  if (v.length >= 2 && v.startsWith("'") && v.endsWith("'")) return v.slice(1, -1);
+  return v.replace(/^["']|["']$/g, "");
+}
+
+/**
+ * `KEY=value` set in an env file's text: the line replaced where it is, else appended; every other line kept. The value
+ * is written in the form `envValue` reads back unchanged (`envFileForm`).
+ */
 export function setEnvLine(content: string, key: string, value: string): string {
-  const line = `${key}=${value}`;
-  const re = new RegExp(`^\\s*(?:export\\s+)?${key}=.*$`, "m");
-  if (re.test(content)) return content.replace(re, line);
+  const line = `${key}=${envFileForm(value)}`;
+  const re = envLineRe(key);
+  if (re.test(content)) return content.replace(re, () => line);
   return `${content}${content && !content.endsWith("\n") ? "\n" : ""}${line}\n`;
 }
 

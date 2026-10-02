@@ -10,7 +10,7 @@ import { bestText, channelGuess, channelLabel, type Config, humanize, matchFromE
 import { type ThreadDump } from "../core/cards.ts";
 import { permalinkOfKey, threadOfKey } from "../core/keys.ts";
 import { settings, type SlackSettings } from "../core/settings.ts";
-import { tokenKindProblem, USER_TOKEN_WHERE } from "../core/setup.ts";
+import { envLineRe, envValue, tokenKindProblem, USER_TOKEN_WHERE } from "../core/setup.ts";
 import { type Sujet, sujetKeys } from "../core/sujet.ts";
 import { expandHome, F, fail, localDay, readJson, WORKSPACE, writeJson } from "./env.ts";
 
@@ -28,8 +28,9 @@ export class SlackError extends Error {
 /** The value of `KEY=value` (or `export KEY=value`, quotes allowed) in a small env file, or null. */
 export function envFileValue(file: string, key: string): string | null {
   try {
-    const m = readFileSync(expandHome(file), "utf8").match(new RegExp(`^\\s*(?:export\\s+)?${key}=(.+)$`, "m"));
-    return m ? m[1].trim().replace(/^["']|["']$/g, "") : null;
+    const m = readFileSync(expandHome(file), "utf8").match(envLineRe(key));
+    const value = m ? envValue(m[1]) : "";
+    return value || null;
   } catch {
     return null;
   }

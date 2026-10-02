@@ -15,7 +15,7 @@ import { homedir } from "node:os";
 import { expandHome, fail, out, run } from "../app/env.ts";
 import { OAuthError, runOAuth } from "../app/oauth.ts";
 import { writeProfile } from "../app/profile.ts";
-import { readLine, readSecret, writeSecret } from "../app/secrets.ts";
+import { checkSecretValue, readLine, readSecret, writeSecret } from "../app/secrets.ts";
 import { accountLine, type AccountStatus, chooseMethod, connectPatch, detectedSettings, methodText, providerListLines } from "../core/connect.ts";
 import { t } from "../core/i18n.ts";
 import { textOf } from "../core/links.ts";
@@ -257,6 +257,11 @@ export async function connectCommand(opts: Record<string, string>, cli: string):
   const errors = profileErrors(patch, externalKnowledge({ providers: settings().providers }));
   if (errors.length) fail(`--connect refused, nothing stored:\n  ${errors.join("\n  ")}`);
 
+  try {
+    for (const [name, value] of Object.entries(candidates)) checkSecretValue(name, value);
+  } catch (e) {
+    fail((e as Error).message);
+  }
   for (const [name, value] of Object.entries(candidates)) writeSecret(file, name, value);
   out(t("cli.connect.connected", { tool, account: accountId, name: found.identity.name || found.identity.me, me: found.identity.me, workspace: found.identity.workspace }));
   out(t("cli.connect.stored", { names: Object.keys(candidates).join(", "), file: short(expandHome(file)) }));

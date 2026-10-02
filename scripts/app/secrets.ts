@@ -5,11 +5,17 @@
  */
 import { chmodSync, closeSync, fsyncSync, mkdirSync, openSync, readFileSync, renameSync, writeSync } from "node:fs";
 import { dirname } from "node:path";
+import { t } from "../core/i18n.ts";
 import { setEnvLine } from "../core/setup.ts";
 import { expandHome } from "./env.ts";
 
-/** `KEY=value` written into a secret file: folder 700, file 600, the other lines kept, written then renamed. */
+/**
+ * `KEY=value` written into a secret file: folder 700, file 600, the other lines kept, written then renamed. The value
+ * is stored in a form that reads back unchanged (quoted when it holds a space, a quote, `#`, `$` or a backslash). A
+ * value with a line break or a NUL is refused, naming the secret and never its value.
+ */
 export function writeSecret(file: string, name: string, value: string): void {
+  checkSecretValue(name, value);
   const path = expandHome(file);
   mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
   let current = "";
@@ -26,6 +32,12 @@ export function writeSecret(file: string, name: string, value: string): void {
   }
   chmodSync(tmp, 0o600);
   renameSync(tmp, path);
+}
+
+/** Throws, naming the secret and never its value, when a value cannot be stored on one line of a secret file. */
+export function checkSecretValue(name: string, value: string): void {
+  // biome-ignore lint/suspicious/noControlCharactersInRegex: refused characters
+  if (/[\r\n\u0000]/.test(value)) throw new Error(t("cli.secret.badValue", { name }));
 }
 
 /** A secret as it may be shown: its first five and last four characters. */
