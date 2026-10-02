@@ -18,8 +18,6 @@ const TICKET_PREFIX = "linear:";
 
 export const isTicketKey = (key: string): boolean => key.startsWith(TICKET_PREFIX);
 
-export const ticketKey = (id: string): string => `${TICKET_PREFIX}${id}`;
-
 /** The ticket id of a ticket key, else null. */
 export function ticketIdOfKey(key: string): string | null {
   return isTicketKey(key) ? key.slice(TICKET_PREFIX.length) : null;

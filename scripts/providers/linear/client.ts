@@ -43,9 +43,6 @@ const limits = new Map<string, { remaining: number; reset: number }>();
 
 const accountId = (ctx: AccountContext) => `${ctx.account.provider}@${ctx.account.id}`;
 
-/** The requests left in this hour on an account, as Linear last said, or null before any answer. */
-export const requestsLeft = (ctx: AccountContext): number | null => limits.get(accountId(ctx))?.remaining ?? null;
-
 /** The token of the account's auth method and the header it goes in, or null when the secret is missing. */
 function authorization(ctx: AccountContext): string | null {
   if (ctx.account.auth === "oauth-pkce") {
