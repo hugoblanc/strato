@@ -13,7 +13,7 @@ import { envFileValue } from "../app/slack.ts";
 import { F, readJson, writeJson } from "../app/env.ts";
 import { writeSecret } from "../app/secrets.ts";
 import { formatKey, parseKey } from "../core/keys.ts";
-import { hostMatches, useProviders } from "../core/links.ts";
+import { hostMatches, settingHost, useProviders } from "../core/links.ts";
 import { locale, t } from "../core/i18n.ts";
 import { type ResolvedAccount, resolveAccounts, type Settings, settings } from "../core/settings.ts";
 import { apiSupported } from "./api.ts";
@@ -184,18 +184,24 @@ function secretFiles(entry: AccountEntry): string[] {
   return files.filter(Boolean);
 }
 
-/** The hosts an account's API calls may reach: `{settings.baseUrl}` stands for the host of that setting. */
-function apiHostsOf(entry: AccountEntry): string[] {
-  return (entry.provider?.descriptor.apiHosts ?? []).flatMap((h) => {
+/**
+ * The hosts an account's API calls may reach: `{settings.baseUrl}` stands for the host of that setting (a URL or a
+ * bare host, `settingHost`). `unresolved`: the placeholders whose setting names no host, which a refusal names.
+ */
+function apiHostsOf(entry: AccountEntry): { hosts: string[]; unresolved: string[] } {
+  const hosts: string[] = [];
+  const unresolved: string[] = [];
+  for (const h of entry.provider?.descriptor.apiHosts ?? []) {
     const m = h.match(/^\{settings\.([A-Za-z0-9_]+)\}$/);
-    if (!m) return [h];
-    const v = entry.account.settings[m[1]];
-    try {
-      return typeof v === "string" ? [new URL(v).hostname] : [];
-    } catch {
-      return [];
+    if (!m) {
+      hosts.push(h);
+      continue;
     }
-  });
+    const host = settingHost(entry.account.settings[m[1]]);
+    if (host) hosts.push(host);
+    else unresolved.push(h);
+  }
+  return { hosts, unresolved };
 }
 
 /**
@@ -236,11 +242,14 @@ export function accountContext(entry: AccountEntry, opts: { identity?: Identity 
   };
   const signal = opts.signal ?? new AbortController().signal;
   const base = opts.fetchImpl ?? baseFetch;
-  const hosts = apiHostsOf(entry);
+  const { hosts, unresolved } = apiHostsOf(entry);
   const label = `${entry.account.provider}${entry.account.id === "default" ? "" : `@${entry.account.id}`}`;
   const limitedFetch = (async (input: string | URL | Request, init?: RequestInit) => {
     const url = new URL(input instanceof Request ? input.url : String(input));
-    if (url.protocol !== "https:" || !hosts.some((h) => hostMatches(h, url.hostname))) throw new Error(`${label}: ${url.hostname} is not among the provider's API hosts`);
+    if (url.protocol !== "https:" || !hosts.some((h) => hostMatches(h, url.hostname))) {
+      const why = unresolved.map((placeholder) => t("provider.fetch.unresolved", { placeholder }));
+      throw new Error([t("provider.fetch.notApiHost", { label, host: url.hostname }), ...why].join("; "));
+    }
     const timeout = AbortSignal.timeout(25_000);
     try {
       return await base(input, { ...init, signal: AbortSignal.any([signal, timeout, ...(init?.signal ? [init.signal] : [])]) });

@@ -116,6 +116,27 @@ describe("registry", () => {
     expect(statSync(file).mode & 0o777).toBe(0o600);
   });
 
+  test("an API host given by a setting is read from a URL of any scheme or from a bare host; a setting that names none says so", async () => {
+    const r = rig();
+    config(r, {
+      owner: { name: "Alice" },
+      slack: { team: "Acme", workspace: "acme", me: "UALICE" },
+      providers: { mail: { source: { exec: ["./m"] }, accounts: { default: { imapServer: "imap.acme.example", smtpServer: "smtps://smtp.acme.example:465", archive: "not a host" } } } },
+    });
+    const out = await script(r, `
+      const { fakeDescriptor } = await import(${JSON.stringify(join(SCRIPTS, "test-provider.ts"))});
+      registry.addProvider({ descriptor: { ...fakeDescriptor("mail", "Mail"), apiHosts: ["{settings.imapServer}", "{settings.smtpServer}", "{settings.archive}"] }, connect: async () => ({ me: "a", name: "A", workspace: "w" }) });
+      const ctx = registry.accountContext(registry.accountOf("mail", "default"), { fetchImpl: async (input) => new Response(String(input)) });
+      const ok = [];
+      for (const u of ["https://imap.acme.example/imap/login", "https://smtp.acme.example/smtp/send"]) ok.push(await (await ctx.fetch(u)).text());
+      let refused = "";
+      try { await ctx.fetch("https://archive.acme.example/x"); } catch (e) { refused = e.message; }
+      return { ok, refused };
+    `);
+    expect(out.ok).toEqual(["https://imap.acme.example/imap/login", "https://smtp.acme.example/smtp/send"]);
+    expect(out.refused).toBe("mail: archive.acme.example is not among the provider's API hosts; apiHosts {settings.archive}: that setting is neither a URL nor a host name");
+  });
+
   test("an account's fetch reaches its API hosts only, its store stays in its folder, its logs mask its secrets", async () => {
     const r = rig();
     const out = await script(r, `

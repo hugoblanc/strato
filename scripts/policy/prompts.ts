@@ -251,6 +251,21 @@ export function untrustedRule(): string {
 }
 
 /**
+ * The task fields a tool's audience asks for, as a session writes them on a draft (` audience.to="<…>"`…), or "".
+ * Slack declares none: its prompts are unchanged.
+ */
+export function audienceFields(provider: string | null): string {
+  const specs = Object.values(descriptorOf(provider ?? "")?.audience ?? {});
+  const any = (k: "to" | "cc" | "subject" | "visibility") => specs.some((x) => !!x?.[k]);
+  return [
+    any("to") ? ' audience.to="<the recipients, addresses separated by commas>"' : "",
+    any("cc") ? ' audience.cc="<the copies, or ->"' : "",
+    any("subject") ? ' subject="<the subject line, or - for the thread\'s own>"' : "",
+    any("visibility") ? " visibility=<public|internal>" : "",
+  ].join("");
+}
+
+/**
  * Rule added by the code to the prompt of a topic of a tool other than Slack: the templates an installation overrides
  * were written for Slack topics and may name only Slack's tools. Empty for a Slack topic, and for a tool Strato cannot
  * read (the session then reads it through the tool's MCP server, as before).
@@ -263,7 +278,9 @@ export function contextRule(key: string, script: string): string {
   const where = v.topic_target_format ? `; a draft's destination is written this way: ${v.topic_target_format}` : "";
   // the topic's own tool acts behind the board's Go: its words for a comment, a status or an assignee
   const own = actsOnThreads(p.provider, p.account) ? oneLine(descriptorOf(p.provider)?.vocabulary.targetFormat ?? "") : "";
-  const acts = own && own !== v.topic_target_format ? ` On the ${v.topic_thread_word} itself, write a task this way, and ${settings().owner.name} gives the Go on the board: ${own}.` : "";
+  const fields = audienceFields(p.provider);
+  const who = fields ? ` A draft there names who receives it, all of which ${settings().owner.name} sees before the Go:${fields}.` : "";
+  const acts = own && own !== v.topic_target_format ? ` On the ${v.topic_thread_word} itself, write a task this way, and ${settings().owner.name} gives the Go on the board: ${own}.${who}` : "";
   return `\n\nContext: this topic comes from ${untrusted(v.topic_source)}. Read its ${untrusted(v.topic_thread_word)} with ${command}, whatever this prompt says about another tool${untrusted(where)}.${untrusted(acts)}`;
 }
 
@@ -285,7 +302,7 @@ function cardCommand(script: string, key: string, statuses: string, kinds: strin
   const S = commandForEntry(script);
   const hint = descriptorOf(draftReaderOf(key) ?? "")?.vocabulary.targetHint ?? "destination";
   const add: Record<string, string> = {
-    draft: `${S} task ${key} add kind=draft ask="<what is asked, one sentence>" proposal="<what you propose, one sentence>" draft="<the exact text as it will go out>" draftTo="<${oneLine(hint)}>" action="post the draft in <draftTo>"`,
+    draft: `${S} task ${key} add kind=draft ask="<what is asked, one sentence>" proposal="<what you propose, one sentence>" draft="<the exact text as it will go out>" draftTo="<${oneLine(hint)}>"${audienceFields(draftReaderOf(key))} action="post the draft in <draftTo>"`,
     action: `${S} task ${key} add kind=action ask="<what is asked, one sentence>" proposal="<what you propose, one sentence>" action="<the exact action that goes out on go>"`,
     decision: `${S} task ${key} add kind=decision ask="<the choice ${owner} has to make, one sentence>" proposal="<the option you recommend, one sentence>"`,
     question: `${S} task ${key} add kind=question ask="<the question to ${owner}, one sentence>" proposal="<your best answer, if you have one>"`,

@@ -7,7 +7,7 @@
  * Pure: no I/O. The hash is computed here, the state is read and written by app/act.ts.
  */
 import { createHash } from "node:crypto";
-import type { Action, ActionKind, ProviderDescriptor, Target } from "../providers/sdk.ts";
+import type { Action, ActionKind, Audience, AudienceSpec, ProviderDescriptor, Target } from "../providers/sdk.ts";
 import { t } from "./i18n.ts";
 import { parseKey } from "./keys.ts";
 import { descriptorOf, providerLabel } from "./links.ts";
@@ -88,17 +88,36 @@ export function textKind(target: Target): "reply" | "post" | "comment" {
 const normalizeText = (text: string) => text.replace(/\r\n/g, "\n").trim();
 
 /**
- * The plan a draft task carries out: its text (the person's own edit when given), to its target as the provider
- * resolved it. The same resolution the board shows (core/targets.ts).
+ * The audience a text action carries: the task's fields its tool declares for that kind, and nothing else, so the
+ * person sees exactly who receives it; the declared default visibility when the task names none. Null: none.
  */
-export function planOfTask(s: Pick<Sujet, "key" | "channel" | "conversation">, x: Pick<Task, "kind" | "draft" | "action" | "draftTo" | "to" | "act" | "value">, edited: string | null = null): { plan: ActionPlan } | Refusal {
+export function audienceOf(spec: AudienceSpec | undefined, given: Audience | undefined): Audience | null {
+  if (!spec) return null;
+  const a: Audience = {};
+  if (spec.to && given?.to?.length) a.to = [...given.to];
+  if (spec.cc && given?.cc?.length) a.cc = [...given.cc];
+  const visibility = given?.visibility ?? spec.visibility?.default;
+  if (spec.visibility && visibility) a.visibility = visibility;
+  return Object.keys(a).length ? a : null;
+}
+
+/**
+ * The plan a draft task carries out: its text (the person's own edit when given), to its target as the provider
+ * resolved it, with the audience and subject its tool declares. The same resolution the board shows (core/targets.ts).
+ */
+export function planOfTask(s: Pick<Sujet, "key" | "channel" | "conversation">, x: Pick<Task, "kind" | "draft" | "action" | "draftTo" | "to" | "act" | "value" | "audience" | "subject">, edited: string | null = null): { plan: ActionPlan } | Refusal {
   if (x.act) return actPlanOf(s, x);
   const text = normalizeText(edited ?? taskDraftText(x));
   if (!text) return refuse("empty", t("board.api.draftEmpty"));
   const dest = resolveTarget(s, x);
   if (!isResolved(dest)) return refuse(dest.noTool ? "tool" : "target", dest.error);
   const target = { scope: dest.target.scope, native: dest.target.native, label: dest.target.label };
-  return { plan: { provider: dest.provider, account: dest.account, actions: [{ kind: textKind(target), target, text }] } };
+  const kind = textKind(target);
+  const spec = descriptorOf(dest.provider)?.audience?.[kind];
+  const audience = audienceOf(spec, x.audience);
+  const subject = kind !== "comment" && spec?.subject && x.subject?.trim() ? x.subject.trim() : "";
+  const action = { kind, target, text, ...(subject ? { subject } : {}), ...(audience ? { audience } : {}) } as Action;
+  return { plan: { provider: dest.provider, account: dest.account, actions: [action] } };
 }
 
 /**

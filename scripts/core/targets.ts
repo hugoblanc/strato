@@ -71,17 +71,32 @@ export function draftReaderOf(key: string | null): string | null {
   return readerOf("", key ? topicView({ key, channel: "" }) : null)?.provider ?? null;
 }
 
+/** Why a typed key resolves to the scope it does: the rule `typedScope` applied, for the harness and the guide. */
+export type ScopeRule = "threadInfo" | "tracker" | "mail" | "conversation";
+
 /**
- * A typed `to` key to a target: a thread when its tool reads it as one, a ticket for a tracker, else a conversation
- * (a separate message). Only a configured account is a target.
+ * The scope of a typed key on its tool, and the rule that decided it, in this order: a thread when the tool's
+ * `threadInfo` reads the id as one; a ticket on a tracker; a thread on a mail tool, whose keys always name an email
+ * thread (a mailbox is never a destination); else a conversation, where the text is a separate message.
+ */
+export function typedScope(provider: string, native: string): { scope: Target["scope"]; rule: ScopeRule; info: { conversation: string; at?: number } | null } {
+  const info = pureOf(provider)?.threadInfo?.(native) ?? null;
+  if (info) return { scope: "thread", rule: "threadInfo", info };
+  const kinds = descriptorOf(provider)?.kinds ?? [];
+  if (kinds.includes("tracker")) return { scope: "ticket", rule: "tracker", info };
+  if (kinds.includes("mail")) return { scope: "thread", rule: "mail", info };
+  return { scope: "conversation", rule: "conversation", info };
+}
+
+/**
+ * A typed `to` key to a target, scoped by `typedScope`. Only a configured account is a target.
  */
 function typedTarget(to: string, topic: TopicView | null, channel: string): ResolvedTarget | UnresolvedTarget {
   const p = parseKey(to);
   if (!p || p.long) return { error: t("target.notAKey", { to }), label: to, provider: null };
   if (!linkAccount(p.provider, p.account)) return { error: t("target.noAccount", { tool: toolLabel(p.provider, p.account) }), label: to, provider: p.provider, noTool: true };
-  const info = pureOf(p.provider)?.threadInfo?.(p.native) ?? null;
+  const { scope, info } = typedScope(p.provider, p.native);
   const sameConversation = !!info && !!topic && topic.provider === p.provider && topic.account === p.account && info.conversation === topic.conversation.id;
-  const scope: Target["scope"] = info ? "thread" : descriptorOf(p.provider)?.kinds.includes("tracker") ? "ticket" : "conversation";
   const label = info ? (sameConversation ? channel : info.conversation) : p.native;
   return { provider: p.provider, account: p.account, target: { scope, native: p.native, label } };
 }
@@ -117,7 +132,7 @@ export const toolLabel = (provider: string, account: string): string => `${provi
 /** A text in a tool's markup, as safe HTML for the board: the provider's rendering, else the text escaped. */
 export function renderHtml(provider: string | null, text: string, names?: RenderNames): string {
   const render = provider ? pureOf(provider)?.render : undefined;
-  return render ? render.html(text, names) : escapeHtml(text);
+  return render?.html ? render.html(text, names) : escapeHtml(text);
 }
 
 /** The tool whose markup a key's text is written in, or null. */

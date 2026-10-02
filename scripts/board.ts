@@ -731,6 +731,24 @@ export function draftMissing(s: Sujet): string {
  * separate message, as the provider resolved it. The person served no longer has to ask the session for the thread's
  * exact link before a post. Its words are the provider's (Slack: the channel named in draftTo, else the topic's).
  */
+/**
+ * Who receives a draft, from the plan the Go covers: its recipients, copies, subject and visibility, on a tool that
+ * declares them (mail, support desks). Empty for a plan without them, so a Slack draft renders as it always did.
+ */
+function audienceLine(plan: ReturnType<typeof planOfTask>): string {
+  const a = "plan" in plan ? plan.plan.actions[0] : undefined;
+  if (!a || (a.kind !== "post" && a.kind !== "reply" && a.kind !== "comment")) return "";
+  const audience = a.audience ?? {};
+  const subject = a.kind !== "comment" ? a.subject : undefined;
+  const parts = [
+    ...(audience.to?.length ? [t("board.draft.to", { list: audience.to.join(", ") })] : []),
+    ...(audience.cc?.length ? [t("board.draft.cc", { list: audience.cc.join(", ") })] : []),
+    ...(subject ? [t("board.draft.subject", { subject })] : []),
+    ...(audience.visibility ? [t(audience.visibility === "internal" ? "board.draft.visibility.internal" : "board.draft.visibility.public")] : []),
+  ];
+  return parts.length ? `\n<p class="mt-1 break-words text-[12.5px] leading-snug text-muted" data-draft-audience>${parts.map(escapeHtml).join(" · ")}</p>` : "";
+}
+
 function draftToLink(x: Pick<Task, "draftTo" | "to">, dest: ResolvedTarget | UnresolvedTarget): string {
   const label = `→ ${escapeHtml(clip((isResolved(dest) ? dest.target.label : dest.label) || "?", 44))}`;
   const href = isResolved(dest) ? targetLink(dest) : null;
@@ -810,7 +828,7 @@ function taskBox(s: Sujet, x: Task, hint: boolean): string {
     const plan = planOfTask(s, x);
     const sha = "plan" in plan ? ` data-sha="${planSha(plan.plan)}"` : "";
     return `<form class="max-w-[78ch] cursor-auto rounded-lg border border-accent/40 bg-accent-soft/30 px-4 py-3" data-draft data-key="${key}" data-task="${id}" data-draft-to="${escapeHtml(x.draftTo ?? "")}"${sha}${maybe ? " data-retry" : ""} data-postable="${why || viaSession || shadow ? "0" : "1"}">
-<div class="flex items-center gap-2 text-[12.5px]"><span class="font-semibold text-accent-ink">${t("board.draft.label")}</span>${draftToLink(x, dest)}<span class="ml-auto shrink-0 text-[11.5px] tabular-nums text-muted">${t("board.draft.chars", { n: text.length })}</span></div>
+<div class="flex items-center gap-2 text-[12.5px]"><span class="font-semibold text-accent-ink">${t("board.draft.label")}</span>${draftToLink(x, dest)}<span class="ml-auto shrink-0 text-[11.5px] tabular-nums text-muted">${t("board.draft.chars", { n: text.length })}</span></div>${audienceLine(plan)}
 <div class="mt-1.5 max-h-80 overflow-y-auto whitespace-pre-wrap text-[13.5px] leading-relaxed text-ink" data-draft-text>${draftHtml(tool ?? providerOfKey(s.key), text)}</div>
 <textarea name="draft" rows="${Math.min(14, Math.max(4, text.split("\n").length + Math.ceil(text.length / 90)))}" hidden data-draft-edit class="mt-1.5 w-full resize-y rounded-md border border-line bg-bg px-2.5 py-2 text-[13.5px] leading-relaxed focus:border-accent focus:outline-none focus:ring-2 focus:ring-accent/20">${escapeHtml(text)}</textarea>
 ${legacy ? `<p class="mt-1 text-[11.5px] text-muted">${t("board.draft.legacy")}</p>` : ""}

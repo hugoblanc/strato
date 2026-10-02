@@ -11,6 +11,7 @@
  *
  * Pure module: no I/O. It imports only types from sujet.ts, which imports it.
  */
+import type { Audience } from "../providers/sdk.ts";
 import type { InFlight, SentRecord, UnknownOutcome } from "./gate.ts";
 import { t } from "./i18n.ts";
 import { parseKey } from "./keys.ts";
@@ -47,6 +48,14 @@ export interface Task {
   act?: TaskAct;
   /** What `act` sets: the status's name, or the assignee (an email, a name, "me", "none"). */
   value?: string;
+  /**
+   * Who sees the draft, on a tool whose descriptor declares an audience (mail, support desks): recipients, copies,
+   * public reply or internal note. Written as `audience.to`, `audience.cc` and `visibility`; the gate keeps the fields
+   * the tool declares, and the person sees them before the Go.
+   */
+  audience?: Audience;
+  /** The subject line of the draft, on a tool that declares one (mail). */
+  subject?: string;
   createdAt: string;
   updatedAt: string;
   status: TaskStatus;
@@ -70,8 +79,15 @@ export const TASK_ACTS = ["setStatus", "assign"] as const;
 export type TaskAct = (typeof TASK_ACTS)[number];
 
 /** The fields a session writes on a task. */
-export const TASK_FIELDS = ["kind", "ask", "proposal", "action", "draft", "draftTo", "to", "act", "value"] as const;
+export const TASK_FIELDS = ["kind", "ask", "proposal", "action", "draft", "draftTo", "to", "act", "value", "audience.to", "audience.cc", "visibility", "subject"] as const;
 type TaskField = (typeof TASK_FIELDS)[number];
+
+/** The fields that write a task's `audience` and `subject` rather than a field of the same name. */
+const AUDIENCE_FIELDS = ["audience.to", "audience.cc", "visibility", "subject"] as const;
+type AudienceField = (typeof AUDIENCE_FIELDS)[number];
+const isAudienceField = (k: string): k is AudienceField => (AUDIENCE_FIELDS as readonly string[]).includes(k);
+/** At most this many addresses in `audience.to` or `audience.cc`. */
+const MAX_RECIPIENTS = 50;
 
 /** What the task functions read and write on a topic. */
 type TaskHost = Pick<Sujet, "status" | "gate" | "updatedAt" | "history" | "title"> &
@@ -218,13 +234,55 @@ function parseFields(kv: Record<string, string>): Partial<Record<TaskField, stri
     if (!(TASK_FIELDS as readonly string[]).includes(k)) throw new Error(`unknown task field: ${k} (${TASK_FIELDS.join(", ")})`);
     if (k === "kind" && !(TASK_KINDS as readonly string[]).includes(v)) throw new Error(`unknown kind: ${v} (${TASK_KINDS.join(", ")})`);
     if (k === "act" && clean(v) && !(TASK_ACTS as readonly string[]).includes(clean(v))) throw new Error(`unknown act: ${v} (${TASK_ACTS.join(", ")})`);
+    if (k === "visibility" && clean(v) && !["public", "internal"].includes(clean(v))) throw new Error(`unknown visibility: ${v} (public, internal)`);
     out[k as TaskField] = k === "kind" ? v : clean(v);
   }
   return out;
 }
 
+/** Addresses written `alice@acme.example, bob@acme.example`: trimmed, the empty ones left out. */
+const addressList = (v: string): string[] =>
+  v
+    .split(",")
+    .map((x) => x.trim())
+    .filter(Boolean);
+
+/**
+ * The task with the audience fields a session wrote applied: `audience.to` and `audience.cc` as lists of addresses,
+ * `visibility`, `subject`; an empty value (or "-") removes one. The other fields are left to the caller.
+ */
+function withAudience(x: Task, f: Partial<Record<TaskField, string>>): Task {
+  if (!AUDIENCE_FIELDS.some((k) => k in f)) return x;
+  const audience: Audience = { ...(x.audience ?? {}) };
+  if ("audience.to" in f) audience.to = addressList(f["audience.to"] ?? "");
+  if ("audience.cc" in f) audience.cc = addressList(f["audience.cc"] ?? "");
+  if ("visibility" in f) audience.visibility = (f.visibility || undefined) as Audience["visibility"];
+  const kept = Object.fromEntries(Object.entries(audience).filter(([, v]) => v !== undefined && !(Array.isArray(v) && !v.length))) as Audience;
+  const subject = "subject" in f ? (f.subject ?? "") : (x.subject ?? "");
+  const { audience: _a, subject: _s, ...rest } = x;
+  return { ...rest, ...(Object.keys(kept).length ? { audience: kept } : {}), ...(subject ? { subject } : {}) };
+}
+
+/** The fields of a task that are not audience fields, as the task stores them. */
+const plainFields = (f: Partial<Record<TaskField, string>>): Partial<Task> => Object.fromEntries(Object.entries(f).filter(([k]) => !isAudienceField(k))) as Partial<Task>;
+
+/** What is wrong in a task's audience and subject, or null: they go with a draft, one address per entry, one line. */
+function invalidAudience(x: Pick<Task, "draft" | "audience" | "subject">): string | null {
+  const a = x.audience ?? {};
+  if ((a.to?.length || a.cc?.length || a.visibility || x.subject) && !x.draft) return "audience.to, audience.cc, visibility and subject go with a draft: the text they are about";
+  for (const [field, list] of [["audience.to", a.to ?? []], ["audience.cc", a.cc ?? []]] as const) {
+    if (list.length > MAX_RECIPIENTS) return `${field} names more than ${MAX_RECIPIENTS} addresses`;
+    // biome-ignore lint/suspicious/noControlCharactersInRegex: control characters are what this refuses
+    const bad = list.find((v) => v.length > 254 || /[\s<>"\u0000-\u001f\u007f]/.test(v) || !v.includes("@"));
+    if (bad !== undefined) return `${field}: "${truncate(bad, 80)}" is not one address; write addresses separated by commas, such as alice@acme.example, bob@acme.example`;
+  }
+  // biome-ignore lint/suspicious/noControlCharactersInRegex: control characters are what this refuses
+  if (x.subject && (x.subject.length > 998 || /[\u0000-\u001f\u007f]/.test(x.subject))) return "subject is one line of at most 998 characters";
+  return null;
+}
+
 /** A task that cannot be shown or carried out as written: the reason, or null. */
-function invalid(x: Pick<Task, "kind" | "ask" | "draft" | "draftTo" | "to" | "action" | "act" | "value">): string | null {
+function invalid(x: Pick<Task, "kind" | "ask" | "draft" | "draftTo" | "to" | "action" | "act" | "value" | "audience" | "subject">): string | null {
   if (!x.ask) return "ask is required: what is asked, one sentence";
   if (x.act) {
     if (x.kind !== "action") return `act=${x.act} goes with kind=action`;
@@ -235,7 +293,7 @@ function invalid(x: Pick<Task, "kind" | "ask" | "draft" | "draftTo" | "to" | "ac
   if (x.draft && !x.draftTo && !x.to) return "draft requires draftTo: the channel and the thread link, or the channel id and \"new message\" (or to=<key>)";
   if (x.to && !parseKey(x.to)) return `to=${x.to} is not a key: the key of a thread or of a conversation, such as C0123456789:1759219200.000100`;
   if (x.kind === "action" && !x.action && !x.act) return "kind=action requires action: the exact action that goes out on go";
-  return null;
+  return invalidAudience(x);
 }
 
 // ------------------------------------------------------------------ state of the topic
@@ -266,7 +324,7 @@ export function addTask<S extends TaskHost>(s: S, kv: Record<string, string>, no
   const f = parseFields(kv);
   if (!f.kind) throw new Error(`kind is required (${TASK_KINDS.join(", ")})`);
   const tasks = tasksOf(s);
-  const task: Task = {
+  const task: Task = withAudience({
     id: nextTaskId(tasks),
     kind: f.kind as TaskKind,
     ask: f.ask ?? "",
@@ -281,7 +339,7 @@ export function addTask<S extends TaskHost>(s: S, kv: Record<string, string>, no
     updatedAt: now,
     status: "open",
     origin,
-  };
+  }, f);
   const why = invalid(task);
   if (why) throw new Error(why);
   const next = { ...s, tasks: [...tasks, task], updatedAt: now, history: [...s.history, historyLine(`task add ${task.id} kind=${task.kind} ask=${truncate(task.ask, 80)}`, now)] };
@@ -318,7 +376,7 @@ export function editTask<S extends TaskHost>(s: S, id: string, kv: Record<string
   const x = tasks.find((y) => y.id === id);
   if (!x) throw new Error(`no task ${id} in this topic (${tasks.map((y) => y.id).join(", ") || "none"})`);
   if (x.status !== "open") throw new Error(`task ${id} is ${x.status}: add a new task instead`);
-  const edited: Task = { ...x, ...(f as Partial<Task>), updatedAt: now };
+  const edited: Task = withAudience({ ...x, ...plainFields(f), updatedAt: now }, f);
   const why = invalid(edited);
   if (why) throw new Error(why);
   const next = { ...s, tasks: tasks.map((y) => (y.id === id ? edited : y)), updatedAt: now, history: [...s.history, historyLine(`task edit ${id} ${Object.keys(f).join(" ")}`, now)] };

@@ -182,6 +182,24 @@ export function hostMatches(pattern: string, hostname: string): boolean {
 }
 
 /**
+ * The host a setting names for `apiHosts`' `{settings.<name>}`: a URL of any scheme (`https://tickets.example`,
+ * `imaps://imap.acme.example:993`), or a bare host with an optional port (`imap.acme.example`). Null otherwise.
+ */
+export function settingHost(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const v = value.trim();
+  if (/^[a-z][a-z0-9+.-]*:\/\//i.test(v)) {
+    try {
+      return new URL(v).hostname.toLowerCase() || null;
+    } catch {
+      return null;
+    }
+  }
+  const m = /^([a-z0-9](?:[a-z0-9-]{0,62})(?:\.[a-z0-9](?:[a-z0-9-]{0,62}))*)(?::[0-9]{1,5})?$/i.exec(v);
+  return m ? m[1].toLowerCase() : null;
+}
+
+/**
  * The link in a pasted reference: the reference itself, the first http(s) link of a text, or a link written without
  * its scheme (`acme.slack.com/archives/…`). Null over 2 KiB.
  */

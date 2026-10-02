@@ -1,10 +1,11 @@
 /**
  * The provider interface: what a provider declares and implements, and what Strato gives it.
  * Types only, without imports or values, so that this file is a valid declaration file as it is printed
- * (docs/design/providers.md, sections 4 and 13.3). `PROVIDER_API` and `defineProvider` live in providers/api.ts.
+ * (`strato provider types`). A module imports types from it and nothing else; the guide (`strato provider guide`)
+ * explains each part, and its section numbers are the ones cited here.
  *
- * A provider speaks native ids only (`C0ACME0001:1759219200.000100`, `PLAT-12`): the core builds, escapes and parses
- * the keys (core/keys.ts) and evaluates the declared link patterns (core/links.ts).
+ * A provider speaks native ids only (`C0ACME0001:1759219200.000100`, `PLAT-12`): Strato builds, escapes and parses
+ * the keys, and evaluates the declared link patterns (guide, sections 2 and 9).
  */
 
 // ------------------------------------------------------------------ descriptor
@@ -18,8 +19,13 @@ export interface ProviderDescriptor {
   /** Lowercase, `^[a-z][a-z0-9-]{1,30}$`. It prefixes the keys of this provider: never renamed once used. */
   id: string;
   label: Text;
-  /** The `PROVIDER_API` versions this provider was written for. */
+  /** The provider interface versions this provider was written for: `{ min: 1, max: 1 }` today. */
   api: { min: number; max: number };
+  /**
+   * What the tool is; it decides how a typed destination is read (guide, section 5): a key of a `tracker` names a
+   * ticket (a text there is a `comment`), a key of a `mail` tool names an email thread (a `reply`); `chat` and `forge`
+   * bring no default of their own.
+   */
   kinds: ProviderKind[];
   capabilities: Capabilities;
   /** Official flows only; empty only for a provider of local data (an account then says `auth: "none"`). The first one is the default offered by setup. */
@@ -31,11 +37,18 @@ export interface ProviderDescriptor {
   links: LinkSpec;
   /** Hosts of the links this provider builds: the board opens them, and only them, for this provider's keys. A leading `*.` matches any subdomain. */
   hosts: string[];
-  /** Hosts its API calls may reach; `{settings.baseUrl}` stands for the host of that setting. */
+  /**
+   * Hosts its API calls may reach; `{settings.baseUrl}` stands for the host of that setting, written as a URL of any
+   * scheme (`https://tickets.example`, `imaps://imap.acme.example:993`) or as a bare host (`imap.acme.example`).
+   */
   apiHosts: string[];
   /** Bare ticket ids (`PLAT-12`) this provider claims: the prefixes come from this string[] setting. */
   ticketIds?: { prefixesFrom: string };
-  /** Per text action kind, the audience fields the tool has; each one declared here is required on a plan. */
+  /**
+   * Per text action kind, the audience fields the tool has. A task carries them (`audience.to`, `audience.cc`,
+   * `visibility`, `subject`), the person sees them before the Go, and `to` and `visibility`, when declared, are
+   * required on a plan.
+   */
   audience?: Partial<Record<"post" | "reply" | "comment", AudienceSpec>>;
   /** Longest text an action may carry, in characters. */
   maxText?: number;
@@ -115,6 +128,11 @@ export type AuthKind = "user-token" | "api-key" | "app-password" | "oauth2";
 export interface AuthMethod {
   /** "user-token", "oauth-pkce", "api-key". Stored in the account's `auth` field. */
   id: string;
+  /**
+   * `api-key`: a key or a personal access token the person creates in the tool's settings and pastes;
+   * `app-password`: a password the tool generates for one program (IMAP, CalDAV); `user-token`: a token issued to an
+   * app the person creates (a Slack app's user token); `oauth2`: the authorization code flow on a loopback redirect.
+   */
   kind: AuthKind;
   label: Text;
   /** Its trade-off in one sentence, shown next to the label when setup offers the methods. */
@@ -124,7 +142,11 @@ export interface AuthMethod {
   steps: AuthStep[];
   /** What setup stores in the account's secret file, by name. Never in config.json. */
   stores: SecretSpec[];
-  /** Scopes requested, and what stops working without each: `setup --check` lists the missing ones. */
+  /**
+   * Scopes requested, and what stops working without each. Informative: setup prints them, and Strato does not check
+   * them, since many tools do not say which scopes a token holds; a provider that can tell reports a missing one from
+   * `setup.check`.
+   */
   scopes?: { scope: string; why: Text }[];
   /** What this method cannot do, removed from the descriptor's capabilities. */
   limits?: CapabilityLimits;
@@ -157,8 +179,8 @@ export type AuthStep =
 
 /**
  * OAuth 2.0 authorization code on the loopback redirect `http://<redirectHost>:<ui.oauthPort>/oauth/callback`
- * (docs/design/providers.md, section 11.2). The client id comes from the account's `clientId` setting when it says
- * "setting"; a client secret only where the service requires one even with PKCE, pasted once.
+ * (guide, section 11). The client id comes from the account's `clientId` setting when it says "setting"; a client
+ * secret only where the service requires one even with PKCE, pasted once.
  */
 export interface OAuthStep {
   kind: "oauth";
@@ -186,7 +208,11 @@ export interface OAuthStep {
 export interface SecretSpec {
   /** Name in the secret file: `SLACK_USER_TOKEN`, `LINEAR_API_KEY`. */
   name: string;
-  /** Environment variables also accepted, first match wins (legacy sources). */
+  /**
+   * Environment variables Strato also reads this secret from, for the account named `default` only, when its secret
+   * file does not hold it; first match wins. Strato reads them in its own environment and hands the value over like
+   * any secret (`ctx.secret`, or `initialize` for an executable): a provider never reads its own environment.
+   */
   env?: string[];
   /** Rewritten by Strato when the provider refreshes it (OAuth refresh tokens). */
   refreshable?: boolean;
@@ -223,7 +249,10 @@ export interface Identity {
 
 export type ConversationKind = "dm" | "group" | "channel" | "ticket" | "email";
 
-/** What happened: a message or a comment, an issue created, a status change, an assignment. */
+/**
+ * What happened: a message or a comment, an issue created, a status change, an assignment. `assigned` covers every
+ * event that asks the person to act (an assignment, a review request).
+ */
 export type ItemEvent = "message" | "comment" | "created" | "status" | "assigned";
 
 export interface Item {
@@ -241,8 +270,8 @@ export interface Item {
   /** Unix ms. */
   time: number;
   /**
-   * https link to the item, else to its thread. The core drops it unless it is https, on `hosts`, without whitespace
-   * nor credentials, and percent-encodes what a shell would read in it.
+   * https link to the item, else to its thread, else "" when the tool has no link. Strato drops it unless it is https,
+   * on `hosts`, without whitespace nor credentials, and percent-encodes what a shell would read in it.
    */
   link: string;
   /** The person, or one of their groups, is mentioned; or the tool says the item targets them (assignment). */
@@ -254,8 +283,11 @@ export interface Item {
    * edit of an item once, even when overlapping polls report it again.
    */
   edited?: { before: Pick<Item, "mentionsMe" | "targetsOther"> };
-  /** Why the tool notified the person, when it says so. Informative, for the event line. */
-  reason?: "assigned" | "mentioned" | "subscribed" | "watched";
+  /**
+   * Why the tool notified the person, when it says so. Informative, except `subscribed`: a thread the person follows,
+   * which triage raises like a thread they took part in (guide, section 8).
+   */
+  reason?: "assigned" | "review_requested" | "mentioned" | "subscribed" | "watched";
 }
 
 // ------------------------------------------------------------------ actions
@@ -270,7 +302,7 @@ export interface Target {
   link?: string;
 }
 
-/** Who sees a text action. Every field the descriptor's `audience` declares for that kind is required. */
+/** Who sees a text action: the fields the descriptor's `audience` declares for its kind, `to` and `visibility` required. */
 export interface Audience {
   to?: string[];
   cc?: string[];
@@ -331,8 +363,9 @@ export interface ContextResult {
   fetchedAt: number;
 }
 
-/** Opaque to the core, made by the provider: a timestamp, a page token, a notification id. */
+/** Opaque to Strato, made by the provider: a timestamp, a page token, a notification id. */
 export interface IngestCursor {
+  /** At most 64 KiB: room for the ids of an overlap window (guide, section 6), not for a copy of the items. */
   value: string;
   /** Unix ms up to which everything is surely read. Only for display and for the catch-up window. */
   at: number;
@@ -436,11 +469,15 @@ export interface Provider {
    */
   parseTarget?(text: string, topic: { thread: string; conversation: { id: string; label: string } }, account: Account): Target | { error: Text; label?: string };
   /**
-   * Pure. The tool's markup to plain text and to safe HTML for the board. Default: the text as is, HTML-escaped.
-   * `names` are the display names the board knows, by the tool's ids, for the mentions in the text.
+   * Pure. The tool's markup to plain text. Default: the text as is. An external provider never sends HTML: Strato
+   * escapes its `plain` text for the board, and `html` (safe HTML, with `names`, the display names the board knows by
+   * the tool's ids) is read from built-in providers only.
    */
-  render?: { plain(text: string): string; html(text: string, names?: RenderNames): string };
-  /** Pure. What a native thread id says by itself: its conversation's id and, when the id carries it, its time (Unix ms). */
+  render?: { plain(text: string): string; html?(text: string, names?: RenderNames): string };
+  /**
+   * Pure. What a native thread id says by itself: its conversation's id and, when the id carries it, its time (Unix
+   * ms). Declaring it makes a typed key of this tool a thread, so a text task there is a `reply` (guide, section 6).
+   */
   threadInfo?(native: string): { conversation: string; at?: number } | null;
   /** Detection and checks for setup and doctor. */
   setup?: SetupModule;
