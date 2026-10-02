@@ -1504,7 +1504,7 @@ It covers:
 
 - how to map a tool's events onto `dm`, `mention`, `canal`, `fil` and `tiers`, with a worked generic example (a ticket tool where a comment that mentions the person is a `mention`, a new issue in a watched project a `canal`, a comment on an issue they commented a `fil`);
 - what a cursor must guarantee and when to set `complete: false` (section 4.8);
-- which `ProviderError` to return per HTTP status: 401 and 403 fatal, 404 `not_found`, 429 `rate_limited` with `retryAfterMs` from `Retry-After`, 5xx retryable, and a timeout during a write `outcome: "unknown"`;
+- which `ProviderError` to return per HTTP status: 401 fatal, a 403 fatal only when the credential itself is refused (a rate-limit 403 is `rate_limited`, a 403 on one resource is not fatal), 404 `not_found`, 429 `rate_limited` with `retryAfterMs` from `Retry-After`, 5xx retryable, and a timeout during a write `outcome: "unknown"`;
 - how to use `idempotencyKey`: pass it to the tool's own idempotency mechanism, or derive the id of the created object from it, and declare the kind in `capabilities.idempotent` only then;
 - audience fields, link patterns, settings with `ask` texts, and the fixture format of the harness.
 
@@ -1603,7 +1603,7 @@ It needs a TTY, and a session caller is refused (section 8.6).
 strato provider new <id> [--exec python] [--dir <folder>]
 ```
 
-It writes `<folder>/<id>/provider.ts` (or `provider.py`, standard library only, single-threaded, every request through `http.fetch`), `strato-provider.d.ts`, `fixtures/sample.json` with expectations, and a `README.md` that points to `strato provider guide`.
+It writes `<state>/providers/<id>/provider.ts`, or `<folder>/provider.ts` with `--dir` (or `provider.py`, standard library only, single-threaded, every request through `http.fetch`), `strato-provider.d.ts`, `fixtures/sample.json` with expectations, and a `README.md` that points to `strato provider guide`.
 The template works as is: a fake source of two items, one comment action with undo, both checked by the harness.
 It prints the `config.json` snippet to add and the `strato provider test` command to run.
 The template and the guide are written so that a Claude Code session given the tool's API documentation can fill it in and run the harness until it passes (the proof stage measures it).
@@ -1957,6 +1957,20 @@ Each stage is one or more commits that leave `bun run check` green and the guard
 - **Compatibility.** Examples only; the guard keeps them free of real names (acme, alice, bob).
 - **Done when.** Check green; and the proof protocol passes: a Claude Code session given only `PROMPT.md`, `strato provider guide`, the scaffold and the OpenAPI file produces a provider for the fictional API that passes the harness within five harness runs, with no edit to Strato.
   The protocol is manual, since it runs a real session; its result is recorded in the stage's merge request, and it is run again whenever `PROVIDER_API` changes.
+- **As built.** Where the stage departs from the text above, and why:
+  - The examples are the two the stage was given, written by outside authors (Claude Code sessions) from the guide and the scaffold alone: `examples/providers/github/` (a TypeScript module: ingest from the issue search and the timelines, since GitHub's notifications API refuses fine-grained tokens; comments with undo) and `examples/providers/email/` (a Python executable over IMAP and SMTP, with a transport that mirrors each operation as an `http.fetch` offline).
+    They replace `maildir`, `jsonl` and `proof/`: their authors' reports of what they could not find or do are the proof protocol's result, and each friction point was fixed in the SDK, the scaffold, the harness or the guide.
+    `PROMPT.md` and the fictional ticket API are not built.
+  - Review fixes in the examples: GitHub's timeline skipped its second page on threads of five pages or more while saying it was complete, and its key format named `github:acme/api#42`, which is not a key (`#` is `%23`); the email provider's real SMTP send could never run (a local variable named like the `server()` helper), and it now requires the recipients the person approved instead of a Reply-button default.
+  - `scripts/examples.test.ts` runs the harness on both examples offline, their own unit tests (`bun test`, `python3 -m unittest`), a strict type-check of the module against its types file alone, and checks that their types file is the SDK as printed; the Python parts are skipped without `python3`.
+    The end-to-end rig test with the fake `claude` (an item to a topic, recipients on the board, Send, Undo, shadow mode) is not built: the audience on the plan, the gate's refusal without recipients and the board's line are unit tested (`audience.test.ts`), and the act path is the one the harness drives.
+  - Audience on tasks, which section 10.2 left for a provider that needs one: `audience.to`, `audience.cc`, `visibility` and `subject` are task fields; `planOfTask` keeps the fields the target's descriptor declares for the text's kind (a declared default visibility applies), so the hash covers them; the board shows them under the draft; `card_command` and the context rule name them only for a tool that declares them, so a Slack-only installation's prompts and board are unchanged.
+  - A typed key of a `mail` tool resolves to a thread (`typedScope` in `core/targets.ts`: `threadInfo`, then `tracker`, then `mail`, else a conversation), so its text is a `reply`; before, an executable mail provider received `post` to a conversation whose id was a thread's.
+  - `apiHosts`' `{settings.<name>}` reads a bare host (`imap.acme.example`) as well as a URL of any scheme; a refused request names the placeholder whose setting names no host.
+  - SDK, additive: `render.html` is optional, `Item.reason` gains `review_requested`, `kinds`, `AuthMethod.kind`, `scopes` (informative), `SecretSpec.env` and `IngestCursor.value` (64 KiB) are documented, and the printed file points to the guide's sections instead of Strato's internal files.
+  - Harness: an executable starts again for each fixture file; the timeout check times out the writes only, on a second attempt; a declared `post`, `reply` or `comment` that no task reaches fails with the rule that sent the text elsewhere, and a text also goes to the conversation's key when `post` is declared; fixtures gain `request.queryContains`, `act.audience`, `act.subject`, `errors` cases and English triage kinds; the network check fails on an exchange never reached, the poll check on a cursor over 64 KiB; the keys line shows the keys; later calls get the identity `connect` returned; `--trace` prints every call, answer and request, secrets masked.
+  - Scaffold: `--dir` names the provider's folder itself (it was its parent), said before anything is written; the README names `<path to this folder>` instead of a local path; a 403 is not fatal; the label is marked as a guess.
+  - Not built: an exec form of `threadInfo` (a descriptor field declaring the shape of thread ids), so an executable chat tool still cannot reply in a thread; a second GitHub auth method with a classic token and `GET /notifications`.
 
 ### roles
 
