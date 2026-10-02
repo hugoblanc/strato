@@ -321,6 +321,8 @@ The board shows one block per open task, with its own age, box and Done / Drop b
 | `draft` | For a message: the text as it will go out, and nothing else |
 | `draftTo` | Where the draft goes: channel and thread link, or a channel id and "new message" |
 | `to` | Where the draft goes, typed: the key of a thread (a reply) or of a conversation such as `slack:C0123456789` (a separate message); it wins over `draftTo` |
+| `audience.to`, `audience.cc` | Who receives the draft, on a tool that declares recipients (mail): addresses separated by commas; the board shows them before the Go, which covers them |
+| `subject`, `visibility` | The draft's subject line (mail), and `public` or `internal` (support desks), on a tool that declares them |
 
 | Topic field | Content |
 | --- | --- |

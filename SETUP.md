@@ -227,9 +227,11 @@ Strato loads it from disk at runtime, without recompiling the binary.
 
 ```bash
 strato provider guide                    # how a provider works, for whoever writes it
-strato provider new tickets              # a working scaffold in <state>/providers/tickets/ (--exec python for a Python one)
-strato provider test tickets-folder      # the offline conformance harness: fake answers from fixtures/, no network
+strato provider new tickets              # a working scaffold in <state>/providers/tickets/ (--exec python for a Python one, --dir <folder> elsewhere)
+strato provider test tickets-folder      # the offline conformance harness: fake answers from fixtures/, no network (--trace shows every call)
 ```
+
+`examples/providers/` holds two providers written by outside authors from the guide alone: `github` (a TypeScript module) and `email` (a Python program over IMAP and SMTP); each folder's README says how to install it.
 
 Then, in your own terminal:
 
