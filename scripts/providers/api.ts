@@ -41,6 +41,15 @@ export function effectiveCapabilities(d: Pick<ProviderDescriptor, "capabilities"
 }
 
 /**
+ * The account connects with one of its provider's auth methods. A links-only account (the `tracker` section without
+ * an account of its own) says "none" for a tool that has methods: Strato recognizes its links and ids, and never reads,
+ * polls nor acts through it. A provider of local data declares no method, and its accounts say "none".
+ */
+export function authUsable(d: Pick<ProviderDescriptor, "auth">, authId: string): boolean {
+  return d.auth.length ? d.auth.some((m) => m.id === authId) : authId === "none";
+}
+
+/**
  * Anything a provider throws, read as a `ProviderError`: an object whose `code` is a string keeps its fields, missing
  * ones default to not retryable and not fatal. Anything else is a crash, retryable; during `act` or `undo` it may have
  * written, so it carries `outcome: "unknown"` and is never retried automatically.

@@ -53,6 +53,9 @@ export function classifyItem(item: Item, key: string, rules: TriageRules, tracke
   if (rules.ignore.includes(item.conversation.id)) return null;
   const kind = untrackedKind(item, key, rules, participated);
   if (kind && authorIgnored(item.author.name, rules.ignoreAuthors)) return "bot";
+  // on a ticket, a bot is an integration or an automation (a synced status, a linked commit): the digest, unless it
+  // targets the person (an automation that assigns them)
+  if (kind && item.author.isBot && item.conversation.kind === "ticket" && !item.mentionsMe) return "bot";
   return kind;
 }
 
@@ -62,7 +65,8 @@ function untrackedKind(item: Item, key: string, rules: TriageRules, participated
   if (item.conversation.kind === "group") return elsewhere ? "tiers" : "dm";
   if (item.mentionsMe) return "mention";
   if (rules.watch.includes(item.conversation.id)) return elsewhere ? "tiers" : "canal";
-  if (participated.has(key)) return elsewhere ? "tiers" : "fil";
+  // a thread the person takes part in, or follows by the tool's own account (a ticket they are subscribed to)
+  if (participated.has(key) || item.reason === "subscribed") return elsewhere ? "tiers" : "fil";
   return null;
 }
 

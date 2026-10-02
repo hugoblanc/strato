@@ -22,7 +22,7 @@ import { textOf } from "../core/links.ts";
 import { type CheckItem, type Detected, profileErrors, shortPath } from "../core/setup.ts";
 import { oauthPortOf, settings, TRACKER_LINK_FIELDS } from "../core/settings.ts";
 import { ACCOUNT_ID, providerError } from "../providers/api.ts";
-import { accountContext, accounts, type AccountEntry, connectRefusal, providerOf, providerViews, type ProviderView } from "../providers/registry.ts";
+import { accountContext, accounts, type AccountEntry, providerOf, providerViews, type ProviderView } from "../providers/registry.ts";
 import type { AuthMethod, Identity } from "../providers/sdk.ts";
 
 const short = (path: string) => shortPath(path, homedir(), process.cwd());
@@ -49,8 +49,6 @@ const methodOf = (e: AccountEntry): AuthMethod | null => e.provider?.descriptor.
 /** Connects one account with what is stored, within `timeoutMs`: who the person is there, or why not and what fixes it. */
 async function accountStatus(e: AccountEntry, cli: string, timeoutMs = 10_000): Promise<AccountStatus> {
   if (!e.provider) return { ok: false, reason: e.problem ?? e.account.provider, fix: null };
-  const refusal = connectRefusal(e.account.provider);
-  if (refusal) return { ok: false, reason: refusal, fix: null };
   const signal = AbortSignal.timeout(timeoutMs);
   try {
     const identity = await Promise.race([
@@ -112,7 +110,7 @@ export function listProviders(cli: string): void {
   const list = providerViews().map((v) => ({
     descriptor: v.descriptor,
     accounts: all.filter((e) => e.account.provider === v.descriptor.id && (e.account.id !== "default" || e.account.provider !== "slack" || settings().slack.team || settings().slack.me)).map((e) => ({ id: e.account.id, label: e.account.label, linksOnly: linksOnly(e) })),
-    refusal: connectRefusal(v.descriptor.id),
+    refusal: null,
   }));
   for (const line of providerListLines(list, cli)) out(line);
 }
@@ -173,8 +171,6 @@ export async function connectCommand(opts: Record<string, string>, cli: string):
   if (!view) fail(t("cli.connect.unknownTool", { id: asked ?? "?", tools: views.map((v) => v.descriptor.id).join(", ") }), 64);
   const d = view.descriptor;
   const tool = textOf(d.label);
-  const refusal = connectRefusal(d.id);
-  if (refusal) fail(refusal);
   const accountId = opts.account && opts.account !== "true" ? opts.account : "default";
   if (accountId !== "default" && !ACCOUNT_ID.test(accountId)) fail(t("cli.connect.accountName", { account: accountId }), 64);
 

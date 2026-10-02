@@ -6,7 +6,7 @@
  * The descriptors are installed at startup with `useProviders`, the way `useSettings` installs the profile (app/env.ts,
  * and test-setup.ts for the tests), so this module stays pure. Native ids only: core/keys.ts turns them into keys.
  */
-import { effectiveCapabilities } from "../providers/api.ts";
+import { authUsable, effectiveCapabilities } from "../providers/api.ts";
 import type { Account, LinkSpec, ProviderDescriptor, ProviderPure, Text } from "../providers/sdk.ts";
 import { DICTIONARIES, locale, type MessageKey, t } from "./i18n.ts";
 import { resolveAccounts, type Settings, settings } from "./settings.ts";
@@ -56,7 +56,17 @@ export function textOf(x: Text): string {
 export function readsThreads(provider: string, account: string): boolean {
   const d = descriptorOf(provider);
   const a = linkAccount(provider, account);
-  return !!d && !!a && effectiveCapabilities(d, a.auth).context;
+  return !!d && !!a && authUsable(d, a.auth) && effectiveCapabilities(d, a.auth).context;
+}
+
+/**
+ * True when Strato writes to this account's threads itself, behind the gate: the account is configured and connects,
+ * and its tool declares at least one action its auth method keeps.
+ */
+export function actsOnThreads(provider: string, account: string): boolean {
+  const d = descriptorOf(provider);
+  const a = linkAccount(provider, account);
+  return !!d && !!a && authUsable(d, a.auth) && effectiveCapabilities(d, a.auth).actions.length > 0;
 }
 
 /** A provider string in English, whatever the person's language: the words a prompt reads (prompts are English). */
@@ -302,13 +312,21 @@ const ticketRegex = (prefixes: string[], flags: string) => new RegExp(`\\b(?:${p
  * Null when no account claims it, or when several do: the id is ambiguous, and only a link names its account.
  */
 export function claimTicketId(text: string): { provider: string; account: string; native: string } | null {
-  if (text.length > LINK_INPUT_MAX) return null;
-  const claims = linkAccounts().flatMap((a) => {
+  const claims = ticketClaims(text);
+  return claims.length === 1 ? claims[0] : null;
+}
+
+/** Every account that claims the first ticket id of a text: more than one, and only a link names the ticket's account. */
+export function ticketClaims(text: string): { provider: string; account: string; native: string }[] {
+  if (text.length > LINK_INPUT_MAX) return [];
+  return linkAccounts().flatMap((a) => {
     const m = a.ticketPrefixes?.length ? text.match(ticketRegex(a.ticketPrefixes, "i")) : null;
     return m ? [{ provider: a.provider, account: a.account, native: m[0].toUpperCase() }] : [];
   });
-  return claims.length === 1 ? claims[0] : null;
 }
+
+/** The ticket prefixes an account claims (`ENG`, `OPS`), empty when it claims none or is not configured. */
+export const ticketPrefixesOf = (provider: string, account: string): string[] => linkAccounts().find((x) => x.provider === provider && x.account === account)?.ticketPrefixes ?? [];
 
 /** True unless the provider claims ticket ids and this native id is not one of the account's (a prefix it does not have). */
 export function passesTicketIds(provider: string, account: string, native: string): boolean {

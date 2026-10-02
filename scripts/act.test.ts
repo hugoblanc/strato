@@ -374,8 +374,8 @@ describe("one act path", () => {
   test("only app/act.ts reaches a provider's writes, through the registry's actorOf", () => {
     const files = program();
     expect(files.map((f) => f.file)).toContain("app/act.ts");
-    expect(files.filter((f) => WRITES.test(f.file)).map((f) => f.file)).toEqual(["providers/slack/act.ts"]);
-    expect(files.filter((f) => f.imports.includes("providers/slack/act.ts")).map((f) => f.file)).toEqual(["providers/registry.ts"]);
+    expect(files.filter((f) => WRITES.test(f.file)).map((f) => f.file)).toEqual(["providers/linear/act.ts", "providers/slack/act.ts"]);
+    for (const writes of ["providers/slack/act.ts", "providers/linear/act.ts"]) expect(files.filter((f) => f.imports.includes(writes)).map((f) => f.file)).toEqual(["providers/registry.ts"]);
     expect(actPathViolations(files)).toEqual([]);
   });
 
@@ -392,6 +392,8 @@ describe("one act path", () => {
       "server/sneaky-dynamic.ts": `export const go = async () => (await import("../providers/slack/act.ts")).slackWrites;\n`,
       "core/sneaky-fetch.ts": `export const go = (m: string) => fetch("https://slack.com/api/" + m, { method: "POST" });\n`,
       "providers/tickets/index.ts": `export const go = (q: (s: string) => void) => q("mutation { issueDelete(id: 1) { success } }");\n`,
+      "providers/linear/index.ts": `${readFileSync(join(SCRIPTS, "providers/linear/index.ts"), "utf8")}\nexport const go = (c: never) => linearQuery(c, "mutation { commentDelete(id: \\"x\\") { success } }");\n`,
+      "server/sneaky-linear.ts": `import { linearWrites } from "../providers/linear/act.ts";\nexport const go = (c: never) => linearWrites.act(c, c);\n`,
     };
     for (const [file, src] of Object.entries(sneaky)) {
       const patched = [...files.filter((f) => f.file !== file), scan(file, src)];

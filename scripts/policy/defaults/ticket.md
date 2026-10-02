@@ -5,7 +5,7 @@ Link: {{url}}
 Topic key: {{key}}
 
 Your job: implement the ticket up to a merge request towards {{integration_branch}} ready to merge, so that {{owner}} only has to say go.
-1. Read the ticket and its comments (tracker MCP), then the CLAUDE.md of every repository you touch.
+1. Read the ticket and its comments ({{topic_read_thread}}), then the CLAUDE.md of every repository you touch.
 2. Work in a dedicated worktree per repository, on a branch feat/{{issue_lower}}-<short topic> started from {{integration_branch}}. Never touch the worktrees of other sessions.
 3. Write the tests, then make typecheck, lint and unit tests pass with the commands of the repository's CLAUDE.md.
 4. Have the diff reviewed by an adversarial agent before opening the merge request, and fix what is real.

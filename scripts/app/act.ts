@@ -10,7 +10,7 @@ import { linkOfNative } from "../core/links.ts";
 import { findSujet, type Sujet } from "../core/sujet.ts";
 import { toolLabel } from "../core/targets.ts";
 import { closeTask, findTask, reopenTask, type Task, tasksOf } from "../core/tasks.ts";
-import { effectiveCapabilities, providerError } from "../providers/api.ts";
+import { authUsable, effectiveCapabilities, providerError } from "../providers/api.ts";
 import { accountContext, accountOf, actorOf, type AccountEntry } from "../providers/registry.ts";
 import type { ActResult, ProviderError } from "../providers/sdk.ts";
 import { nowIso, shadowNow } from "./env.ts";
@@ -25,8 +25,8 @@ export type ActOutcome =
 /** What the gate knows of the account a plan goes through, from the registry. */
 function gateAccount(plan: ActionPlan | null): { entry: AccountEntry | null; account: GateAccount } {
   const entry = plan ? accountOf(plan.provider, plan.account) : null;
-  // a provider that declares actions without implementing them (Linear before its stage) acts on nothing
-  const usable = !!entry?.provider && !entry.problem && !!(entry && actorOf(entry)?.act);
+  // a provider that declares actions without implementing them acts on nothing, nor does a links-only account
+  const usable = !!entry?.provider && !entry.problem && authUsable(entry.provider.descriptor, entry.account.auth) && !!(entry && actorOf(entry)?.act);
   return {
     entry,
     account: {

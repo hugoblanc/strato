@@ -135,7 +135,7 @@ describe("validation of the providers section", () => {
     ]);
     expect(err({ linear: { accounts: { default: { workspace: "other" } } } })).toEqual(['The Linear workspace and ticket prefixes come from the "tracker" section; set them there, not here (providers.linear.accounts.default.workspace)']);
     expect(err({ linear: { accounts: { default: { workspace: "acme", prefixes: ["ENG"] } } } }, { tracker: null })).toEqual([]);
-    expect(err({ linear: { accounts: { default: { colour: "red" } } } })).toEqual(['Linear has no setting "colour"; its settings are workspace, prefixes, clientId, watchTeams, ignoreTeams, ignoreAuthors (providers.linear.accounts.default.colour)']);
+    expect(err({ linear: { accounts: { default: { colour: "red" } } } })).toEqual(['Linear has no setting "colour"; its settings are workspace, prefixes, clientId, watchTeams, ignoreTeams, ignoreAuthors, desktopApp (providers.linear.accounts.default.colour)']);
     expect(err([])).toEqual(["Expected object here, got array (providers)"]);
   });
 

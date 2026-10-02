@@ -48,7 +48,7 @@ describe("registry", () => {
     ]);
   });
 
-  test("a named Slack account connects with its own token only, and Linear connects nowhere", async () => {
+  test("a named Slack account connects with its own token only, and a links-only Linear account does not connect", async () => {
     const r = rig();
     config(r, { owner: { name: "Alice" }, slack: { team: "Acme", workspace: "acme", me: "UALICE" }, tracker: { workspace: "acme", prefixes: ["ENG"] }, providers: { slack: { accounts: { partners: { workspace: "acme-partners" } } } } });
     const out = await script(
@@ -66,7 +66,7 @@ describe("registry", () => {
     );
     expect(out).toEqual([
       ["invalid_auth", true],
-      ["unsupported", true],
+      ["links_only", true],
     ]);
   });
 

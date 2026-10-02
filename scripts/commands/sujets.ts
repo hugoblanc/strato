@@ -11,7 +11,8 @@ import { attention, inboundNote, isStuck, routeDecision } from "../claude/model.
 import { gateLine } from "../core/cards.ts";
 import { locale, t } from "../core/i18n.ts";
 import { canonicalKey, conversationOfKey, parseKey, sujetKey, threadOfKey, ticketUrl } from "../core/keys.ts";
-import { providerLabel } from "../core/links.ts";
+import { providerLabel, ticketClaims } from "../core/links.ts";
+import { toolLabel } from "../core/targets.ts";
 import { missingSettings, settings } from "../core/settings.ts";
 import { accountLines } from "./connect.ts";
 import { cliCommand, nextLine, short } from "./setup.ts";
@@ -87,6 +88,9 @@ export async function open(args: string[]) {
   const ref = positional[0] ?? kept?.permalink;
   // a message of a tool whose link was not kept ("-"): the key it was kept with
   const key = (ref ? sujetKey(ref) : null) ?? (!positional[0] && kept?.key ? canonicalKey(kept.key) : null);
+  // a bare ticket id two trackers claim: only its link says which one
+  const claims = ref && !key ? ticketClaims(ref) : [];
+  if (claims.length > 1) fail(t("cli.open.ambiguousTicket", { id: claims[0].native, tools: claims.map((c) => toolLabel(c.provider, c.account)).join(", ") }));
   if (!ref || !key) fail("usage: open [<Slack link | ABC-123 | Linear link>] --msg <id> --title …   (or --from … --channel … --text … without --msg)");
   const issueId = key.startsWith("linear:") ? key.slice("linear:".length) : null;
   const permalink = issueId ? (ticketUrl(issueId) ?? ref) : ref;
@@ -155,7 +159,8 @@ export async function open(args: string[]) {
     out(`already open · ${taken.letter} · ${taken.name} · ${taken.status}${taken.shortId ? ` · claude attach ${taken.shortId}` : " · session starting"}`);
     return;
   }
-  const prompt = issueId ? ticketPrompt(title, key, issueId, permalink, SCRIPT, report) : workerPrompt(title, key, trigger, SCRIPT, report, settings().slack.teammates);
+  // a ticket opened from a message (a mention, an assignment) is a request to answer; from its id alone, the implementation
+  const prompt = issueId && !kept ? ticketPrompt(title, key, issueId, permalink, SCRIPT, report) : workerPrompt(title, key, trigger, SCRIPT, report, settings().slack.teammates);
   // `workers.skipPermissions`: topic sessions run without permission prompts. The flag only applies at launch:
   // added to `--resume`, it creates a copy of the session; a bare resume keeps the mode.
   const permissionFlags = settings().workers.skipPermissions ? ["--dangerously-skip-permissions"] : [];

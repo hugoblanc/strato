@@ -138,7 +138,9 @@ describe("strato context", () => {
     expect(res.out).toContain("key=tickets:PLAT-12");
     expect(res.out).not.toContain("PLAT-404 ·");
     expect(res.err).toContain("strato: tickets:PLAT-404: could not be read: no ticket PLAT-404");
-    expect(res.err).toContain("strato: linear:ENG-7: Strato cannot read Linear threads yet; read it through the linear MCP server (get_issue, list_issues, list_comments, get_team, list_teams, list_users, get_user)");
+    // a links-only Linear account (the tracker section alone): Strato reads Linear once it is connected
+    expect(res.err).toContain("strato: linear:ENG-7: Linear is set up for its links and ticket ids only; connect it with ");
+    expect(res.err).toContain(" setup --connect linear for Strato to read it, or read it through the linear MCP server (get_issue, list_issues, list_comments, get_team, list_teams, list_users, get_user)");
     // what could be read is printed; the exit code says something was not
     expect(res.code).toBe(1);
   });

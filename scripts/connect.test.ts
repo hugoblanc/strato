@@ -121,7 +121,7 @@ async function connect(r: Rig, args: string[], stdin: string, extra: Record<stri
 }
 
 describe("setup --providers", () => {
-  test("every tool, its accounts and its auth methods with their trade-off; Linear says why it cannot connect yet", async () => {
+  test("every tool, its accounts and its auth methods with their trade-off; a links-only Linear says so", async () => {
     const r = rig();
     writeConfig(r, { ...config(r), tracker: { kind: "linear", workspace: "acme", prefixes: ["ENG"] } });
     const res = await cli(r, ["setup", "--providers"]);
@@ -132,7 +132,9 @@ describe("setup --providers", () => {
     expect(res.out).toMatch(/\n {2}paste-token +A user token you already have: /);
     expect(res.out).toMatch(/\n {2}oauth-pkce +Sign in through your team's Slack app/);
     expect(res.out).toContain("linear · Linear (tracker) · accounts: default (links and ticket ids only)");
-    expect(res.out).toContain("Linear is recognized in links and ticket ids in this version");
+    // Linear connects since the linear stage: its two methods, the API key first
+    expect(res.out).toMatch(/\n {2}api-key +Personal API key \(default\): /);
+    expect(res.out).toMatch(/\n {2}oauth-pkce +OAuth with PKCE/);
   }, 20_000);
 });
 
@@ -211,7 +213,7 @@ describe("setup --connect", () => {
     expect(doctor.out).toContain("setup --connect slack --account partners)");
   }, 30_000);
 
-  test("refused, nothing stored: a bot token, a token of another workspace, an unknown method, a bad account name, Linear", async () => {
+  test("refused, nothing stored: a bot token, a token of another workspace, an unknown method, a bad account name, an empty Linear key", async () => {
     const r = rig();
     const bot = await connect(r, ["slack", "--auth", "paste-token"], "xoxb-acme-fake-0000\n\n");
     expect(bot.code).toBe(1);
@@ -226,7 +228,11 @@ describe("setup --connect", () => {
     expect((await connect(r, ["slack", "--auth", "oauth"], "")).err).toContain('Slack does not connect with "oauth"; choose one of user-token, paste-token, oauth-pkce');
     expect((await connect(r, ["slack", "--account", "Work"], "")).code).toBe(64);
     expect((await connect(r, ["nope"], "")).err).toContain("nope is not a tool Strato can connect");
-    expect((await connect(r, ["linear"], "")).err).toContain("Linear is recognized in links and ticket ids");
+    // Linear connects since the linear stage: an empty paste stores nothing
+    const linear = await connect(r, ["linear", "--auth", "api-key"], "\n");
+    expect(linear.err).toContain("nothing read on stdin: nothing stored");
+    expect(existsSync(strato(r))).toBe(false);
+    expect(config(r)).toEqual({ slack: { team: "Globex" } });
   }, 40_000);
 
   test("OAuth with PKCE end to end: the browser approves on a fake authorization server, the token is stored, the client id kept", async () => {

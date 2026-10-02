@@ -40,6 +40,12 @@ const INTENDED: { why: string; names: RegExp; from: string; to: string }[] = [
     from: "- draftTo = where it goes, in one of these two formats, because",
     to: "- draftTo = where it goes, in one of these formats, because",
   },
+  {
+    why: "the ticket prompt names how the ticket is read: the Linear MCP for a tracker that only recognizes links, `strato context` once Linear is connected",
+    names: /(^|\/)ticket$/,
+    from: "1. Read the ticket and its comments (tracker MCP), then",
+    to: "1. Read the ticket and its comments (the Linear MCP, get_issue), then",
+  },
 ];
 
 function check(name: string, text: string): void {

@@ -7,6 +7,7 @@
  * threads are all printed. It only reads.
  */
 import { fail, flags, out } from "../app/env.ts";
+import { selfCommand } from "../app/self.ts";
 import { loadSujets } from "../app/store.ts";
 import { contextLines } from "../core/context.ts";
 import { t } from "../core/i18n.ts";
@@ -16,7 +17,7 @@ import { findSujet, sujetKeys } from "../core/sujet.ts";
 import { toolLabel } from "../core/targets.ts";
 import { parseDuration } from "../core/text.ts";
 import { untrustedRule } from "../policy/prompts.ts";
-import { providerError } from "../providers/api.ts";
+import { authUsable, providerError } from "../providers/api.ts";
 import { accountContext, accountOf, nativeOfKey } from "../providers/registry.ts";
 import type { Provider } from "../providers/sdk.ts";
 
@@ -62,6 +63,11 @@ function unreadable(w: Wanted): string | null {
   if (!entry.provider) return t("cli.context.failed", { key: w.key, reason: entry.problem ?? tool });
   if (!entry.provider.context || !readsThreads(w.provider, w.account)) {
     const mcp = descriptorOf(w.provider)?.mcp;
+    // a links-only account: the tool reads threads once it is connected
+    if (entry.provider.context && mcp && !authUsable(entry.provider.descriptor, entry.account.auth)) {
+      const cmd = `${selfCommand()} setup --connect ${w.provider}${w.account === "default" ? "" : ` --account ${w.account}`}`;
+      return t("cli.context.linksOnly", { key: w.key, tool, cmd, server: entry.mcpServer ?? mcp.server, read: mcp.readTools.join(", ") });
+    }
     return mcp ? t("cli.context.unreadableMcp", { key: w.key, tool, server: entry.mcpServer ?? mcp.server, read: mcp.readTools.join(", ") }) : t("cli.context.unreadable", { key: w.key, tool });
   }
   if (w.native === null) return t("cli.context.failed", { key: w.key, reason: t("cli.context.lostLongKey") });

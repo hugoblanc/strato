@@ -54,9 +54,26 @@ describe("classifyItem", () => {
   });
 
   test("an author of ignoreAuthors turns a kept item into bot, only once the authors are read", () => {
-    const bot = item({ author: { id: "u-deploy", name: " deploy bot ", isMe: false, isBot: true } });
+    // in a chat channel: a bot there is not set aside by itself, only by its name
+    const bot = item({ author: { id: "u-deploy", name: " deploy bot ", isMe: false, isBot: true }, conversation: { id: "PLAT", label: "#plat", kind: "channel" } });
     expect(classifyItem(bot, KEY, rules, none, none)).toBe("bot");
     expect(classifyItem(bot, KEY, withoutAuthors(rules), none, none)).toBe("canal");
+  });
+
+  test("on a ticket, a bot or an automation goes to the digest unless it targets the person; a tracked ticket still follows", () => {
+    const sync = item({ author: { id: "", name: "GitHub", isMe: false, isBot: true } });
+    expect(classifyItem(sync, KEY, NO_RULES, none, new Set([KEY]))).toBe("bot");
+    expect(classifyItem(item({ event: "created", author: sync.author }), KEY, rules, none, none)).toBe("bot");
+    expect(classifyItem(item({ event: "assigned", mentionsMe: true, author: sync.author }), KEY, NO_RULES, none, none)).toBe("mention");
+    expect(classifyItem(sync, KEY, NO_RULES, new Set([KEY]), none)).toBe("suite");
+    // a bot in a chat conversation keeps today's rules
+    expect(classifyItem(item({ author: sync.author, conversation: { id: "C1", label: "#ops", kind: "channel" } }), KEY, NO_RULES, none, new Set([KEY]))).toBe("fil");
+  });
+
+  test("a comment on a ticket the tool says the person follows is a thread they take part in", () => {
+    expect(classifyItem(item({ reason: "subscribed" }), KEY, NO_RULES, none, none)).toBe("fil");
+    expect(classifyItem(item({ reason: "subscribed", targetsOther: true }), KEY, NO_RULES, none, none)).toBe("tiers");
+    expect(classifyItem(item({ reason: "watched" }), KEY, NO_RULES, none, none)).toBeNull();
   });
 
   test("an edit is raised only when its previous version was not", () => {

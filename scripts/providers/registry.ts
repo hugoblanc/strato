@@ -14,10 +14,11 @@ import { F, readJson, writeJson } from "../app/env.ts";
 import { writeSecret } from "../app/secrets.ts";
 import { formatKey, parseKey } from "../core/keys.ts";
 import { hostMatches, useProviders } from "../core/links.ts";
-import { locale, t } from "../core/i18n.ts";
+import { locale } from "../core/i18n.ts";
 import { type ResolvedAccount, resolveAccounts, type Settings, settings } from "../core/settings.ts";
 import { apiSupported } from "./api.ts";
 import { BUILTIN_PURE } from "./builtin.ts";
+import { linearWrites } from "./linear/act.ts";
 import { linearProvider } from "./linear/index.ts";
 import type { Account, AccountContext, Identity, Provider, ProviderDescriptor } from "./sdk.ts";
 import { slackWrites } from "./slack/act.ts";
@@ -36,7 +37,7 @@ function viewOf(p: Provider): ProviderView {
 }
 
 /** The built-in providers, whole: never exported. */
-const BUILTIN_FULL: Readonly<Record<string, Provider>> = { slack: { ...slackProvider, ...slackWrites }, linear: linearProvider };
+const BUILTIN_FULL: Readonly<Record<string, Provider>> = { slack: { ...slackProvider, ...slackWrites }, linear: { ...linearProvider, ...linearWrites } };
 
 /** The built-in providers, by id, without their writes. */
 export const BUILTIN: Readonly<Record<string, ProviderView>> = Object.fromEntries(Object.entries(BUILTIN_FULL).map(([id, p]) => [id, viewOf(p)]));
@@ -63,14 +64,6 @@ export const providerOf = (id: string): ProviderView | null => providerById(id);
 
 /** Every provider Strato can connect, built in first, without their writes. */
 export const providerViews = (): ProviderView[] => [...Object.values(BUILTIN), ...Object.values(addedViews)];
-
-/**
- * Why a built-in provider cannot connect an account in this version, or null. Linear is a link and ticket id
- * recognizer until the linear stage, which removes its entry.
- */
-export function connectRefusal(id: string): string | null {
-  return id === "linear" ? t("cli.connect.linearLater") : null;
-}
 
 const descriptors = (): Record<string, ProviderDescriptor> => Object.fromEntries([...Object.entries(BUILTIN), ...Object.entries(addedViews)].map(([id, p]) => [id, p.descriptor]));
 

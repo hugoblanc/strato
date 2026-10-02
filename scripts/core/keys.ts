@@ -1,7 +1,6 @@
 import { createHash } from "node:crypto";
 import { ACCOUNT_ID, PROVIDER_ID } from "../providers/api.ts";
-import { claimTicketId, hasAccount, linkOfNative, parseLink, passesTicketIds, providerLabel } from "./links.ts";
-import { settings } from "./settings.ts";
+import { claimTicketId, hasAccount, linkOfNative, parseLink, passesTicketIds, providerLabel, ticketPrefixesOf } from "./links.ts";
 
 /**
  * Topic keys, and the only place that builds, escapes and parses them (docs/design/providers.md, section 5).
@@ -178,9 +177,12 @@ export function providerKeyLabel(key: string): string {
 
 const escapeRe = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
-/** Pattern of a ticket id from the tracker's prefixes, or null without a tracker. */
+/**
+ * Pattern of a ticket id from the default Linear account's prefixes (the `tracker` section's, or those of a Linear
+ * account connected without it), or null without one.
+ */
 export function ticketPattern(flags = ""): RegExp | null {
-  const prefixes = settings().tracker?.prefixes ?? [];
+  const prefixes = ticketPrefixesOf("linear", "default");
   if (!prefixes.length) return null;
   return new RegExp(`\\b(?:${prefixes.map(escapeRe).join("|")})-\\d+\\b`, flags);
 }

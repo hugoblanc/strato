@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { COMPILED, commandForEntry } from "../app/self.ts";
 import { locale } from "../core/i18n.ts";
 import { parseKey } from "../core/keys.ts";
-import { checkedLink, descriptorOf, englishOf, readsThreads } from "../core/links.ts";
+import { actsOnThreads, checkedLink, descriptorOf, englishOf, readsThreads } from "../core/links.ts";
 import { ownerForms, settings } from "../core/settings.ts";
 import { draftReaderOf } from "../core/targets.ts";
 import { oneLine, untrusted } from "../core/text.ts";
@@ -261,7 +261,10 @@ export function contextRule(key: string, script: string): string {
   if (!p || p.provider === "slack" || !command) return "";
   const v = topicVars(key, script);
   const where = v.topic_target_format ? `; a draft's destination is written this way: ${v.topic_target_format}` : "";
-  return `\n\nContext: this topic comes from ${untrusted(v.topic_source)}. Read its ${untrusted(v.topic_thread_word)} with ${command}, whatever this prompt says about another tool${untrusted(where)}.`;
+  // the topic's own tool acts behind the board's Go: its words for a comment, a status or an assignee
+  const own = actsOnThreads(p.provider, p.account) ? oneLine(descriptorOf(p.provider)?.vocabulary.targetFormat ?? "") : "";
+  const acts = own && own !== v.topic_target_format ? ` On the ${v.topic_thread_word} itself, write a task this way, and ${settings().owner.name} gives the Go on the board: ${own}.` : "";
+  return `\n\nContext: this topic comes from ${untrusted(v.topic_source)}. Read its ${untrusted(v.topic_thread_word)} with ${command}, whatever this prompt says about another tool${untrusted(where)}.${untrusted(acts)}`;
 }
 
 /**
