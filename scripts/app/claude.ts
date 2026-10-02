@@ -7,6 +7,7 @@ import { closeSync, mkdirSync, openSync, readdirSync, readFileSync, readSync, ty
 import { join } from "node:path";
 import { type AgentRow, liveAgentRows } from "../claude/model.ts";
 import { type AgentMeta, type AgentNode, agentTail, emptyTranscript, foldTranscript, sessionContext, type SessionContext, type TranscriptState } from "../claude/transcript.ts";
+import { mcpReadRules } from "../core/mcp.ts";
 import { settings } from "../core/settings.ts";
 import { CLAUDE_BIN, F, fail, HOME, LEGACY_SCRIPT, mtimeOf, readJson, STATE, WORKSPACE } from "./env.ts";
 import { selfCommand } from "./self.ts";
@@ -49,10 +50,8 @@ export function workerSettings(): string {
         ...(LEGACY_SCRIPT ? [`Bash(bun ${LEGACY_SCRIPT} *)`] : []),
         // Edit covers Write; an absolute path is written with // (a single / anchors on the settings file's folder)
         `Edit(/${F.reports}/**)`,
-        // the session reads its threads itself: Slack reads always allowed
-        "mcp__slack__conversations_replies",
-        "mcp__slack__conversations_history",
-        "mcp__slack__conversations_search_messages",
+        // the session reads its threads itself: the read tools of each connected tool's MCP server
+        ...mcpReadRules(),
         // what the installation adds (database reads, tracker…), from `workers.allow`
         ...settings().workers.allow,
       ],
