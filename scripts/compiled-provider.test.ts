@@ -86,14 +86,16 @@ describe.skipIf(!BIN)("the compiled binary and external providers", () => {
     expect(tested.code).toBe(0);
   }, 120_000);
 
-  test("it trusts a Python provider in a terminal, then runs it over the exec protocol, by name and by path", async () => {
+  // the provider runs on the binary's minimal PATH, so it needs /usr/bin/python3; the terminal driver needs any python3
+  const python = existsSync("/usr/bin/python3") && Bun.spawnSync(["/usr/bin/python3", "--version"]).exitCode === 0 && Boolean(Bun.which("python3"));
+  test.skipIf(!python)("it trusts a Python provider in a terminal, then runs it over the exec protocol, by name and by path", async () => {
     const r = rig();
-    if (!existsSync("/usr/bin/python3") || Bun.spawnSync(["/usr/bin/python3", "--version"]).exitCode !== 0) return;
     expect((await runBin(r.env, ["provider", "new", "pyx", "--exec", "python"])).code).toBe(0);
     const folder = join(r.state, "providers", "pyx");
     writeFileSync(join(r.state, "config.json"), JSON.stringify({ owner: { name: "Alice" }, providers: { pyx: { source: { exec: ["python3", "provider.py"] }, accounts: { default: { auth: "api-key", me: "u-alice" } } } } }));
     const trusted = await inTerminal(r, [BIN as string, "provider", "trust", "pyx"], { prompt: "Type yes", answer: "yes", timeoutMs: 30_000, env: binEnv(r.env) });
-    if (!trusted) return; // no python3 for the test's own terminal
+    expect(trusted).not.toBeNull();
+    if (!trusted) return;
     expect(trusted.out).toContain("pyx is trusted.");
     expect(trusted.exit).toBe(0);
     // running it (describe, the harness) wrote no Python cache into its folder: the pin still holds

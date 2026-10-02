@@ -30,3 +30,5 @@ jobs:
       - run: bun run build:host
       - run: ../dist/strato-* version
       - run: ../dist/strato-* policy-default worker | head -1
+      # the compiled binary loads external providers from disk: the tests that `bun run check` skips without a binary
+      - run: bun test ./compiled-provider.test.ts
