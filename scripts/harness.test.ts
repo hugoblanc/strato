@@ -176,6 +176,23 @@ describe("provider test fails a broken provider on the check it breaks", () => {
     expect(res.out).not.toContain("test-key-not-a-real-one");
   }, 60_000);
 
+  test("a live run masks the account's real secrets, read from its secret file, on its lines and in its trace", async () => {
+    const r = rig();
+    const folder = await scaffold(r);
+    const name = /const SECRET = "([A-Z_]+)";/.exec(readFileSync(join(folder, "provider.ts"), "utf8"))?.[1] as string;
+    // a provider whose every answer and error echoes the key: and never a request, so nothing leaves this machine
+    patch(folder, "): Promise<any> {\n", '): Promise<any> {\n  throw { code: "http", message: `refused ${ctx.secret(SECRET)}` };\n');
+    const secretsFile = join(r.dir, "live.env");
+    writeFileSync(secretsFile, `${name}=live-key-of-the-person-0000\n`, { mode: 0o600 });
+    mkdirSync(join(r.state, "providers"), { recursive: true });
+    writeFileSync(join(r.state, "harness.json"), JSON.stringify({ nonce: "n", target: { shape: "module", file: join(folder, "provider.ts") }, fixturesDir: null, live: { settings: {}, secretsFile, auth: "api-key" }, locale: "en", trace: true }));
+    const res = await cli(r, ["provider", "_harness"], { STRATO_HARNESS_NONCE: "n" });
+    expect(res.out).toContain("trace   ← connect");
+    expect(res.out).toContain("refused live…");
+    expect(res.out).toContain("fail    connect: refused live…");
+    expect(res.out + res.err).not.toContain("live-key-of-the-person-0000");
+  }, 60_000);
+
   test.skipIf(!PYTHON)("an executable is started again for each fixture file, with that file's settings", async () => {
     const r = rig();
     const folder = await scaffold(r, ["--exec", "python"]);

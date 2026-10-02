@@ -78,13 +78,15 @@ const TEXT_MAX = 1024 * 1024;
 
 class Report {
   failed = false;
+  /** The secrets of the account under test, masked on every line: the fixture's fake ones, or, live, the person's. */
+  readonly secrets: string[] = [];
   constructor(private readonly say: (line: string) => void) {}
   line(status: Status, check: string, detail = ""): void {
     if (status === "fail") this.failed = true;
     const word = t(`cli.provider.test.${status}` as Parameters<typeof t>[0]);
-    if (status === "trace") return this.say(`${word.padEnd(7)} ${oneLine(truncate(check, 600))}`);
+    if (status === "trace") return this.say(maskSecrets(`${word.padEnd(7)} ${oneLine(truncate(check, 600))}`, this.secrets));
     // a provider's own words (its errors, its dry descriptions) stay on the line they belong to
-    this.say(`${word.padEnd(7)} ${check}${detail ? `: ${oneLine(truncate(detail, 500))}` : ""}`);
+    this.say(maskSecrets(`${word.padEnd(7)} ${check}${detail ? `: ${oneLine(truncate(detail, 500))}` : ""}`, this.secrets));
   }
 }
 
@@ -137,8 +139,7 @@ export async function runHarness(spec: HarnessSpec, say: (line: string) => void)
   const loaded = await load(spec, report);
   if (!loaded) return false;
   const { exec } = loaded;
-  const secrets: string[] = [];
-  const provider = spec.trace ? traced(loaded.provider, report, secrets) : loaded.provider;
+  const provider = spec.trace ? traced(loaded.provider, report) : loaded.provider;
   const d = provider.descriptor;
   report.line("ok", "descriptor");
   try {
@@ -149,7 +150,6 @@ export async function runHarness(spec: HarnessSpec, say: (line: string) => void)
   }
   for (const { name, fixture } of spec.live ? [{ name: "", fixture: {} as Fixture }] : fixtures(spec.fixturesDir)) {
     if (name) say(t("cli.provider.test.fixture", { name }));
-    secrets.splice(0, secrets.length, ...Object.values(fixture.secrets ?? {}));
     await runFixture(spec, provider, exec, d, fixture, report);
     // each fixture file starts a new process, initialized with its own settings and secrets
     await exec?.stopAll();
@@ -159,8 +159,8 @@ export async function runHarness(spec: HarnessSpec, say: (line: string) => void)
 }
 
 /** The provider with every call and its answer traced, for `--trace`; secrets masked. Its pure parts stay as they are. */
-function traced(p: Provider, report: Report, secrets: string[]): Provider {
-  const show = (v: unknown) => maskSecrets(JSON.stringify(v) ?? "undefined", secrets);
+function traced(p: Provider, report: Report): Provider {
+  const show = (v: unknown) => maskSecrets(JSON.stringify(v) ?? "undefined", report.secrets);
   const wrap = <F extends (...a: never[]) => Promise<unknown>>(name: string, f: F | undefined): F | undefined =>
     f &&
     ((async (...args: Parameters<F>) => {
@@ -197,6 +197,13 @@ function traceLog(report: Report): void {
   rmSync(file, { force: true });
 }
 
+/** Every secret the account resolves, under the names any of the tool's sign-in methods stores: what a live run masks. */
+function liveSecrets(d: ProviderDescriptor, entry: AccountEntry): string[] {
+  const ctx = accountContext(entry, { log: () => {} });
+  const names = new Set(d.auth.flatMap((m) => m.stores.map((s) => s.name)));
+  return [...names].map((n) => ctx.secret(n)).filter((v): v is string => !!v);
+}
+
 /** One fixture: its account, then the checks in order. */
 async function runFixture(spec: HarnessSpec, provider: Provider, exec: ExecProvider | null, d: ProviderDescriptor, fx: Fixture, report: Report): Promise<void> {
   const fake = new FakeTool(fx.exchanges ?? []);
@@ -215,8 +222,10 @@ async function runFixture(spec: HarnessSpec, provider: Provider, exec: ExecProvi
   const entry = accountOf(d.id, "default") as AccountEntry;
   // every account context of this process answers from the fake, the gate's included: nothing reaches a network
   if (!spec.live) useBaseFetch(fake.fetch);
+  // what every line masks: the fixture's fake secrets, or, live, the person's real ones as the account resolves them
+  report.secrets.splice(0, report.secrets.length, ...(spec.live ? liveSecrets(d, entry) : Object.values(fx.secrets ?? {})));
   if (spec.trace) {
-    const masked = (v: string) => maskSecrets(v, Object.values(fx.secrets ?? {}));
+    const masked = (v: string) => maskSecrets(v, report.secrets);
     fake.onRequest = (r) => report.line("trace", `http ${r.method} ${masked(r.url)}${r.body ? ` ${masked(r.body)}` : ""}`);
   }
   // the identity `connect` returned, as Strato hands it to the provider's later calls (a `me` setting wins)
