@@ -81,16 +81,29 @@ const LOG_MAX = 1024 * 1024;
 const STORE_NAME = /^[a-z0-9-]{1,40}$/;
 const STORE_MAX = 1024 * 1024;
 
-/** Every process of every exec provider of this Strato process: killed when it exits. */
+/**
+ * Every process of every exec provider of this Strato process: killed when it exits, and when a signal stops it. Bun
+ * emits no `exit` event for a death by SIGTERM, SIGINT or SIGHUP, and a provider that ignores the end of its stdin
+ * would stay behind, holding its subscription: a signal kills the children, then ends the process as the signal would
+ * have, unless the command handles that signal itself (`serve` does, and exits).
+ */
 const live = new Set<Subprocess>();
 let exitHook = false;
+const killAll = () => {
+  for (const x of live) x.kill();
+};
 function track(p: Subprocess): void {
   live.add(p);
   if (exitHook) return;
   exitHook = true;
-  process.on("exit", () => {
-    for (const x of live) x.kill();
-  });
+  process.on("exit", killAll);
+  for (const sig of ["SIGTERM", "SIGINT", "SIGHUP"] as const) {
+    process.on(sig, () => {
+      killAll();
+      // the command's own handler ends the process; without one, end it as the signal would have
+      if (process.listenerCount(sig) <= 1) process.exit(128 + ({ SIGHUP: 1, SIGINT: 2, SIGTERM: 15 } as const)[sig]);
+    });
+  }
 }
 
 /** One account's process, from start to crash or shutdown, and the account's crash history across processes. */

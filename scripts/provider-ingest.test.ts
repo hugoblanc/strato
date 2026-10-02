@@ -187,6 +187,30 @@ describe("the cursor contract", () => {
   });
 });
 
+describe("malformed replies", () => {
+  test("a reply without an author, or null, is dropped and logged; the others come through and the cursor moves", async () => {
+    const r = rig();
+    config(r, PROFILE);
+    ticketTopics(r);
+    cursorFor(r, "tickets-default", "c0", 1_790_000_000_000);
+    const out = await script(
+      r,
+      `
+      const good = ticketItem({ id: "PLAT-12/comment/3", text: "still broken" });
+      const { author: _a, ...authorless } = ticketItem({ id: "PLAT-12/comment/4", text: "no author" });
+      const fake = fakeProvider({ id: "tickets", label: "Tickets", polls: [{ items: [], cursor: { value: "c1", at: 1 }, complete: true }], replies: { "PLAT-12": [null, authorless, good] } });
+      registry.addProvider(fake);
+      ${SOURCE}
+      const pass = await ingest.pollPass(run, { threads: true });
+      return { failed: pass.threadsFailed, cursor: run.cursor?.value };
+    `,
+    );
+    expect(out.lines).toHaveLength(1);
+    expect(out.lines[0]).toContain("« still broken »");
+    expect(out.result).toEqual({ failed: 0, cursor: "c1" });
+  });
+});
+
 describe("a triage error", () => {
   test("holds a poll's cursor back: the item comes out on the next pass, and only then does the cursor move", async () => {
     const r = rig();

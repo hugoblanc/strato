@@ -9,6 +9,7 @@
  *   old-protocol      answers describe with a protocol version Strato does not speak
  *   noise             writes a line that is not JSON-RPC on stdout when connecting
  *   no-replies        answers -32601 to replies and complete
+ *   stubborn          ignores the end of its stdin and keeps running; writes its pid to --pid-file
  *
  * Self-contained on purpose (types only from the SDK file): it is what an author's provider looks like.
  */
@@ -180,4 +181,11 @@ process.stdin.on("data", (chunk) => {
   rest = lines.pop() ?? "";
   for (const line of lines) if (line.trim()) void onMessage(JSON.parse(line));
 });
-process.stdin.on("end", () => process.exit(0));
+process.stdin.on("end", () => {
+  if (mode !== "stubborn") process.exit(0);
+});
+if (mode === "stubborn") {
+  const file = opt("pid-file");
+  if (file) (await import("node:fs")).writeFileSync(file, String(process.pid));
+  setInterval(() => {}, 60_000);
+}

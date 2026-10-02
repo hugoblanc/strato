@@ -228,7 +228,7 @@ export async function processItems(src: Source, items: Item[], markOnly = false)
       src.ctx.log("warn", `item refused: its id cannot make a key (${truncate(oneLine(String(item.id)), 80)})`);
       continue;
     }
-    if (item.author.isMe) src.participated.add(key);
+    if (item.author?.isMe) src.participated.add(key);
     const editId = item.edited ? id + EDIT_MARK : null;
     if (editId) {
       // an edit that adds the mention: the original is often already read (ignored silently), it must still come out,
@@ -341,7 +341,11 @@ export async function catchUpThreads(src: Source, sinceMs: number): Promise<{ it
         if (providerError(e).retryable) failed++;
         continue;
       }
-      for (const it of Array.isArray(replies) ? replies : []) {
+      // a provider's answer is checked like a poll's: one malformed reply never stops the account's ingest
+      const list: unknown[] = Array.isArray(replies) ? replies : [];
+      const valid = list.filter(isItem);
+      if (valid.length < list.length) src.ctx.log("warn", `${list.length - valid.length} reply(ies) dropped: missing or mistyped fields`);
+      for (const it of valid) {
         const id = itemKeyOf(src, it.id);
         if (id && !src.seen.has(id)) items.push(it);
       }

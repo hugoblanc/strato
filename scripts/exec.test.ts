@@ -5,7 +5,7 @@
  * environment without secrets. The pure rules (framing, error mapping, the restart gate) are tested on their own.
  */
 import { afterEach, describe, expect, test } from "bun:test";
-import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { type ExecHostOptions, describeExec, execProvider, type ExecProvider } from "./providers/host/exec.ts";
@@ -309,5 +309,54 @@ describe("timeouts, crashes and restarts", () => {
     expect(p.processes()[0].pid).not.toBeNull();
     for (let i = 0; i < 50 && p.processes()[0].pid !== null; i++) await Bun.sleep(20);
     expect(p.processes()[0]).toMatchObject({ pid: null, crashes: 0 });
+  }, 30_000);
+});
+
+describe("a Strato process stopped by a signal", () => {
+  test("kills its providers' processes, even one that ignores the end of its stdin", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "strato-exec-"));
+    dirs.push(dir);
+    const pidFile = join(dir, "child.pid");
+    const driver = join(dir, "driver.ts");
+    writeFileSync(
+      driver,
+      `import { describeExec, execProvider } from ${JSON.stringify(join(SCRIPTS, "providers/host/exec.ts"))};
+       const argv = [process.execPath, ${JSON.stringify(FIXTURE)}, "--mode", "stubborn", "--pid-file", ${JSON.stringify(pidFile)}];
+       const { descriptor } = await describeExec({ id: "tickets", argv, cwd: ${JSON.stringify(SCRIPTS)} });
+       const p = execProvider({ id: "tickets", argv, cwd: ${JSON.stringify(SCRIPTS)}, descriptor, logFile: () => ${JSON.stringify(join(dir, "provider.log"))}, stratoVersion: "0.0.0-test" });
+       const ctx = { account: { provider: "tickets", id: "default", label: "Tickets", auth: "api-key", ingest: "poll", settings: {} }, identity: null, secret: () => "k", setSecret() {}, log() {},
+         fetch: async () => new Response(JSON.stringify({ id: "u-alice", workspace: "acme" }), { headers: { "content-type": "application/json" } }),
+         store: { read: (_n, f) => f, write() {} }, signal: new AbortController().signal, locale: "en" };
+       await p.connect(ctx);
+       console.log("ready");
+       setInterval(() => {}, 60_000);`,
+    );
+    const proc = Bun.spawn([process.execPath, driver], { cwd: SCRIPTS, stdout: "pipe", stderr: "pipe" });
+    const reader = proc.stdout.getReader();
+    let seen = "";
+    const deadline = Date.now() + 15_000;
+    while (!seen.includes("ready") && Date.now() < deadline) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      seen += new TextDecoder().decode(value);
+    }
+    expect(seen).toContain("ready");
+    // the describe run wrote a pid too; the live one is the last written
+    const pid = Number(readFileSync(pidFile, "utf8"));
+    const alive = (n: number) => {
+      try {
+        process.kill(n, 0);
+        return true;
+      } catch {
+        return false;
+      }
+    };
+    expect(alive(pid)).toBe(true);
+    proc.kill("SIGTERM");
+    await proc.exited;
+    const until = Date.now() + 5_000;
+    while (alive(pid) && Date.now() < until) await Bun.sleep(100);
+    if (alive(pid)) process.kill(pid, "SIGKILL");
+    expect(alive(pid)).toBe(false);
   }, 30_000);
 });
