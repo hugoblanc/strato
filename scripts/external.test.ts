@@ -5,8 +5,10 @@
  */
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { resolveSettings, useSettings } from "./core/settings.ts";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { hashFolder } from "./providers/host/trust.ts";
 import { descriptorProblems, patternCost } from "./providers/check.ts";
 import { fakeDescriptor } from "./test-provider.ts";
 import { CLI, cleanupRigs, cli, inTerminal, type Rig, rig, run, SCRIPTS } from "./test-rig.ts";
@@ -185,6 +187,29 @@ describe("a module provider is loaded only once trusted as it is", () => {
     // every command still runs
     expect((await cli(r, ["list"])).code).toBe(0);
   }, 30_000);
+});
+
+describe("symbolic links are pinned by what they reach", () => {
+  test("changing a linked file or a file of a linked folder changes the hash; a link back into the folder does not loop", () => {
+    const top = mkdtempSync(join(tmpdir(), "strato-pin-"));
+    const outside = join(top, "outside");
+    const dir = join(top, "acme");
+    mkdirSync(join(outside, "lib"), { recursive: true });
+    mkdirSync(dir);
+    writeFileSync(join(outside, "real.ts"), "export const A = 1;\n");
+    writeFileSync(join(outside, "lib", "x.ts"), "export const X = 1;\n");
+    symlinkSync(join(outside, "real.ts"), join(dir, "provider.ts"));
+    symlinkSync(join(outside, "lib"), join(dir, "lib"));
+    symlinkSync(dir, join(dir, "self"));
+    symlinkSync(join(outside, "gone.ts"), join(dir, "dangling.ts"));
+    const before = hashFolder(dir);
+    writeFileSync(join(outside, "real.ts"), "export const A = 2;\n");
+    const afterFile = hashFolder(dir);
+    expect(afterFile).not.toBe(before);
+    writeFileSync(join(outside, "lib", "x.ts"), "export const X = 2;\n");
+    expect(hashFolder(dir)).not.toBe(afterFile);
+    rmSync(top, { recursive: true, force: true });
+  });
 });
 
 describe("a provider never shares an account's folder", () => {

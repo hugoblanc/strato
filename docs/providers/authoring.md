@@ -493,6 +493,9 @@ Run it yourself, in your own terminal, once the offline run passes.
   That refusal reads the `STRATO_CALLER` variable sessions are started with: a convention that keeps sessions on the right path, not a security boundary, since a session with a shell can unset it.
   The boundary is the terminal: trusting needs typed answers on a TTY.
   A provider that writes into its own folder breaks its pin: keep state with `store`.
+  A symbolic link in the folder is pinned by what it reaches: a linked file by its content, a linked folder by every file under it, so a `git pull` in a linked checkout breaks the pin too.
+  Code reached any other way is not pinned: an import from outside the folder (`../shared.ts`), a package from a global cache, or an interpreter's own libraries.
+  Keep everything your provider runs inside its folder.
 - **Same privileges as the person.** A provider runs as the person, with their files and their network; Strato cannot sandbox it.
   Installing one is the same decision as installing any command-line tool: read it, or trust its author.
   A module shares Strato's process; an executable only gets what Strato sends it.

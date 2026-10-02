@@ -7,8 +7,8 @@
  * `strato provider new` writes a scaffold; `~` and absolute paths point anywhere else.
  */
 import { createHash } from "node:crypto";
-import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, readlinkSync, statSync } from "node:fs";
-import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
+import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, readlinkSync, realpathSync, statSync } from "node:fs";
+import { dirname, isAbsolute, join, resolve } from "node:path";
 import { t } from "../../core/i18n.ts";
 import type { ProviderSource } from "../../core/settings.ts";
 import { expandHome, F, readJson, writeJson } from "../../app/env.ts";
@@ -95,28 +95,47 @@ export const PIN_MAX_BYTES = 64 * 1024 * 1024;
 export class PinError extends Error {}
 
 /**
- * The SHA-256 of a folder: every regular file under it (symbolic links by their target), as a sorted list of relative
- * paths and content hashes. A provider that writes into its own folder breaks its pin: it keeps state through `store`.
+ * The SHA-256 of a folder: every regular file under it, as a sorted list of relative paths and content hashes. A
+ * symbolic link counts by its text and by what it points to, followed: a linked file by its content, a linked folder
+ * by every file under it, under the link's own path. So the code a link reaches is pinned too, and a change in a linked
+ * checkout breaks the pin. A link that leads back into a folder already walked, or nowhere, counts by its text alone.
+ * A provider that writes into its own folder breaks its pin: it keeps state through `store`.
  */
 export function hashFolder(dir: string): string {
   const entries: string[] = [];
   let bytes = 0;
-  const walk = (at: string) => {
+  const addFile = (rel: string, path: string, size: number, prefix = "") => {
+    bytes += size;
+    if (entries.length >= PIN_MAX_FILES || bytes > PIN_MAX_BYTES) throw new PinError(t("cli.provider.load.tooLarge", { path: dir, files: PIN_MAX_FILES, mib: PIN_MAX_BYTES / 1024 / 1024 }));
+    entries.push(`${rel}\0${prefix}${createHash("sha256").update(readFileSync(path)).digest("hex")}`);
+  };
+  // the real folders being walked, from the top down: a link back into one of them would loop
+  const walk = (at: string, relAt: string, open: Set<string>) => {
+    const real = realpathSync(at);
+    if (open.has(real)) return false;
+    const inner = new Set(open).add(real);
     for (const name of readdirSync(at).sort()) {
       const path = join(at, name);
       const st = lstatSync(path);
-      const rel = relative(dir, path).split(sep).join("/");
+      const rel = relAt ? `${relAt}/${name}` : name;
       if (skipped(rel, st.isDirectory())) continue;
-      if (st.isDirectory()) walk(path);
-      else if (st.isSymbolicLink()) entries.push(`${rel}\0link:${readlinkSync(path)}`);
-      else if (st.isFile()) {
-        bytes += st.size;
-        if (entries.length >= PIN_MAX_FILES || bytes > PIN_MAX_BYTES) throw new PinError(t("cli.provider.load.tooLarge", { path: dir, files: PIN_MAX_FILES, mib: PIN_MAX_BYTES / 1024 / 1024 }));
-        entries.push(`${rel}\0${createHash("sha256").update(readFileSync(path)).digest("hex")}`);
-      }
+      if (st.isDirectory()) walk(path, rel, inner);
+      else if (st.isSymbolicLink()) {
+        const link = `link:${readlinkSync(path)}\0`;
+        let target: ReturnType<typeof statSync> | null = null;
+        try {
+          target = statSync(path);
+        } catch {}
+        if (target?.isFile()) addFile(rel, path, target.size, link);
+        else if (target?.isDirectory()) {
+          entries.push(`${rel}\0${link}dir`);
+          if (!walk(path, rel, inner)) entries.push(`${rel}\0${link}cycle`);
+        } else entries.push(`${rel}\0${link}`);
+      } else if (st.isFile()) addFile(rel, path, st.size);
     }
+    return true;
   };
-  walk(dir);
+  walk(dir, "", new Set());
   return createHash("sha256").update(entries.sort().join("\n")).digest("hex");
 }
 
