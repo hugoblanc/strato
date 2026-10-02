@@ -44,6 +44,7 @@ import { type MasterRequest, revueLine } from "../core/master.ts";
 import { settings } from "../core/settings.ts";
 import { dueReminders, findSujet, type Snooze, type Sujet, trackedKeys } from "../core/sujet.ts";
 import { t } from "../core/i18n.ts";
+import { oneLine, truncate, untrusted } from "../core/text.ts";
 import { isSilent } from "../core/triage.ts";
 import { providerError } from "../providers/api.ts";
 import { type AccountEntry, accountContext } from "../providers/registry.ts";
@@ -440,7 +441,9 @@ export async function listen(opts: Record<string, string>) {
 export function suiviOuverture(say: (line: string) => void): { refus: (reason: string, fatal: boolean) => void; ouverte: () => void } {
   let outage: string | null = null;
   return {
-    refus(reason, fatal) {
+    refus(raw, fatal) {
+      // Slack's text, flattened and neutralized as outageLines does: Slack's own codes come out unchanged
+      const reason = untrusted(oneLine(truncate(raw, 200)));
       if (fatal) say(`[strato] socket opening refused: ${reason}, listener stopped`);
       else if (outage === null) say(`[strato] socket opening refused: ${reason} · retrying silently, one line when it is back`);
       outage = reason;
