@@ -493,8 +493,13 @@ export async function serve(args: string[]) {
       retry,
       after: (x, sent) => {
         const permalink = sent.link;
-        const text = sent.plan.actions[0] && "text" in sent.plan.actions[0] ? sent.plan.actions[0].text : "";
-        const note = `I posted the draft of task ${taskId} myself from the board${edited !== null ? ", with my edits" : ""}: ${permalink}\nPosted text:\n${text}\nDo not post it again. Task ${taskId} is marked done: update the rest of the card and continue the plan.`;
+        const a = sent.plan.actions[0];
+        const text = a && "text" in a ? a.text : "";
+        // a status or an assignee: no text, the change itself is what the session must not make again
+        const change = a?.kind === "setStatus" ? `set the status of ${a.target.native} to "${a.status}"` : a?.kind === "assign" ? `assigned ${a.target.native} to ${a.assignee}` : null;
+        const note = change
+          ? `I carried out task ${taskId} myself from the board: I ${change} (${permalink}).\nDo not do it again. Task ${taskId} is marked done: update the rest of the card and continue the plan.`
+          : `I posted the draft of task ${taskId} myself from the board${edited !== null ? ", with my edits" : ""}: ${permalink}\nPosted text:\n${text}\nDo not post it again. Task ${taskId} is marked done: update the rest of the card and continue the plan.`;
         // the note goes after the undo window; written in the topic, it survives a restart of serve
         notifyAt = new Date(sent.undo?.until ?? Date.now() + UNDO_MS).toISOString();
         const posted = `${at} ${permalink}`;
@@ -816,7 +821,7 @@ export async function serve(args: string[]) {
         return Response.json({ error: (e as Error).message }, { status: 500 });
       }
     }
-    if (route === "POST /api/post-draft" || route === "POST /api/unpost" || route === "POST /api/snooze" || route === "POST /api/drop-draft" || route === "POST /api/task") {
+    if (route === "POST /api/post-draft" || route === "POST /api/act-task" || route === "POST /api/unpost" || route === "POST /api/snooze" || route === "POST /api/drop-draft" || route === "POST /api/task") {
       if (!localOrigin(req)) return Response.json({ error: t("board.api.originRefused") }, { status: 403 });
       let body: { key?: unknown; taskId?: unknown; op?: unknown; text?: unknown; draft?: unknown; draftTo?: unknown; until?: unknown; sha?: unknown; retry?: unknown };
       try {
@@ -872,6 +877,19 @@ export async function serve(args: string[]) {
         const shown = planOfTask(s, { ...task, draft: typeof body.draft === "string" ? body.draft : "", draftTo: typeof body.draftTo === "string" ? body.draftTo : "" });
         const sha = given ?? ("plan" in shown ? planSha(shown.plan) : "");
         const r = await postDraft(s, taskId, text.replace(/\r\n/g, "\n").trim() === taskDraftText(task) ? null : text, sha, body.retry === true);
+        boardChanged();
+        return r.ok ? Response.json(r) : Response.json({ error: r.error, ...(r.code ? { code: r.code } : {}) }, { status: r.status });
+      }
+      if (route === "POST /api/act-task") {
+        // a status or an assignee on a ticket: the Go covers the plan whose hash the page showed, the gate checks it
+        const task = findTask(s, taskId);
+        const given = typeof body.sha === "string" ? body.sha : "";
+        if (!task || task.status !== "open" || !task.act) {
+          const message = task ? t("board.api.taskClosed", { id: taskId }) : t("board.api.taskMissing", { id: taskId });
+          refuseAct({ key: s.key, taskId, by: "board", ...(given ? { sha: given } : {}) }, { code: task ? "task" : "missing", message });
+          return Response.json({ error: message }, { status: task ? 409 : 404 });
+        }
+        const r = await postDraft(s, taskId, null, given, body.retry === true);
         boardChanged();
         return r.ok ? Response.json(r) : Response.json({ error: r.error, ...(r.code ? { code: r.code } : {}) }, { status: r.status });
       }

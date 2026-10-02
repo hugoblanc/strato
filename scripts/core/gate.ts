@@ -91,13 +91,28 @@ const normalizeText = (text: string) => text.replace(/\r\n/g, "\n").trim();
  * The plan a draft task carries out: its text (the person's own edit when given), to its target as the provider
  * resolved it. The same resolution the board shows (core/targets.ts).
  */
-export function planOfTask(s: Pick<Sujet, "key" | "channel" | "conversation">, x: Pick<Task, "kind" | "draft" | "action" | "draftTo" | "to">, edited: string | null = null): { plan: ActionPlan } | Refusal {
+export function planOfTask(s: Pick<Sujet, "key" | "channel" | "conversation">, x: Pick<Task, "kind" | "draft" | "action" | "draftTo" | "to" | "act" | "value">, edited: string | null = null): { plan: ActionPlan } | Refusal {
+  if (x.act) return actPlanOf(s, x);
   const text = normalizeText(edited ?? taskDraftText(x));
   if (!text) return refuse("empty", t("board.api.draftEmpty"));
   const dest = resolveTarget(s, x);
   if (!isResolved(dest)) return refuse(dest.noTool ? "tool" : "target", dest.error);
   const target = { scope: dest.target.scope, native: dest.target.native, label: dest.target.label };
   return { plan: { provider: dest.provider, account: dest.account, actions: [{ kind: textKind(target), target, text }] } };
+}
+
+/**
+ * The plan of a structured action task (`act=setStatus` or `act=assign`): on the ticket its `to` names, else on the
+ * topic's own ticket. Nothing in it is free text: the value is the status's name or the assignee.
+ */
+function actPlanOf(s: Pick<Sujet, "key" | "channel" | "conversation">, x: Pick<Task, "act" | "value" | "to">): { plan: ActionPlan } | Refusal {
+  const value = (x.value ?? "").trim();
+  if (!value) return refuse("empty", t("gate.valueMissing", { act: x.act ?? "" }));
+  const dest = resolveTarget(s, { to: x.to?.trim() || s.key });
+  if (!isResolved(dest)) return refuse(dest.noTool ? "tool" : "target", dest.error);
+  const target = { scope: dest.target.scope, native: dest.target.native, label: dest.target.label };
+  const action: Action = x.act === "setStatus" ? { kind: "setStatus", target, status: value } : { kind: "assign", target, assignee: value };
+  return { plan: { provider: dest.provider, account: dest.account, actions: [action] } };
 }
 
 /**

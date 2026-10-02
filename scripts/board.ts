@@ -752,6 +752,35 @@ function taskOps(key: string, x: Task): string {
 const shadowButton = () => `<button type="button" disabled data-shadow class="${BTN_PRIMARY}" title="${escapeHtml(t("board.task.shadow.tip"))}">${escapeHtml(t("board.task.shadow"))}</button>`;
 
 /**
+ * The box of a structured action on a ticket (`act=setStatus` or `act=assign`): the sentence of the change, its
+ * target as a link to the ticket, and a Go that the server carries out through the gate (`/api/act-task`), with the
+ * hash of the plan shown (`data-sha`). Nothing in it is free text but the value, which is escaped.
+ */
+function actBox(s: Sujet, x: Task, hint: boolean, ops: string, shadow: boolean): string {
+  const dest = resolveTarget(s, { to: x.to?.trim() || s.key });
+  const plan = planOfTask(s, x);
+  const why = "plan" in plan ? "" : plan.message;
+  const href = isResolved(dest) ? targetLink(dest) : null;
+  const name = escapeHtml((isResolved(dest) ? dest.target.label : dest.label) || "?");
+  const target = href ? `<a href="${escapeHtml(href)}" target="_blank" rel="noopener" data-act-dest class="text-link hover:underline underline-offset-2">${name}</a>` : `<span class="text-muted">${name}</span>`;
+  // the sentence is escaped whole, then the target's link takes the place of its marker
+  const MARK = "\u0001";
+  const sentence = escapeHtml(t(x.act === "setStatus" ? "board.act.setStatus" : "board.act.assign", { target: MARK, value: x.value ?? "" })).replace(MARK, target);
+  const tool = dest.provider ? providerLabel(dest.provider) : "?";
+  const maybe = unknownOf(x, Date.now());
+  const sha = "plan" in plan ? ` data-sha="${planSha(plan.plan)}"` : "";
+  const button = shadow
+    ? shadowButton()
+    : `<button type="button" data-act-go class="${BTN_PRIMARY}"${why ? ` disabled title="${escapeHtml(why)}"` : ` title="${escapeHtml(t("board.act.go.tip"))}"`}>${t(maybe && !why ? "board.js.post.again" : "board.task.go")}${hint && !why ? KEY_HINT : ""}</button>`;
+  const status = why ? escapeHtml(why) : maybe ? escapeHtml(t("gate.mayHaveGone", { id: x.id, link: maybe.link ?? s.permalink })) : "";
+  return `<div class="max-w-[78ch] cursor-auto rounded-lg border border-accent/40 bg-accent-soft/30 px-4 py-3" data-actbox data-key="${escapeHtml(s.key)}" data-task="${escapeHtml(x.id)}"${sha}${maybe ? " data-retry" : ""}>
+<div class="text-[12.5px] font-semibold text-accent-ink">${escapeHtml(t("board.act.label", { tool }))}</div>
+<p class="mt-1 text-[13.5px] leading-relaxed text-ink">${sentence}</p>
+<div class="mt-2.5 flex items-center gap-2">${button}<span class="min-w-0 truncate text-[12.5px] ${why || maybe ? "text-warn" : "text-muted"}" data-go-status>${status}</span>${ops}</div>
+</div>`;
+}
+
+/**
  * The box of a task: its draft (Send posts the text as is in the thread, from the server, on behalf of the person
  * served; Edit makes it editable; Copy), or the action that goes out on go and its Go button, or nothing for a
  * decision or a question. Its primary button is the only filled button of the task; `hint` puts the g g key on it
@@ -764,6 +793,7 @@ function taskBox(s: Sujet, x: Task, hint: boolean): string {
   const keyHint = hint ? KEY_HINT : "";
   const ops = taskOps(s.key, x);
   const shadow = settings().workers.shadow;
+  if (x.kind === "action" && x.act) return actBox(s, x, hint, ops, shadow);
   if (text) {
     const dest = resolveTarget(s, x);
     const tool = dest.provider;
@@ -1928,10 +1958,11 @@ const JS = `
   // survives the redraw. Otherwise the redraws during the 10 to 15 s of a delivery bring the Go button back active
   // without a spinner, and each new click sends another "go" to the session.
   var busy = {};
-  var BUSY_SEL = "[data-update-apply],[data-ask-texts],[data-check],[data-revalidate],[data-revalidate-all],[data-go],[data-term],[data-dive],[data-confirm],[data-task-op],[data-revue],[data-unsnooze],[data-dismiss],[data-snooze],[data-unpost],form[data-snooze-date] button[type=submit]";
+  var BUSY_SEL = "[data-act-go],[data-update-apply],[data-ask-texts],[data-check],[data-revalidate],[data-revalidate-all],[data-go],[data-term],[data-dive],[data-confirm],[data-task-op],[data-revue],[data-unsnooze],[data-dismiss],[data-snooze],[data-unpost],form[data-snooze-date] button[type=submit]";
   var SPIN = '<span class="mr-1.5 inline-block h-3 w-3 animate-spin rounded-full border-2 border-current border-r-transparent align-[-2px]" aria-hidden="true"></span>';
   function busyIdOf(b) {
     if (b.hasAttribute("data-go")) return "go:" + goIdOf(b);
+    if (b.hasAttribute("data-act-go")) { var ab = b.closest("[data-actbox]"); return "act:" + (ab && ab.getAttribute("data-key")) + "#" + (ab && ab.getAttribute("data-task")); }
     if (b.hasAttribute("data-term")) return "term:" + b.getAttribute("data-term");
     if (b.hasAttribute("data-dive")) return "dive:" + b.getAttribute("data-dive");
     if (b.hasAttribute("data-confirm")) return b.getAttribute("data-confirm") + ":" + b.getAttribute("data-key");
@@ -2120,6 +2151,19 @@ const JS = `
       });
       return;
     }
+    var ag = el.closest("[data-act-go]");
+    if (ag) {
+      ev.preventDefault(); ev.stopPropagation();
+      // a status or an assignee on a ticket: the server acts through the gate, on the plan whose hash the page shows
+      var box = ag.closest("[data-actbox]");
+      runBusy(ag, tr("board.js.act.busy"), function () {
+        return post("/api/act-task", { key: box.getAttribute("data-key"), taskId: box.getAttribute("data-task"), sha: box.getAttribute("data-sha") || "", retry: box.hasAttribute("data-retry") }).then(function (x) {
+          flash(x.ok ? tr("board.js.act.done") : tr("board.js.act.failed", { error: x.error }));
+          return redraw(true);
+        });
+      });
+      return;
+    }
     var go = el.closest("[data-go]");
     if (go) {
       ev.preventDefault(); ev.stopPropagation();
@@ -2257,7 +2301,7 @@ const JS = `
   function rowOf(key) { var r = null; app.querySelectorAll("[data-row]").forEach(function (x) { if (x.getAttribute("data-key") === key) r = x; }); return r; }
   function rows() { return Array.prototype.slice.call(app.querySelectorAll("[data-row]")); }
   // what g g sends on a card: the primary button of its first ready task, in the order of the page (oldest first)
-  function gTarget(row) { return row.querySelector("[data-post]:not([disabled]),[data-go]:not([disabled])"); }
+  function gTarget(row) { return row.querySelector("[data-post]:not([disabled]),[data-go]:not([disabled]),[data-act-go]:not([disabled])"); }
   function setCursor(key, scroll) {
     rows().forEach(function (r) { r.removeAttribute("data-cursor"); });
     cursorKey = key;

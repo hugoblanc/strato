@@ -1,6 +1,6 @@
 /**
  * `task`: what a session puts in front of the person served, one task per thing to decide or to send.
- *   task <topic> add kind=draft|action|decision|question ask="…" proposal="…" [action="…"] [draft="…" draftTo="…" | to=<key>]
+ *   task <topic> add kind=draft|action|decision|question ask="…" proposal="…" [action="…"] [draft="…" draftTo="…" | to=<key>] [act=setStatus|assign value="…"]
  *   task <topic> done <id> [note="…"]
  *   task <topic> drop <id> [note="…"]
  *   task <topic> edit <id> key=value…

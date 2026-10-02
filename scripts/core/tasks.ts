@@ -40,6 +40,13 @@ export interface Task {
    * connected tool. It wins over `draftTo`, which then only describes it.
    */
   to?: string;
+  /**
+   * A structured action on a ticket, carried out by the board's Go behind the gate (docs/design/providers.md, section
+   * 4.6): a status change or an assignment of the ticket named by `to` (or of the topic's own ticket), to `value`.
+   */
+  act?: TaskAct;
+  /** What `act` sets: the status's name, or the assignee (an email, a name, "me", "none"). */
+  value?: string;
   createdAt: string;
   updatedAt: string;
   status: TaskStatus;
@@ -58,8 +65,12 @@ export interface Task {
   sent?: SentRecord;
 }
 
+/** The structured actions a task can carry; a comment is a draft whose `to` is the ticket. */
+export const TASK_ACTS = ["setStatus", "assign"] as const;
+export type TaskAct = (typeof TASK_ACTS)[number];
+
 /** The fields a session writes on a task. */
-export const TASK_FIELDS = ["kind", "ask", "proposal", "action", "draft", "draftTo", "to"] as const;
+export const TASK_FIELDS = ["kind", "ask", "proposal", "action", "draft", "draftTo", "to", "act", "value"] as const;
 type TaskField = (typeof TASK_FIELDS)[number];
 
 /** What the task functions read and write on a topic. */
@@ -194,6 +205,7 @@ export function sendsUnseenMessage(x: Pick<Task, "kind" | "action" | "draft">): 
 
 export function taskReady(x: Task): boolean {
   if (x.kind === "draft") return !!taskDraftText(x);
+  if (x.kind === "action" && x.act) return !!clean(x.value);
   if (x.kind === "action") return !!clean(x.action) && !sendsUnseenMessage(x);
   return false;
 }
@@ -205,18 +217,24 @@ function parseFields(kv: Record<string, string>): Partial<Record<TaskField, stri
   for (const [k, v] of Object.entries(kv)) {
     if (!(TASK_FIELDS as readonly string[]).includes(k)) throw new Error(`unknown task field: ${k} (${TASK_FIELDS.join(", ")})`);
     if (k === "kind" && !(TASK_KINDS as readonly string[]).includes(v)) throw new Error(`unknown kind: ${v} (${TASK_KINDS.join(", ")})`);
+    if (k === "act" && clean(v) && !(TASK_ACTS as readonly string[]).includes(clean(v))) throw new Error(`unknown act: ${v} (${TASK_ACTS.join(", ")})`);
     out[k as TaskField] = k === "kind" ? v : clean(v);
   }
   return out;
 }
 
 /** A task that cannot be shown or carried out as written: the reason, or null. */
-function invalid(x: Pick<Task, "kind" | "ask" | "draft" | "draftTo" | "to" | "action">): string | null {
+function invalid(x: Pick<Task, "kind" | "ask" | "draft" | "draftTo" | "to" | "action" | "act" | "value">): string | null {
   if (!x.ask) return "ask is required: what is asked, one sentence";
+  if (x.act) {
+    if (x.kind !== "action") return `act=${x.act} goes with kind=action`;
+    if (!x.value) return `act=${x.act} requires value: ${x.act === "setStatus" ? "the name of the status" : "the assignee (an email, a name, me or none)"}`;
+    if (x.draft) return `act=${x.act} carries no draft: a comment is a kind=draft task with to=<the ticket's key>`;
+  }
   if (x.kind === "draft" && !x.draft) return "kind=draft requires draft: the text as it will go out";
   if (x.draft && !x.draftTo && !x.to) return "draft requires draftTo: the channel and the thread link, or the channel id and \"new message\" (or to=<key>)";
   if (x.to && !parseKey(x.to)) return `to=${x.to} is not a key: the key of a thread or of a conversation, such as C0123456789:1759219200.000100`;
-  if (x.kind === "action" && !x.action) return "kind=action requires action: the exact action that goes out on go";
+  if (x.kind === "action" && !x.action && !x.act) return "kind=action requires action: the exact action that goes out on go";
   return null;
 }
 
@@ -257,6 +275,8 @@ export function addTask<S extends TaskHost>(s: S, kv: Record<string, string>, no
     draft: f.draft ?? "",
     draftTo: f.draftTo ?? "",
     ...(f.to ? { to: f.to } : {}),
+    ...(f.act ? { act: f.act as TaskAct } : {}),
+    ...(f.value ? { value: f.value } : {}),
     createdAt: now,
     updatedAt: now,
     status: "open",
