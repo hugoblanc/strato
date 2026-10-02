@@ -241,7 +241,9 @@ export interface Vocabulary {
   conversation: Text;
   /** Prompt sentence: how a draft destination is written (`to=`), with an example. English. */
   targetFormat: string;
-  /** Prompt sentence: the marker that tells everyone a thread is settled, if the tool has one. English. */
+  /** Prompt words: the placeholder of a draft's destination in the card command (`draftTo="<…>"`). English. Default: "destination". */
+  targetHint?: string;
+  /** Prompt words: the marker that tells everyone a thread is settled, and how a session puts it, if the tool has one. English. */
   doneMarker?: string;
 }
 ```
@@ -1764,6 +1766,32 @@ Each stage is one or more commits that leave `bun run check` green and the guard
 - **Tests.** Every default template renders for a Slack topic and for a Linear topic, in both gate modes; fixture overrides in the older styles (French, `{{#si}}`, `bun {{script}}`) render byte for byte as before; an unknown variable still fails; a `policy` variable named `topic_source` does not replace the built-in and `doctor` warns; `strato context` output is neutralized (brackets, guillemets, a fake `[strato]` line) for a fake provider; `prompts.test.ts` unchanged.
 - **Compatibility.** No template renamed; every new variable always defined; existing variable names keep their precedence; legacy Slack MCP read rules kept.
 - **Done when.** Check green; a Slack topic's rendered worker prompt differs from the act stage's only in the lines that name the context command.
+- **As built.** Where the stage departs from the text above, and why:
+  - A golden render of every prompt of a Slack-only installation (`prompts-golden.test.ts`, `prompts-golden.json`), recorded before the change: the worker and ticket prompts, the three follow-ups and the relaunch, from a clone and from a binary, in shadow mode, without a team group, in French, and with overrides in the older styles (French, `{{#si}}`, the elided forms, `bun {{script}}`, the Slack MCP named literally).
+    Overrides render byte for byte as before.
+    The defaults differ in two places, each listed with its reason in the test's `INTENDED`: the worker's first step names `strato context` before the Slack MCP, and the card rules say "in one of these formats" instead of "in one of these two formats", since the count belongs to the tool and Slack's vocabulary still lists its two.
+    The second one is a line that does not name the context command: the alternative was a variable spanning the owner's name, which `renderTemplate` never reads again.
+  - The variables are `topic_source`, `topic_thread_word`, `topic_conversation_word`, `topic_item_word`, `topic_read_thread`, `topic_target_format`, `topic_done_marker`, `topic_is_chat`, `topic_is_ticket` and `topic_is_mail` (`TOPIC_VARS` in `policy/prompts.ts`).
+    `gate_strict` comes with the second act stage, which brings `workers.gate`, and `role_rules` and `role_tone` with the roles stage: defined now, they could only be empty, and a template could not tell an unset gate from a legacy one.
+  - `topic_target_format` and the card command's `draftTo` placeholder come from the tool that reads the topic's free-text destinations (`draftReaderOf` in `core/targets.ts`, the rule the gate follows): Slack for a ticket topic, as its drafts still go to Slack.
+    `topic_done_marker` is the topic's tool's, else that same tool's: a ticket topic keeps the passage on ✅ it always had.
+    Without a topic (`cardStyle()`), the words are those of the tool drafts go to.
+  - The vocabulary gains `targetHint` (the `draftTo` placeholder); Slack's `targetFormat` and `doneMarker` are the exact words its prompts used, the DM sentence and "with the Slack MCP" included, so its prompts keep them.
+    The done-marker passage of `execution-rule.md` keeps "No ✅ for a merge" literally inside `{{#if topic_done_marker}}`: only Slack has a marker.
+  - Whether Strato reads a tool is pure (`readsThreads` in `core/links.ts`): a configured account whose tool declares `context`, with an auth method that keeps it.
+    So the Linear descriptor declares `context: false` until the linear stage, since its provider does not read tickets yet; a Linear topic's `topic_read_thread` is "the Linear MCP, get_issue", and `ticket.md` keeps "(tracker MCP)" until then.
+    `strato context` also checks that the provider implements `context`.
+  - The context rule is appended to the worker and ticket prompts only, after the template and before the security rule: "Context: this topic comes from <tool>. Read its <thread> with `<strato> context <key>`, whatever this prompt says about another tool; a draft's destination is written this way: …".
+    It is empty for a Slack topic, whose overrides were written for it, and for a tool Strato does not read.
+  - `strato context <topic | key | link> [--since 2h] [--max 200]`: a link, a key or a bare ticket id names one thread, anything else is looked up as a topic, whose threads are all printed.
+    It connects the account, then reads through `context`; the output is the security rule, then per thread a `==` header (tool, conversation, title, checked link, key), the ticket's fields, one `[time] author: text` block per item with the text's further lines indented, a line when the read stopped at its cap, and an end line.
+    Every third-party string goes through `oneLine` where it is one line and `untrusted()`; a thread it cannot read says why on stderr (naming the tool's MCP server when it declares one), the others are still printed, and the exit code is 1.
+    There is no 60-second cache: sessions read rarely, and the panel and `dive` keep their own reads until they move to `context`.
+  - `doctor`'s policy line names the overrides that use no `topic_` variable and the `policy` variables named like a reserved one; the warnings on overrides that contradict strict mode come with strict mode.
+  - Session permissions: `workerSettings` allows the read tools of each configured account's MCP server (`mcpServer`, the tool's own by default), after the three legacy Slack read rules, which stay first whatever the profile (`core/mcp.ts`).
+    It does not check that the workspace has the server, which may be configured at user scope: a rule for an absent server is never used.
+    A server or tool name a permission rule cannot carry as is is left out.
+  - The board's trail names the tool of an MCP server through the accounts and descriptors, and transcript citations find any https link and read it through the link patterns, so a named Slack account's thread is cited with its own key.
 
 ### setup
 
@@ -1783,6 +1811,7 @@ Each stage is one or more commits that leave `bun run check` green and the guard
   Changed: `providers/registry.ts`, `core/i18n.ts`, SETUP.md.
 - **Tests.** A fake Linear GraphQL server on port 0 with recorded fixtures; the `Authorization` header with and without `Bearer` by auth method; refresh on an expired token; poll, cursor and dedup; event mapping (`assigned`, `created`, `comment`, `status`); context threading; comment, setStatus and assign with undo; a resend after Undo uses a new id; rate-limit headers respected; a profile with `tracker` and no account behaves as links-only; with a second tracker claiming the same prefix, `open PLAT-12` asks for the link.
 - **Compatibility.** `linear:ABC-123` keys; `open ABC-123` still opens the implementation topic; the Linear MCP stays usable by sessions for reads.
+  The descriptor declares `context` again once the provider reads tickets (the prompts stage turned it off), and `ticket.md`'s first step reads the ticket with `{{topic_read_thread}}`.
 - **Done when.** Check green; the full loop runs on the rig against the fake server: a mention becomes a line, `open --msg` opens a topic, a comment task goes out on a board Go and is undone.
 
 ### external
