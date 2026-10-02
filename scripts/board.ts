@@ -9,6 +9,8 @@
 import { faviconHref, stratoMark } from "./core/brand.ts";
 import { isItemEvent, postOnlyAction, truncate, t, clientMessages, locale, type MessageKey, type ActivityStep, type AgentNode, agentCounts, type Due, type MasterRequest, type MrStage, MR_STAGE_ORDER, parseDue, REVUE_STALE_MS, REVUE_WINDOWS, draftText, isSnoozed, type Snooze, parseSteps, permalinkOfKey, providerKeyLabel, providerLabel, repoLabel, isResolved, maxTextOf, planOfTask, planSha, providerOfKey, unknownOf, renderHtml, resolveTarget, type ResolvedTarget, targetLink, threadInfoOfKey, type UnresolvedTarget, type SessionContext, settings, shellQuote, ticketIdOfKey, ticketUrl, type SocketHealth, socketDeaf, type Sujet, sujetKeys, takenBy, freshness, gateSince, checkable, descriptorOf, openTasks, tasksOf, taskDraftText, taskReady, sendsUnseenMessage, type Task, type TaskKind } from "./lib.ts";
 import { type StaleSignal, staleSignals } from "./core/refresh.ts";
+import { roleT } from "./core/i18n.ts";
+import { speaksCode } from "./core/roles.ts";
 import { escapeHtml, textToHtml } from "./panel.ts";
 import { slackEventsPage } from "./providers/slack/model.ts";
 import type { LocalVersion, UpdateCheck, UpdateResult } from "./app/update.ts";
@@ -209,7 +211,8 @@ const blocHint = (b: Bloc) => t(`board.bloc.${b}.tip` as MessageKey);
 export type Lamp = "amber" | "red" | "green" | "blue";
 const BLOC_LAMP: Record<Bloc, Lamp> = { attend: "amber", revoir: "red", travail: "green", attente: "blue" };
 
-const blocEmpty = (b: Bloc) => t(`board.bloc.${b}.empty` as MessageKey);
+/** The empty state of a block, in the words of the person's role (core/roles.ts). */
+const blocEmpty = (b: Bloc) => roleT(`board.bloc.${b}.empty` as MessageKey);
 
 /** The conversation of a session connected through Remote Control. */
 export const remoteUrlOf = (id: string) => `https://claude.ai/code/${id}`;
@@ -251,11 +254,15 @@ export function lastMessageOf(s: Sujet, events: BoardEvent[]): LastMessage | nul
 const GATE_KEYS: Record<string, MessageKey> = { draft: "board.gate.draft", release: "board.gate.release", merge: "board.gate.merge", decision: "board.gate.decision", question: "board.gate.question" };
 /** The badge of a task: what it asks of the person served, in two words. */
 const TASK_KIND_KEYS: Record<TaskKind, MessageKey> = { draft: "board.gate.draft", action: "board.gate.none", decision: "board.gate.decision", question: "board.gate.question" };
-export const taskKindLabel = (kind: TaskKind) => t(TASK_KIND_KEYS[kind]);
+export const taskKindLabel = (kind: TaskKind) => roleT(TASK_KIND_KEYS[kind]);
+
+/** Gates that speak of code delivery: without it (core/roles.ts speaksCode), they read as a plain go. */
+const CODE_GATES = new Set(["release", "merge"]);
 
 export const gateLabel = (gate: string | undefined) => {
   const key = GATE_KEYS[gate ?? ""];
-  if (key) return t(key);
+  if (key && CODE_GATES.has(gate ?? "") && !speaksCode()) return t("board.gate.none");
+  if (key) return roleT(key);
   return gate && gate !== "none" ? t("board.gate.other", { gate }) : t("board.gate.none");
 };
 
@@ -1048,7 +1055,7 @@ function blocView(bloc: Bloc, lines: BoardLine[], ctx: BoardContext): string {
   const body = !lines.length
     ? `<p class="rounded-lg border border-dashed border-line px-4 py-3 text-[13.5px] text-muted">${blocEmpty(bloc)}</p>`
     : quick.length
-      ? `${sub(t("board.bloc.quick.title"), t("board.bloc.quick.tip"), quick, quick.length > 1)}${rest.length ? sub(t("board.bloc.decision.title"), t("board.bloc.decision.tip"), rest) : ""}`
+      ? `${sub(roleT("board.bloc.quick.title"), roleT("board.bloc.quick.tip"), quick, quick.length > 1)}${rest.length ? sub(roleT("board.bloc.decision.title"), roleT("board.bloc.decision.tip"), rest) : ""}`
       : list(lines);
   return `<section class="flex flex-col gap-2.5" id="bloc-${bloc}">
 <h2 class="flex items-center gap-x-3"><span class="lamp lamp-${BLOC_LAMP[bloc]}${lines.length ? " lit" : ""}" aria-hidden="true"></span><span class="text-[17px] font-semibold tracking-tight text-ink" title="${escapeHtml(blocHint(bloc))}">${blocTitle(bloc)}</span>${count(lines.length)}</h2>
@@ -1061,7 +1068,7 @@ export function sessionLine(x: BoardSession, ctx: BoardContext): string {
   const c = x.context;
   const title = c?.title || (c?.firstRequest ? clip(c.firstRequest.text, 90) : x.name);
   const repo = repoLabel(x.cwd) ?? x.cwd;
-  const sub: string[] = [escapeHtml(x.name), escapeHtml(x.branch ? t("board.session.onBranch", { repo, branch: x.branch }) : repo)];
+  const sub: string[] = [escapeHtml(x.name), escapeHtml(x.branch && speaksCode() ? t("board.session.onBranch", { repo, branch: x.branch }) : repo)];
   if (x.startedAt) sub.push(t("board.since", { time: when(x.startedAt, ctx) }));
   if (c?.lastAgent?.at) sub.push(t("board.session.lastTurn", { when: when(c.lastAgent.at, ctx) }));
   const cites: string[] = [];
@@ -1142,7 +1149,7 @@ const revueWindowLabel = (k: string, label: string) => (REVUE_WINDOW_KEYS[k] ? t
 function revueControl(m: BoardModel): string {
   const busy = m.revue && (m.revue.state === "queued" || m.revue.state === "running");
   const why = !m.listener.alive ? t("board.header.revue.noListener") : busy ? t("board.header.revue.busy") : "";
-  const title = t("board.header.revue.tip");
+  const title = t(speaksCode() ? "board.header.revue.tip" : "board.header.revue.tip.noCode");
   if (why) return `<button type="button" disabled title="${escapeHtml(why)}" class="${BTN} cursor-not-allowed opacity-50">${t("board.header.revue")}</button>`;
   return `<details class="relative" id="revue-menu" data-revue-menu><summary title="${escapeHtml(title)}" class="${BTN} cursor-pointer list-none select-none">${t("board.header.revue")}</summary><div class="absolute right-0 top-full z-10 mt-1 flex flex-col rounded-md border border-line bg-surface p-1 shadow-lg">${Object.entries(REVUE_WINDOWS)
     .map(([k, label]) => `<button type="button" data-revue="${escapeHtml(k)}" class="whitespace-nowrap rounded px-2.5 py-1 text-left text-[12.5px] text-ink hover:bg-soft">${escapeHtml(revueWindowLabel(k, label))}</button>`)
