@@ -937,7 +937,7 @@ const en = {
   "cli.setup.role.list": "Roles (owner.role): what sessions do with a topic, the board's words, what the setup proposes",
   "cli.setup.role.current": "current",
   "cli.setup.role.usage": "usage: setup --role [<role>] ({roles})",
-  "cli.setup.role.proposals": "Proposed for this role, to accept or not (setup --write applies them):",
+  "cli.setup.role.proposals": "Proposed for this role, to accept or not (the setup interview asks you about each one):",
   "cli.setup.role.noProposal": "Nothing to change in what Strato listens to for this role.",
   "cli.setup.role.demo": "See it with fictional topics: {cmd}",
   // roles (core/roles.ts): the name, what a session does, the interview's proposals, and the board words a role changes
@@ -1860,7 +1860,7 @@ const fr: Record<MessageKey, string> = {
   "cli.setup.role.list": "Rôles (owner.role) : ce que les sessions font d'un sujet, les mots du board, ce que la configuration propose",
   "cli.setup.role.current": "actuel",
   "cli.setup.role.usage": "usage : setup --role [<rôle>] ({roles})",
-  "cli.setup.role.proposals": "Proposé pour ce rôle, à accepter ou non (setup --write les applique) :",
+  "cli.setup.role.proposals": "Proposé pour ce rôle, à accepter ou non (l'entretien de setup vous pose la question pour chacun) :",
   "cli.setup.role.noProposal": "Rien à changer dans ce que Strato écoute pour ce rôle.",
   "cli.setup.role.demo": "Pour le voir avec des sujets fictifs : {cmd}",
   "role.developer.name": "Développeur",

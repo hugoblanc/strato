@@ -20,9 +20,11 @@ You do not need git, GitLab, Bun or a code repository.
 The short path:
 
 1. Install the binary (section 2) and Claude Code.
+   If the installer says `~/.local/bin` is not in your `PATH`, add it, or type `~/.local/bin/strato` wherever this guide says `strato`.
 2. See what Strato would do for your job, with fictional topics: `strato demo --role support` (or `operations`, `account-manager`, `manager`).
-3. Connect Slack (section 3). If someone on your team already set up a Strato Slack app, ask them for its Client ID and use the OAuth option: no app to create.
-4. Run the interview (section 4). Its first question is your job; skip every question about trackers and code forges.
+3. Connect Slack (section 3). If someone on your team already set up a Strato Slack app, ask them for its Client ID and use the team's app (section 3, "One Slack app for a whole team (OAuth with PKCE)"): `strato setup --connect slack --auth oauth-pkce --client-id <id>`, no app to create.
+4. Make an empty folder for Strato, for example `~/strato`, and start Claude Code from it: `cd ~/strato && claude -n strato "/strato setup"`.
+   That runs the interview (section 4); a code project is not needed. Its first question is your job, and what each job proposes for what Strato listens to is asked there too; skip every question about trackers and code forges.
 5. Read the cards for a day in shadow mode, then go live (section 6).
 
 Your job sets `owner.role` in your profile; `strato setup --role` lists the roles and what each one changes, and `strato setup --role <role>` sets it.
