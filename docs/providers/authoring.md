@@ -118,7 +118,7 @@ Every user-facing text is `{ "en": "…", "fr": "…" }`, English required.
 | `settings` | The account settings you read, with their type and an `ask` question. `setup --connect` asks every setting with an `ask` and no `default` before signing in (section 4, step 3); the setup interview asks the others. A setting with a `triage` role feeds triage (section 8). They live in `config.json` under `providers.<id>.accounts.<name>.<key>`. |
 | `vocabulary` | Your tool's words for an item, a thread and a conversation, and `targetFormat`: one English sentence that tells a work session how to write a destination, such as "the item's key, such as tickets:OPS-7". |
 | `links` | Your links as data (section 9). |
-| `hosts` | The hosts of the links you build. The board opens those, and only those, for your keys. |
+| `hosts` | The hosts of the links you build. The board opens those, and only those, for your keys. A self-hosted tool writes `{settings.site}`: each account's own host, from that setting written as a URL or a host (`https://jira.acme.example` or `jira.acme.example`), and the same in `links.parse[].host`. In `links.of[].url` a setting is inserted as written, so use a setting that holds the host alone there. |
 | `apiHosts` | The hosts your requests may reach. `{settings.baseUrl}` stands for the host of that setting, written as a URL of any scheme (`https://tickets.example`, `imaps://imap.acme.example:993`) or as a bare host with an optional port (`imap.acme.example`). A request elsewhere fails, and the error names a placeholder whose setting names no host. |
 | `undoMs` | The undo window, in milliseconds, when `capabilities.undo` is not empty. |
 | `maxText` | The longest text an action may carry. |

@@ -167,6 +167,19 @@ describe("another provider's links", () => {
     expect(permalinkOfKey("tickets:T-12")).toBe(url);
   });
 
+  test("a self-hosted tool's link hosts come from each account's settings", () => {
+    useProviders([...BUILTIN_DESCRIPTORS, { ...FAKE, hosts: ["{settings.host}"] }]);
+    useSettings(resolveSettings({ ...TEST_SETTINGS, providers: { tickets: { source: { module: "x.ts" }, accounts: { default: { host: "jira.acme.example", prefixes: ["T"] }, eu: { host: "https://jira.acme-eu.example", prefixes: ["E"] } } } } }));
+    const url = linkOfNative("tickets", "default", "T-12") as string;
+    expect(url).toBe("https://jira.acme.example/t/T-12");
+    expect(checkedLink(url, "tickets")).toBe(url);
+    expect(checkedLink("https://jira.acme-eu.example/t/E-1", "tickets")).toBe("https://jira.acme-eu.example/t/E-1");
+    expect(checkedLink("https://jira.elsewhere.example/t/T-12", "tickets")).toBeNull();
+    expect(hostOwner("jira.acme-eu.example")).toEqual({ provider: "tickets", account: "eu" });
+    expect(parseLink("https://jira.acme-eu.example/t/T-5")).toEqual({ provider: "tickets", account: "eu", thread: "T-5" });
+    expect(checkedLink(url)).toBe(url);
+  });
+
   test("a link built off the provider's hosts is dropped", () => {
     withFake({ default: { host: "tickets.example", prefixes: ["T"] } });
     expect(linkOfNative("tickets", "default", "evil")).toBeNull();

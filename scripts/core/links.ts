@@ -112,12 +112,42 @@ function linkAccounts(): LinkAccount[] {
       resolved: account,
       settings: account.settings,
       spec: d.links,
-      hosts: d.hosts,
+      hosts: accountHosts(d.hosts, account.settings),
       ticketPrefixes: from ? (Array.isArray(prefixes) ? prefixes.filter((x): x is string => typeof x === "string" && x !== "") : []) : null,
     });
   }
   cache = { s, gen: generation, accounts };
   return accounts;
+}
+
+/**
+ * A descriptor's link hosts for one account: `{settings.<name>}` replaced by the host that setting names (a URL or a
+ * bare host, `settingHost`), so a self-hosted tool's links (`jira.acme.example`) are its account's. A host whose
+ * setting names none is left out.
+ */
+function accountHosts(hosts: string[], values: Record<string, unknown>): string[] {
+  return hosts.flatMap((h) => {
+    let missing = false;
+    const out = h.replace(SETTING_REF, (_m, name: string) => {
+      const raw = values[name];
+      const v = Array.isArray(raw) ? raw[0] : raw;
+      // a wildcard written in the setting (`*.tickets.example`) stays one
+      const host = typeof v === "string" && v.startsWith("*.") ? (settingHost(v.slice(2)) ? `*.${settingHost(v.slice(2))}` : null) : settingHost(v);
+      if (!host) missing = true;
+      return host ?? "";
+    });
+    return missing ? [] : [out];
+  });
+}
+
+/**
+ * The link hosts of a provider (of every installed one without `provider`): the hosts its descriptor names as they
+ * are, and those it builds from settings for each configured account.
+ */
+function linkHosts(provider?: string): string[] {
+  const fixed = (provider === undefined ? installed : installed.filter((d) => d.id === provider)).flatMap((d) => d.hosts.filter((h) => !h.includes("{settings.")));
+  const fromAccounts = linkAccounts().filter((a) => provider === undefined || a.provider === provider).flatMap((a) => a.hosts);
+  return [...new Set([...fixed, ...fromAccounts])];
 }
 
 /** The profile has this account, and its provider is installed. */
@@ -259,7 +289,7 @@ export function parseLinks(text: string): LinkTarget[] {
 function targetOf(hostname: string | null, rest: string): LinkTarget | null {
   const entries = linkAccounts().flatMap((a) =>
     a.spec.parse.flatMap((e) => {
-      const host = substitute(e.host, a.settings, "text");
+      const host = accountHosts([e.host], a.settings)[0];
       return host ? [{ a, e, host, wildcard: host.startsWith("*.") }] : [];
     }),
   );
@@ -322,15 +352,15 @@ function shellSafe(rest: string): string {
 
 /**
  * A link a provider gave (an item's link), kept only when it is https, at most 2 KiB, without whitespace nor control
- * characters, without credentials, and on the provider's `hosts`; any installed provider's hosts when `provider` is not
- * given (a link quoted in a prompt). Null otherwise: the line or the prompt then says "-".
+ * characters, without credentials, and on the provider's `hosts` (with each configured account's settings filled in);
+ * any installed provider's hosts when `provider` is not given (a link quoted in a prompt). Null otherwise: the line or the prompt then says "-".
  * What comes back is the link normalized (`URL.href`) with every character a shell reads percent-encoded: it may land
  * on a command line, and a Slack permalink comes back unchanged.
  */
 export function checkedLink(url: string, provider?: string): string | null {
   // biome-ignore lint/suspicious/noControlCharactersInRegex: control characters are refused
   if (!url || url.length > LINK_INPUT_MAX || /[\u0000-\u001f\u007f]/.test(url)) return null;
-  const hosts = provider === undefined ? installed.flatMap((d) => d.hosts) : (descriptorOf(provider)?.hosts ?? []);
+  const hosts = linkHosts(provider);
   if (!isAllowedLink(url, hosts)) return null;
   const u = new URL(url);
   if (u.username || u.password) return null;
