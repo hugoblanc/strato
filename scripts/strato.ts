@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
 /**
- * strato: routes Slack to Claude Code work sessions, one topic per problem (one or more threads).
+ * strato: routes the requests that reach you (Slack, Linear, or a tool you connect) to Claude Code work sessions, one topic per problem (one or more threads).
  * The commands are listed in USAGE below (what `strato help` prints).
  * Run compiled (`strato <command>`, scripts/build/compile.ts) or from a clone (`bun scripts/strato.ts <command>`):
  * app/self.ts says which, and how Strato calls itself.
@@ -33,7 +33,7 @@ import { releaseTarget, STRATO_VERSION } from "./core/build-info.ts";
 import { EMBEDDED_DEFAULTS, EMBEDDED_ROLES, POLICY_TEMPLATES, type PolicyTemplate } from "./policy/prompts.ts";
 import itermMark from "./iterm-mark.zsh" with { type: "text" };
 
-export const USAGE = `strato: routes Slack to Claude Code work sessions, one topic per problem (one or more threads).
+export const USAGE = `strato: routes the requests that reach you (Slack, Linear, or a tool you connect) to Claude Code work sessions, one topic per problem (one or more threads).
 
   strato doctor                         checks token, state, claude agents
   strato setup --check | --detect | --write <profile.json> [--force] | --live   guided setup (SKILL.md)
@@ -45,7 +45,7 @@ export const USAGE = `strato: routes Slack to Claude Code work sessions, one top
   strato backlog [--since 12h]          recent relevant messages, to catch up
   strato digest [--since 6h]            messages set aside (third parties, bots) since the last digest
   strato open [<link>] --msg <id> --title …   (or --from … --channel … --text … without --msg)
-  strato attach <topic> <Slack link | ABC-123>   attaches a thread or a ticket to the topic
+  strato attach <topic> <link | key | ticket id>   attaches a thread or a ticket to the topic
   strato relay <topic> --kind suite|moi --msg <id>
   strato send <topic> <message…>        free message to the topic's session
   strato set <topic> key=value …        state of the topic (status, waiting, next, summary, title, why,

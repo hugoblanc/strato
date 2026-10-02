@@ -2,6 +2,7 @@
  * `help`: the few commands a person types, grouped by when they need them. The full list, with the commands the
  * master and the sessions call, stays in the header of strato.ts and in SKILL.md.
  */
+import { t } from "../core/i18n.ts";
 import { cliCommand } from "./setup.ts";
 
 /** The help text, with `cli` as the way to call Strato from here ("bun ./.claude/skills/strato/scripts/strato.ts"). */
@@ -11,7 +12,7 @@ export function helpText(cli: string): string {
     return list.map(([c, what]) => `  ${c.padEnd(width)}   ${what}`).join("\n");
   };
   return [
-    "Strato routes your Slack to Claude Code work sessions, one topic per problem, and shows them on a local board.",
+    t("help.intro"),
     `Commands below start with: ${cli}`,
     "",
     "Getting started",
@@ -37,8 +38,7 @@ export function helpText(cli: string): string {
       ["setup --live", "leave shadow mode: the board can post as you"],
     ]),
     "",
-    "Called by the master and the work sessions, you do not need them: listen, watch, hook, backlog, digest, open,",
-    "attach, relay, send, set, task, close, gc, refresh, dive, term, get. SKILL.md documents every command.",
+    t("help.calledBy", { commands: "listen, watch, hook, backlog, digest, open, attach, relay, send, set, task, context, close, gc, refresh, dive, term, get" }),
   ].join("\n");
 }
 
