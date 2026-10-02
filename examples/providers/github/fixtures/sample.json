@@ -1,0 +1,107 @@
+{
+  "secrets": { "GITHUB_TOKEN": "github_pat_test_not_a_real_one" },
+  "settings": { "teams": ["acme/platform"], "ignoreAuthors": [] },
+  "exchanges": [
+    {
+      "request": { "method": "GET", "url": "https://api.github.com/user" },
+      "response": { "body": { "login": "alice", "id": 1001, "name": "Alice" } },
+      "repeat": true
+    },
+    {
+      "request": { "method": "GET", "url": "https://api.github.com/search/issues?q=involves%3A%40me+updated%3A%3E%3D1970-01-01T00%3A00%3A00Z&sort=updated&order=desc&per_page=100" },
+      "response": { "body": { "total_count": 2, "incomplete_results": false, "items": [
+        { "number": 12, "title": "Retry failed webhooks", "body": "Adds a retry queue.", "user": { "login": "bob", "type": "User" }, "html_url": "https://github.com/acme/api/pull/12", "repository_url": "https://api.github.com/repos/acme/api", "created_at": "2026-09-20T09:00:00Z", "updated_at": "2026-09-21T14:21:40Z", "state": "open", "pull_request": { "merged_at": null } },
+        { "number": 7, "title": "Login page is blank on Safari", "body": "Nothing renders after the redirect.", "user": { "login": "bob", "type": "User" }, "html_url": "https://github.com/acme/web/issues/7", "repository_url": "https://api.github.com/repos/acme/web", "created_at": "2026-09-21T14:18:20Z", "updated_at": "2026-09-21T14:20:00Z", "state": "open", "assignees": [{ "login": "alice" }] }
+      ] } },
+      "repeat": true
+    },
+    {
+      "request": { "method": "GET", "url": "https://api.github.com/search/issues?q=review-requested%3A%40me+updated%3A%3E%3D1970-01-01T00%3A00%3A00Z&sort=updated&order=desc&per_page=100" },
+      "response": { "body": { "total_count": 1, "incomplete_results": false, "items": [
+        { "number": 12, "title": "Retry failed webhooks", "body": "Adds a retry queue.", "user": { "login": "bob", "type": "User" }, "html_url": "https://github.com/acme/api/pull/12", "repository_url": "https://api.github.com/repos/acme/api", "created_at": "2026-09-20T09:00:00Z", "updated_at": "2026-09-21T14:21:40Z", "state": "open", "pull_request": { "merged_at": null } }
+      ] } },
+      "repeat": true
+    },
+    {
+      "request": { "method": "GET", "url": "https://api.github.com/search/issues?q=involves%3A%40me+updated%3A%3E%3D2026-09-21T14%3A11%3A40Z&sort=updated&order=desc&per_page=100" },
+      "response": { "body": { "total_count": 0, "incomplete_results": false, "items": [] } },
+      "repeat": true
+    },
+    {
+      "request": { "method": "GET", "url": "https://api.github.com/search/issues?q=review-requested%3A%40me+updated%3A%3E%3D2026-09-21T14%3A11%3A40Z&sort=updated&order=desc&per_page=100" },
+      "response": { "body": { "total_count": 0, "incomplete_results": false, "items": [] } },
+      "repeat": true
+    },
+    {
+      "request": { "method": "GET", "url": "https://api.github.com/search/issues?q=involves%3A%40me+updated%3A%3E%3D2026-09-21T14%3A21%3A40Z&sort=updated&order=desc&per_page=100" },
+      "response": { "body": { "total_count": 0, "incomplete_results": false, "items": [] } },
+      "repeat": true
+    },
+    {
+      "request": { "method": "GET", "url": "https://api.github.com/search/issues?q=review-requested%3A%40me+updated%3A%3E%3D2026-09-21T14%3A21%3A40Z&sort=updated&order=desc&per_page=100" },
+      "response": { "body": { "total_count": 0, "incomplete_results": false, "items": [] } },
+      "repeat": true
+    },
+    {
+      "request": { "method": "GET", "url": "https://api.github.com/repos/acme/api/issues/12/timeline?per_page=100&page=1" },
+      "response": { "body": [
+        { "event": "review_requested", "id": 1001, "actor": { "login": "bob", "type": "User" }, "review_requester": { "login": "bob", "type": "User" }, "requested_reviewer": { "login": "alice", "type": "User" }, "created_at": "2026-09-21T14:13:20Z" },
+        { "event": "commented", "id": 2001, "user": { "login": "bob", "type": "User" }, "actor": { "login": "bob", "type": "User" }, "body": "@alice could you look at the retry logic?", "html_url": "https://github.com/acme/api/pull/12#issuecomment-2001", "created_at": "2026-09-21T14:15:00Z" },
+        { "event": "reviewed", "id": 3001, "user": { "login": "carol", "type": "User" }, "state": "commented", "body": "@dave the migration needs a lock", "html_url": "https://github.com/acme/api/pull/12#pullrequestreview-3001", "submitted_at": "2026-09-21T14:16:40Z" },
+        { "event": "labeled", "id": 1002, "actor": { "login": "bob", "type": "User" }, "label": { "name": "backend" }, "created_at": "2026-09-21T14:16:50Z" },
+        { "event": "review_requested", "id": 1003, "actor": { "login": "bob", "type": "User" }, "review_requester": { "login": "bob", "type": "User" }, "requested_team": { "slug": "platform", "name": "Platform" }, "created_at": "2026-09-21T14:21:40Z" }
+      ] },
+      "repeat": true
+    },
+    {
+      "request": { "method": "GET", "url": "https://api.github.com/repos/acme/web/issues/7/timeline?per_page=100&page=1" },
+      "response": { "body": [
+        { "event": "assigned", "id": 4001, "actor": { "login": "bob", "type": "User" }, "assignee": { "login": "alice", "type": "User" }, "created_at": "2026-09-21T14:18:20Z" },
+        { "event": "commented", "id": 5001, "user": { "login": "dependabot[bot]", "type": "Bot" }, "actor": { "login": "dependabot[bot]", "type": "Bot" }, "body": "Bumps the browser list.", "html_url": "https://github.com/acme/web/issues/7#issuecomment-5001", "created_at": "2026-09-21T14:20:00Z" }
+      ] },
+      "repeat": true
+    },
+    {
+      "request": { "method": "GET", "url": "https://api.github.com/repos/acme/api/issues/12" },
+      "response": { "body": { "number": 12, "title": "Retry failed webhooks", "body": "Adds a retry queue.", "user": { "login": "bob", "type": "User" }, "html_url": "https://github.com/acme/api/pull/12", "repository_url": "https://api.github.com/repos/acme/api", "created_at": "2026-09-20T09:00:00Z", "updated_at": "2026-09-21T14:21:40Z", "state": "open", "locked": false, "labels": [{ "name": "backend" }], "pull_request": { "merged_at": null } } },
+      "repeat": true
+    },
+    {
+      "request": { "method": "POST", "url": "https://api.github.com/repos/acme/api/issues/12/comments", "bodyContains": ["Strato conformance check"] },
+      "response": { "status": 201, "body": { "id": 9001, "html_url": "https://github.com/acme/api/pull/12#issuecomment-9001", "body": "Strato conformance check" } },
+      "repeat": true
+    },
+    {
+      "request": { "method": "DELETE", "url": "https://api.github.com/repos/acme/api/issues/comments/9001" },
+      "response": { "status": 204 }
+    }
+  ],
+  "expect": {
+    "items": [
+      { "id": "acme/api#12/e1001", "kind": "mention" },
+      { "id": "acme/api#12/c2001", "kind": "mention" },
+      { "id": "acme/api#12/r3001", "kind": "tiers" },
+      { "id": "acme/api#12/e1003", "kind": "mention" },
+      { "id": "acme/web#7/body", "kind": "fil" },
+      { "id": "acme/web#7/e4001", "kind": "mention" },
+      { "id": "acme/web#7/c5001", "kind": "bot" }
+    ],
+    "targets": [
+      { "draftTo": "acme/api#12", "target": { "scope": "ticket", "native": "acme/api#12" } },
+      { "draftTo": "https://github.com/acme/web/pull/7/files", "target": { "scope": "ticket", "native": "acme/web#7" } }
+    ]
+  },
+  "act": { "thread": "acme/api#12" },
+  "errors": [
+    {
+      "name": "403 secondary rate limit",
+      "response": { "status": 403, "headers": { "retry-after": "60" }, "body": { "message": "You have exceeded a secondary rate limit." } },
+      "expect": { "code": "rate_limited", "retryable": true, "retryAfterMs": true, "fatal": false }
+    },
+    {
+      "name": "403 on a repository the token was not given",
+      "response": { "status": 403, "body": { "message": "Resource not accessible by personal access token" } },
+      "expect": { "code": "forbidden", "fatal": false }
+    }
+  ]
+}

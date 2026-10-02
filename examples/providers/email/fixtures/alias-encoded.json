@@ -1,0 +1,207 @@
+{
+  "secrets": {
+    "EMAIL_APP_PASSWORD": "test-app-password-not-a-real-one"
+  },
+  "settings": {
+    "address": "alice@acme.example",
+    "name": "Alice",
+    "imapServer": "imap.acme.example",
+    "smtpServer": "smtp://smtp.acme.example:587",
+    "aliases": [
+      "support@acme.example"
+    ],
+    "watch": [
+      "ops.acme.example"
+    ]
+  },
+  "exchanges": [
+    {
+      "request": {
+        "method": "GET",
+        "url": "https://imap.acme.example/imap/login"
+      },
+      "response": {
+        "body": {
+          "capabilities": [
+            "IMAP4rev1"
+          ]
+        }
+      },
+      "repeat": true
+    },
+    {
+      "request": {
+        "method": "GET",
+        "url": "https://imap.acme.example/imap/list"
+      },
+      "response": {
+        "body": {
+          "mailboxes": [
+            {
+              "name": "INBOX",
+              "flags": []
+            },
+            {
+              "name": "Sent Items",
+              "flags": [
+                "\\Sent"
+              ]
+            }
+          ]
+        }
+      },
+      "repeat": true
+    },
+    {
+      "request": {
+        "method": "GET",
+        "url": "https://imap.acme.example/imap/examine?mailbox=INBOX"
+      },
+      "response": {
+        "body": {
+          "uidvalidity": 1,
+          "uidnext": 11
+        }
+      },
+      "repeat": true
+    },
+    {
+      "request": {
+        "method": "GET",
+        "url": "https://imap.acme.example/imap/examine?mailbox=Sent%20Items"
+      },
+      "response": {
+        "body": {
+          "uidvalidity": 2,
+          "uidnext": 1
+        }
+      },
+      "repeat": true
+    },
+    {
+      "request": {
+        "method": "GET",
+        "url": "https://imap.acme.example/imap/search?mailbox=INBOX&criteria=UNSEEN"
+      },
+      "response": {
+        "body": {
+          "uids": [
+            10
+          ]
+        }
+      },
+      "repeat": true
+    },
+    {
+      "request": {
+        "method": "GET",
+        "url": "https://imap.acme.example/imap/search?mailbox=INBOX&criteria=UNSEEN%20UID%2011%3A%2A"
+      },
+      "response": {
+        "body": {
+          "uids": [
+            10
+          ]
+        }
+      },
+      "repeat": true
+    },
+    {
+      "request": {
+        "method": "GET",
+        "url": "https://imap.acme.example/imap/fetch?mailbox=INBOX&uids=10&part=header"
+      },
+      "response": {
+        "body": {
+          "messages": [
+            {
+              "uid": 10,
+              "internalDate": 1790056800000,
+              "raw": "From: =?utf-8?q?Fran=C3=A7ois?= <francois@acme.example>\nTo: Support <support@acme.example>\nReply-To: Help desk <desk@acme.example>\nSubject: =?utf-8?b?w4ljaMOpYW5jZSBkZSBsYSBmYWN0dXJl?=\nMessage-ID: <x10.root@mail.acme.example>\nDate: Tue, 22 Sep 2026 08:00:00 +0200\nMIME-Version: 1.0\nContent-Type: text/plain; charset=utf-8\nContent-Transfer-Encoding: quoted-printable\n\n"
+            }
+          ]
+        }
+      },
+      "repeat": true
+    },
+    {
+      "request": {
+        "method": "GET",
+        "url": "https://imap.acme.example/imap/fetch?mailbox=INBOX&uids=10&part=full"
+      },
+      "response": {
+        "body": {
+          "messages": [
+            {
+              "uid": 10,
+              "internalDate": 1790056800000,
+              "raw": "From: =?utf-8?q?Fran=C3=A7ois?= <francois@acme.example>\nTo: Support <support@acme.example>\nReply-To: Help desk <desk@acme.example>\nSubject: =?utf-8?b?w4ljaMOpYW5jZSBkZSBsYSBmYWN0dXJl?=\nMessage-ID: <x10.root@mail.acme.example>\nDate: Tue, 22 Sep 2026 08:00:00 +0200\nMIME-Version: 1.0\nContent-Type: text/plain; charset=utf-8\nContent-Transfer-Encoding: quoted-printable\n\nBonjour,\n\nLa facture d=C3=A9passe le montant pr=C3=A9vu, pouvez-vous v=C3=A9rifier ?\n\nLe lun. 21 sept. 2026, Bob <bob@acme.example> a =C3=A9crit :\n> Envoy=C3=A9e hier.\n"
+            }
+          ]
+        }
+      },
+      "repeat": true
+    },
+    {
+      "request": {
+        "method": "GET",
+        "url": "https://imap.acme.example/imap/search?mailbox=INBOX&criteria=OR%20OR%20HEADER%20Message-ID%20%22x10.root%40mail.acme.example%22%20HEADER%20References%20%22x10.root%40mail.acme.example%22%20HEADER%20In-Reply-To%20%22x10.root%40mail.acme.example%22"
+      },
+      "response": {
+        "body": {
+          "uids": [
+            10
+          ]
+        }
+      },
+      "repeat": true
+    },
+    {
+      "request": {
+        "method": "GET",
+        "url": "https://imap.acme.example/imap/search?mailbox=Sent%20Items&criteria=OR%20OR%20HEADER%20Message-ID%20%22x10.root%40mail.acme.example%22%20HEADER%20References%20%22x10.root%40mail.acme.example%22%20HEADER%20In-Reply-To%20%22x10.root%40mail.acme.example%22"
+      },
+      "response": {
+        "body": {
+          "uids": []
+        }
+      },
+      "repeat": true
+    },
+    {
+      "request": {
+        "method": "POST",
+        "url": "https://smtp.acme.example/smtp/send",
+        "bodyContains": [
+          "Strato conformance check",
+          "To: desk@acme.example",
+          "Subject: Re: =?utf-8?",
+          "In-Reply-To: <x10.root@mail.acme.example>"
+        ]
+      },
+      "response": {
+        "body": {
+          "queued": "250 OK"
+        }
+      },
+      "repeat": true
+    }
+  ],
+  "expect": {
+    "items": [
+      {
+        "id": "x10.root@mail.acme.example",
+        "kind": "mention"
+      }
+    ]
+  },
+  "act": {
+    "thread": "x10.root@mail.acme.example",
+    "text": "Strato conformance check",
+    "audience": {
+      "to": [
+        "desk@acme.example"
+      ]
+    }
+  }
+}

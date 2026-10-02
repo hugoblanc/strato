@@ -1,0 +1,318 @@
+{
+  "secrets": {
+    "EMAIL_APP_PASSWORD": "test-app-password-not-a-real-one"
+  },
+  "settings": {
+    "address": "alice@acme.example",
+    "name": "Alice",
+    "imapServer": "imaps://imap.acme.example:993",
+    "smtpServer": "smtp://smtp.acme.example:587",
+    "aliases": [
+      "support@acme.example"
+    ],
+    "watch": [
+      "ops.acme.example"
+    ]
+  },
+  "exchanges": [
+    {
+      "request": {
+        "method": "GET",
+        "url": "https://imap.acme.example/imap/login"
+      },
+      "response": {
+        "body": {
+          "capabilities": [
+            "IMAP4rev1",
+            "UIDPLUS"
+          ]
+        }
+      },
+      "repeat": true
+    },
+    {
+      "request": {
+        "method": "GET",
+        "url": "https://imap.acme.example/imap/list"
+      },
+      "response": {
+        "body": {
+          "mailboxes": [
+            {
+              "name": "INBOX",
+              "flags": []
+            },
+            {
+              "name": "Sent",
+              "flags": [
+                "\\HasNoChildren",
+                "\\Sent"
+              ]
+            }
+          ]
+        }
+      },
+      "repeat": true
+    },
+    {
+      "request": {
+        "method": "GET",
+        "url": "https://imap.acme.example/imap/examine?mailbox=INBOX"
+      },
+      "response": {
+        "body": {
+          "uidvalidity": 7001,
+          "uidnext": 44
+        }
+      },
+      "repeat": true
+    },
+    {
+      "request": {
+        "method": "GET",
+        "url": "https://imap.acme.example/imap/examine?mailbox=Sent"
+      },
+      "response": {
+        "body": {
+          "uidvalidity": 7002,
+          "uidnext": 8
+        }
+      },
+      "repeat": true
+    },
+    {
+      "request": {
+        "method": "GET",
+        "url": "https://imap.acme.example/imap/search?mailbox=INBOX&criteria=UNSEEN"
+      },
+      "response": {
+        "body": {
+          "uids": [
+            40,
+            41,
+            42,
+            43
+          ]
+        }
+      },
+      "repeat": true
+    },
+    {
+      "request": {
+        "method": "GET",
+        "url": "https://imap.acme.example/imap/search?mailbox=INBOX&criteria=UNSEEN%20UID%2044%3A%2A"
+      },
+      "response": {
+        "body": {
+          "uids": [
+            43
+          ]
+        }
+      },
+      "repeat": true
+    },
+    {
+      "request": {
+        "method": "GET",
+        "url": "https://imap.acme.example/imap/search?mailbox=INBOX&criteria=OR%20OR%20HEADER%20Message-ID%20%22ca41.root%40mail.acme.example%22%20HEADER%20References%20%22ca41.root%40mail.acme.example%22%20HEADER%20In-Reply-To%20%22ca41.root%40mail.acme.example%22"
+      },
+      "response": {
+        "body": {
+          "uids": [
+            41,
+            42
+          ]
+        }
+      },
+      "repeat": true
+    },
+    {
+      "request": {
+        "method": "GET",
+        "url": "https://imap.acme.example/imap/search?mailbox=Sent&criteria=OR%20OR%20HEADER%20Message-ID%20%22ca41.root%40mail.acme.example%22%20HEADER%20References%20%22ca41.root%40mail.acme.example%22%20HEADER%20In-Reply-To%20%22ca41.root%40mail.acme.example%22"
+      },
+      "response": {
+        "body": {
+          "uids": [
+            7
+          ]
+        }
+      },
+      "repeat": true
+    },
+    {
+      "request": {
+        "method": "GET",
+        "url": "https://imap.acme.example/imap/fetch?mailbox=INBOX&uids=43%2C42%2C41%2C40&part=header"
+      },
+      "response": {
+        "body": {
+          "messages": [
+            {
+              "uid": 43,
+              "internalDate": 1790000400000,
+              "raw": "From: Dan <dan@acme.example>\nTo: ops@lists.acme.example\nSubject: Deploy window tonight\nMessage-ID: <ca43@lists.acme.example>\nList-Id: Operations <ops.acme.example>\nList-Post: <mailto:ops@lists.acme.example>\nDate: Mon, 21 Sep 2026 14:20:00 +0000\nContent-Type: text/html; charset=utf-8\n\n"
+            },
+            {
+              "uid": 42,
+              "internalDate": 1790000300000,
+              "raw": "From: Carol <carol@acme.example>\nTo: Bob <bob@acme.example>\nCc: Alice <alice@acme.example>\nSubject: Re: Checkout fails\nMessage-ID: <ca42@mail.acme.example>\nIn-Reply-To: <ca7.sent@mail.acme.example>\nReferences: <ca41.root@mail.acme.example> <ca7.sent@mail.acme.example>\nDate: Mon, 21 Sep 2026 14:18:20 +0000\nContent-Type: text/plain; charset=utf-8\n\n"
+            },
+            {
+              "uid": 41,
+              "internalDate": 1790000100000,
+              "raw": "From: Bob <bob@acme.example>\nTo: Alice <alice@acme.example>\nSubject: Checkout fails\nMessage-ID: <ca41.root@mail.acme.example>\nDate: Mon, 21 Sep 2026 14:15:00 +0000\nContent-Type: text/plain; charset=utf-8\n\n"
+            },
+            {
+              "uid": 40,
+              "internalDate": 1790000050000,
+              "raw": "From: Acme News <news@acme.example>\nTo: subscribers@acme.example\nSubject: This week at Acme\nMessage-ID: <news.40@acme.example>\nDate: Mon, 21 Sep 2026 14:14:10 +0000\nList-Unsubscribe: <https://acme.example/unsubscribe>\nContent-Type: text/plain; charset=utf-8\n\n"
+            }
+          ]
+        }
+      },
+      "repeat": true
+    },
+    {
+      "request": {
+        "method": "GET",
+        "url": "https://imap.acme.example/imap/fetch?mailbox=INBOX&uids=43%2C42%2C41&part=full"
+      },
+      "response": {
+        "body": {
+          "messages": [
+            {
+              "uid": 43,
+              "internalDate": 1790000400000,
+              "raw": "From: Dan <dan@acme.example>\nTo: ops@lists.acme.example\nSubject: Deploy window tonight\nMessage-ID: <ca43@lists.acme.example>\nList-Id: Operations <ops.acme.example>\nList-Post: <mailto:ops@lists.acme.example>\nDate: Mon, 21 Sep 2026 14:20:00 +0000\nContent-Type: text/html; charset=utf-8\n\n<html><body><p>The deploy window opens at <b>22:00</b>.</p></body></html>\n"
+            },
+            {
+              "uid": 42,
+              "internalDate": 1790000300000,
+              "raw": "From: Carol <carol@acme.example>\nTo: Bob <bob@acme.example>\nCc: Alice <alice@acme.example>\nSubject: Re: Checkout fails\nMessage-ID: <ca42@mail.acme.example>\nIn-Reply-To: <ca7.sent@mail.acme.example>\nReferences: <ca41.root@mail.acme.example> <ca7.sent@mail.acme.example>\nDate: Mon, 21 Sep 2026 14:18:20 +0000\nContent-Type: text/plain; charset=utf-8\n\nBob, the logs are attached.\n\nOn Mon, 21 Sep 2026 at 14:16, Alice <alice@acme.example> wrote:\n> Looking at it now.\n"
+            },
+            {
+              "uid": 41,
+              "internalDate": 1790000100000,
+              "raw": "From: Bob <bob@acme.example>\nTo: Alice <alice@acme.example>\nSubject: Checkout fails\nMessage-ID: <ca41.root@mail.acme.example>\nDate: Mon, 21 Sep 2026 14:15:00 +0000\nContent-Type: text/plain; charset=utf-8\n\nAlice, can you check the checkout? It fails since this morning.\n"
+            }
+          ]
+        }
+      },
+      "repeat": true
+    },
+    {
+      "request": {
+        "method": "GET",
+        "url": "https://imap.acme.example/imap/fetch?mailbox=INBOX&uids=43&part=full"
+      },
+      "response": {
+        "body": {
+          "messages": [
+            {
+              "uid": 43,
+              "internalDate": 1790000400000,
+              "raw": "From: Dan <dan@acme.example>\nTo: ops@lists.acme.example\nSubject: Deploy window tonight\nMessage-ID: <ca43@lists.acme.example>\nList-Id: Operations <ops.acme.example>\nList-Post: <mailto:ops@lists.acme.example>\nDate: Mon, 21 Sep 2026 14:20:00 +0000\nContent-Type: text/html; charset=utf-8\n\n<html><body><p>The deploy window opens at <b>22:00</b>.</p></body></html>\n"
+            }
+          ]
+        }
+      },
+      "repeat": true
+    },
+    {
+      "request": {
+        "method": "GET",
+        "url": "https://imap.acme.example/imap/fetch?mailbox=INBOX&uids=41%2C42&part=full"
+      },
+      "response": {
+        "body": {
+          "messages": [
+            {
+              "uid": 41,
+              "internalDate": 1790000100000,
+              "raw": "From: Bob <bob@acme.example>\nTo: Alice <alice@acme.example>\nSubject: Checkout fails\nMessage-ID: <ca41.root@mail.acme.example>\nDate: Mon, 21 Sep 2026 14:15:00 +0000\nContent-Type: text/plain; charset=utf-8\n\nAlice, can you check the checkout? It fails since this morning.\n"
+            },
+            {
+              "uid": 42,
+              "internalDate": 1790000300000,
+              "raw": "From: Carol <carol@acme.example>\nTo: Bob <bob@acme.example>\nCc: Alice <alice@acme.example>\nSubject: Re: Checkout fails\nMessage-ID: <ca42@mail.acme.example>\nIn-Reply-To: <ca7.sent@mail.acme.example>\nReferences: <ca41.root@mail.acme.example> <ca7.sent@mail.acme.example>\nDate: Mon, 21 Sep 2026 14:18:20 +0000\nContent-Type: text/plain; charset=utf-8\n\nBob, the logs are attached.\n\nOn Mon, 21 Sep 2026 at 14:16, Alice <alice@acme.example> wrote:\n> Looking at it now.\n"
+            }
+          ]
+        }
+      },
+      "repeat": true
+    },
+    {
+      "request": {
+        "method": "GET",
+        "url": "https://imap.acme.example/imap/fetch?mailbox=Sent&uids=7&part=full"
+      },
+      "response": {
+        "body": {
+          "messages": [
+            {
+              "uid": 7,
+              "internalDate": 1790000200000,
+              "raw": "From: Alice <alice@acme.example>\nTo: Bob <bob@acme.example>\nCc: carol@acme.example\nSubject: Re: Checkout fails\nMessage-ID: <ca7.sent@mail.acme.example>\nIn-Reply-To: <ca41.root@mail.acme.example>\nReferences: <ca41.root@mail.acme.example>\nDate: Mon, 21 Sep 2026 14:16:40 +0000\nContent-Type: text/plain; charset=utf-8\n\nLooking at it now.\n"
+            }
+          ]
+        }
+      },
+      "repeat": true
+    },
+    {
+      "request": {
+        "method": "POST",
+        "url": "https://smtp.acme.example/smtp/send",
+        "bodyContains": [
+          "Strato conformance check",
+          "In-Reply-To: <ca42@mail.acme.example>",
+          "To: carol@acme.example",
+          "\"rcpt\": [\"carol@acme.example\", \"dan@acme.example\"]",
+          "Cc: dan@acme.example"
+        ]
+      },
+      "response": {
+        "body": {
+          "queued": "250 2.0.0 OK queued"
+        }
+      },
+      "repeat": true
+    }
+  ],
+  "expect": {
+    "items": [
+      {
+        "id": "ca41.root@mail.acme.example",
+        "kind": "mention"
+      },
+      {
+        "id": "ca42@mail.acme.example",
+        "kind": "tiers"
+      },
+      {
+        "id": "ca43@lists.acme.example",
+        "kind": "canal"
+      },
+      {
+        "id": "ca43@lists.acme.example",
+        "kind": null,
+        "rules": {
+          "watch": []
+        }
+      }
+    ]
+  },
+  "act": {
+    "thread": "ca41.root@mail.acme.example",
+    "text": "Strato conformance check",
+    "audience": {
+      "to": [
+        "carol@acme.example"
+      ],
+      "cc": [
+        "dan@acme.example"
+      ]
+    }
+  }
+}
