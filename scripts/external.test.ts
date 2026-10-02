@@ -279,6 +279,8 @@ describe("a one-shot command that started an exec provider ends", () => {
     expect(backlog.code).toBe(0);
     const doctor = await strato(["doctor"]);
     expect(doctor.out).toContain("you are u-alice on acme");
+    expect(doctor.out).toMatch(/tickets  : from \S/);
+    expect(doctor.out).not.toContain("no tracker");
     expect(doctor.code).not.toBeNull();
     // each process was asked to stop, not found dead: no crash in the account's log
     const log = readFileSync(join(r.state, "providers", "tickets-default", "provider.log"), "utf8");

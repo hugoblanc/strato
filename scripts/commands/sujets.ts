@@ -11,9 +11,10 @@ import { attention, inboundNote, isStuck, routeDecision } from "../claude/model.
 import { gateLine } from "../core/cards.ts";
 import { locale, t } from "../core/i18n.ts";
 import { canonicalKey, conversationOfKey, parseKey, sujetKey, threadOfKey, ticketUrl } from "../core/keys.ts";
-import { providerLabel, ticketClaims } from "../core/links.ts";
+import { providerDescriptors, providerLabel, ticketClaims } from "../core/links.ts";
+import { LEGACY_SLACK_READS, mcpReadRules } from "../core/mcp.ts";
 import { toolLabel } from "../core/targets.ts";
-import { missingSettings, settings } from "../core/settings.ts";
+import { missingSettings, resolveAccounts, settings } from "../core/settings.ts";
 import { accountLines } from "./connect.ts";
 import { cliCommand, nextLine, short } from "./setup.ts";
 import { applyAssignments, attachThread, findSujet, parseAssignments, type Sujet, sujetKeys, type Trigger } from "../core/sujet.ts";
@@ -57,11 +58,19 @@ export async function doctor() {
   out(`state    : ${short(STATE)} · ${loadSujets().length} topic(s)`);
   out(`triggers : mentions of ${cfg.me || "-"}, groups ${cfg.subteams.join(", ") || "-"}, DMs, channels ${cfg.watchChannels.join(", ") || "-"}, tracked threads`);
   out(`digest   : messages aimed at someone else, authors ${cfg.ignoreAuthors.join(", ") || "-"}`);
-  out(`tickets  : ${s.tracker ? `Linear ${s.tracker.workspace}, prefixes ${s.tracker.prefixes.join(", ") || "none"}` : "no tracker: topics only come from Slack"}`);
+  // the accounts of a configured tracker tool (a connected Linear, an external tracker): topics come from them too
+  const descriptors = Object.fromEntries(providerDescriptors().map((d) => [d.id, d]));
+  const accounts = resolveAccounts(s, descriptors).map((a) => a.account);
+  const trackers = accounts.filter((a) => descriptors[a.provider]?.kinds.includes("tracker")).map((a) => toolLabel(a.provider, a.id));
+  out(`tickets  : ${s.tracker ? `Linear ${s.tracker.workspace}, prefixes ${s.tracker.prefixes.join(", ") || "none"}` : trackers.length ? `from ${trackers.join(", ")}` : "no tracker: topics only come from Slack"}`);
   out(`forge    : ${s.forge ? `${s.forge.host}, repositories ${Object.keys(s.forge.repos).join(", ") || "none"}, release ${s.forge.integrationBranch} -> ${s.forge.releaseBranch}` : "none: no delivery line on the board"}`);
-  out(`sessions : ${s.workers.skipPermissions ? "without permission prompts (workers.skipPermissions)" : "with permission prompts"} · ${s.workers.allow.length} permission(s) added by the profile${s.workers.shadow ? " · shadow mode: nothing is posted (setup --live)" : ""}`);
+  // the read tools connected tools bring beyond the Slack reads every session always had: none in a Slack-only profile
+  const toolReads = mcpReadRules(s).filter((r) => !LEGACY_SLACK_READS.includes(r)).length;
+  out(`sessions : ${s.workers.skipPermissions ? "without permission prompts (workers.skipPermissions)" : "with permission prompts"} · ${s.workers.allow.length} permission(s) added by the profile${toolReads > 0 ? ` · ${toolReads} MCP read tool(s) of the connected tools allowed` : ""}${s.workers.shadow ? " · shadow mode: nothing is posted (setup --live)" : ""}`);
   const overridden = POLICY_TEMPLATES.filter((t) => policySource(t) === F.policy);
-  const wordless = overridden.filter((name) => !usesTopicWords(name));
+  // the note matters only when another tool's topics exist: a Slack-only doctor prints what it always printed
+  const otherTools = accounts.some((a) => a.provider !== "slack");
+  const wordless = otherTools ? overridden.filter((name) => !usesTopicWords(name)) : [];
   const shadowed = shadowedPolicyNames(s.policy);
   const policyNotes = [
     ...(wordless.length ? [t("cli.doctor.policyWithoutWords", { names: wordless.join(", ") })] : []),

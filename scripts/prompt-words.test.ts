@@ -134,12 +134,17 @@ describe("reserved names and overrides", () => {
 describe("doctor", () => {
   test("names the overrides that use no topic word, and the policy variables Strato ignores", async () => {
     const r = rig();
-    writeFileSync(join(r.state, "config.json"), JSON.stringify({ owner: { name: "Alice" }, slack: { team: "Acme", workspace: "acme", me: "UALICE" }, policy: { topic_source: "Mail", canal: "#acme" } }));
+    const profile = { owner: { name: "Alice" }, slack: { team: "Acme", workspace: "acme", me: "UALICE" }, policy: { topic_source: "Mail", canal: "#acme" } };
+    writeFileSync(join(r.state, "config.json"), JSON.stringify({ ...profile, tracker: { kind: "linear", workspace: "acme", prefixes: ["ENG"] } }));
     mkdirSync(join(r.state, "policy"));
     writeFileSync(join(r.state, "policy", "worker.md"), "Lis le fil (MCP Slack). {{card_command}}\n");
     writeFileSync(join(r.state, "policy", "refresh.md"), "Relis le {{topic_thread_word}}.\n");
     const res = await cli(r, ["doctor"]);
     const line = res.out.split("\n").find((l) => l.startsWith("policy   :"));
     expect(line).toBe(`policy   : worker, refresh from ${join(r.state, "policy")}, the rest by default · without topic_ variables: worker (read as written for Slack topics; another tool's topics get the context rule) · ignored, named like a variable Strato sets: policy.topic_source (rename them)`);
+    // Slack only: no other tool's topics can exist, and the line is the one doctor always printed
+    writeFileSync(join(r.state, "config.json"), JSON.stringify({ ...profile, policy: {} }));
+    const slackOnly = await cli(r, ["doctor"]);
+    expect(slackOnly.out.split("\n").find((l) => l.startsWith("policy   :"))).toBe(`policy   : worker, refresh from ${join(r.state, "policy")}, the rest by default`);
   }, 20_000);
 });

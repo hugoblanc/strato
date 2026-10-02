@@ -7,7 +7,7 @@ import { closeSync, mkdirSync, openSync, readdirSync, readFileSync, readSync, ty
 import { join } from "node:path";
 import { type AgentRow, liveAgentRows } from "../claude/model.ts";
 import { type AgentMeta, type AgentNode, agentTail, emptyTranscript, foldTranscript, sessionContext, type SessionContext, type TranscriptState } from "../claude/transcript.ts";
-import { mcpReadRules } from "../core/mcp.ts";
+import { mcpReadRules, mcpWriteDenyRules } from "../core/mcp.ts";
 import { settings } from "../core/settings.ts";
 import { CLAUDE_BIN, F, fail, HOME, LEGACY_SCRIPT, mtimeOf, readJson, STATE, WORKSPACE } from "./env.ts";
 import { selfCommand } from "./self.ts";
@@ -36,26 +36,31 @@ export function workerSettings(): string {
       ]),
     ),
     permissions: {
+      // one rule once: a profile that already lists a read tool a connected tool now brings does not get it twice
       allow: [
-        "Bash(sed -n *)",
-        "Bash(rg *)",
-        "Bash(jq *)",
-        "Bash(git log *)",
-        "Bash(git show *)",
-        "Bash(git diff *)",
-        "Bash(git status *)",
-        "Bash(git fetch *)",
-        "Bash(git branch *)",
-        `Bash(${selfCommand()} *)`,
-        // a session resumed after the rename may still follow a prompt that names the legacy alias (development clone)
-        ...(LEGACY_SCRIPT ? [`Bash(bun ${LEGACY_SCRIPT} *)`] : []),
-        // Edit covers Write; an absolute path is written with // (a single / anchors on the settings file's folder)
-        `Edit(/${F.reports}/**)`,
-        // the session reads its threads itself: the read tools of each connected tool's MCP server
-        ...mcpReadRules(),
-        // what the installation adds (database reads, tracker…), from `workers.allow`
-        ...settings().workers.allow,
+        ...new Set([
+          "Bash(sed -n *)",
+          "Bash(rg *)",
+          "Bash(jq *)",
+          "Bash(git log *)",
+          "Bash(git show *)",
+          "Bash(git diff *)",
+          "Bash(git status *)",
+          "Bash(git fetch *)",
+          "Bash(git branch *)",
+          `Bash(${selfCommand()} *)`,
+          // a session resumed after the rename may still follow a prompt that names the legacy alias (development clone)
+          ...(LEGACY_SCRIPT ? [`Bash(bun ${LEGACY_SCRIPT} *)`] : []),
+          // Edit covers Write; an absolute path is written with // (a single / anchors on the settings file's folder)
+          `Edit(/${F.reports}/**)`,
+          // the session reads its threads itself: the read tools of each connected tool's MCP server
+          ...mcpReadRules(),
+          // what the installation adds (database reads, tracker…), from `workers.allow`
+          ...settings().workers.allow,
+        ]),
       ],
+      // shadow mode: nothing may go out, and the connected tools' MCP write tools are taken away, prompts or not
+      ...(settings().workers.shadow ? { deny: mcpWriteDenyRules() } : {}),
     },
   });
 }

@@ -97,6 +97,9 @@ describe("connecting Linear", () => {
     const doctor = await withLinear(r, ["doctor"]);
     expect(doctor.out).toContain("linear   : acme (default) · Personal API key · polling every 60 s · ");
     expect(doctor.out).toContain("u-alice");
+    // the connected tracker is where tickets come from: doctor no longer says there is none
+    expect(doctor.out).toContain("tickets  : from Linear\n");
+    expect(doctor.out).toContain("· 7 MCP read tool(s) of the connected tools allowed");
     const refused = await withLinear(rig(), ["setup", "--connect", "linear", "--auth", "api-key"], "lin_api_revoked\n");
     expect(refused.code).toBe(1);
     expect(refused.err).toContain("nothing stored");
