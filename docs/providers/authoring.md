@@ -70,7 +70,8 @@ To use the provider:
    A relative path is read from `<state>/providers/<id>/`; `~` and absolute paths point anywhere else.
    An executable is `{ "exec": ["python3", "provider.py"] }`: a list of words, never a shell line.
 2. Trust it, in your own terminal: `strato provider trust tickets`.
-   Strato shows the folder, its SHA-256, what the provider can reach, sign in with and do, and records the hash on a typed `yes`.
+   Strato shows the folder, the command and its SHA-256, and asks a first `yes` before it runs the provider once, without secrets nor accounts, to read its descriptor.
+   It then shows what the provider can reach, sign in with and do, and records the hash on a second typed `yes`.
    Any change to a file of that folder (except `fixtures/`) needs a new trust; until then Strato does not load it.
 3. Connect an account: `strato setup --connect tickets`.
    Strato walks the sign-in steps your descriptor declares, checks the secret with `connect`, and stores it in a file only the person can read.
@@ -331,11 +332,14 @@ An auth method lists its `steps` (`open` a documented page, `paste` a secret wit
 
 ## 12. Testing
 
-`strato provider test <id | path>` runs the conformance harness offline, on a throwaway state folder:
+`strato provider test <id | path>` runs the conformance harness offline, on a throwaway state folder.
+By path, it runs the code there as it is: that is how you test a provider before trusting it.
+By id, it runs a configured provider only as the person trusted it; an untrusted or changed folder is refused, with the path form to use instead.
 
 - Every request goes through `ctx.fetch` or `http.fetch` and is answered from `fixtures/*.json` (one run per file); the process's own global `fetch` is refused, and a request no fixture matches fails the run.
 - Secrets come from the fixture, never from the person's files.
 - Writes go only through Strato's gate: a dry run for each action kind a task can carry, then a real act against the fake, then its undo.
+  The real act runs only once the provider was seen talking through the fake (its `connect` or its `poll` made requests there).
 
 A fixture file:
 
@@ -349,7 +353,8 @@ A fixture file:
   ],
   "expect": {
     "items": [{ "id": "a-1", "kind": "mention" }, { "id": "a-2", "kind": null, "rules": { "watch": [] } }],
-    "targets": [{ "draftTo": "OPS-7", "target": { "scope": "ticket", "native": "OPS-7" } }]
+    "targets": [{ "draftTo": "OPS-7", "target": { "scope": "ticket", "native": "OPS-7" } }],
+    "push": ["a-3"]
   },
   "act": { "thread": "OPS-7", "text": "Strato conformance check" }
 }
@@ -359,6 +364,7 @@ Matching: the method, then the URL (scheme, host, path, and the query as a set),
 Headers are not matched, since they carry secrets.
 An exchange answers once unless it says `"repeat": true`: the poll checks poll several times, so give your list endpoints `repeat`.
 A GET, or an exchange marked `"safe": true`, writes nothing: the only requests a dry run may make.
+`expect.push` lists the ids of the items a subscription delivers while the push check listens, in order; leave it out for a provider that does not push.
 
 | Check | What it verifies |
 | --- | --- |
@@ -367,8 +373,9 @@ A GET, or an exchange marked `"safe": true`, writes nothing: the only requests a
 | connect | an identity with `me` |
 | poll | required fields, oldest first; polling again from the cursor returns nothing already returned; a capped poll (`maxItems: 1`) then a poll from its cursor comes back complete |
 | links | `of` then `parse` gives back every polled thread |
+| keys | the key of every polled thread reads back as that thread, in its one stored form |
 | triage | each `expect.items` entry gets its kind |
-| context | items oldest first, with id, author, time and text |
+| context | the shape `strato context` checks before printing (a conversation label, `complete`, items with id, author, time and text), items oldest first |
 | text | no control characters in ids and names, texts under 1 MiB |
 | targets (modules) | `parseTarget` on each `expect.targets` sample |
 | act, dry | a dry result through the gate, and no request that writes |
@@ -376,10 +383,11 @@ A GET, or an exchange marked `"safe": true`, writes nothing: the only requests a
 | undo | the act is undone through the gate |
 | act, timeout | a write that times out never says `outcome: "none"` |
 | errors | a 401 is fatal, a 429 is retryable with `retryAfterMs`, a timeout is retryable |
-| push | a subscription delivers items and ends |
+| push | a subscription delivers items and says how it ended; with `expect.push`, the ids it delivered, in order |
 | network | every request matched a fixture |
 
-Each line says `ok`, `fail` with the reason, `skip`, or `not verifiable offline`: a provider that returned items without any request through the fake opened its own connection, which the harness cannot see, so it runs no real act for it.
+Each line says `ok`, `fail` with the reason, `skip`, or `not verifiable offline`: a provider that returned items without any request through the fake opened its own connection, which the harness cannot see, so it runs no real act for it; neither does it for a provider whose `connect` and `poll` made no request through the fake.
+A provider that reads through the fake but writes on a connection of its own is caught only after its write: its act line fails, since no write reached the fake.
 The exit code is 1 on any failure.
 
 `strato provider test <id> --live [--account <name>]` runs the read checks (descriptor, connect, poll, links, context, text, and push for a few seconds) against the person's own configured account and its real secrets, never an act nor the error checks.

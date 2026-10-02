@@ -1932,6 +1932,16 @@ Each stage is one or more commits that leave `bun run check` green and the guard
   - An exec provider's failed `http.fetch` (a timeout, a network failure) answers -32000 with `data: { code: "timeout" | "network", retryable: true }`, which a provider passes on as is.
   - The author guide is `docs/providers/authoring.md`, embedded in the binary for `strato provider guide`.
   - A provider whose id is also the folder name of another tool's account (`slack-partners` next to the Slack account `partners`) is refused: both would live in `<state>/providers/slack-partners/`.
+  - A one-shot command stops the exec processes it started when it returns (`shutdown`, then a kill after its timeout): every command but `listen`, `watch` and `serve`, which keep their providers while they run.
+    Without it, a child process and its pipes kept `strato context`, `backlog` and `doctor` alive until the ten-minute idle delay.
+    A call that arrives while a process shuts down waits for that process to end before starting the next one, so the old `shutdown` never holds the new process's slot.
+  - The core checks what a provider returns before using it: `complete`'s item is kept only when it is an item with the same id and thread (else the item stays as it came), and `context`'s answer has the shape `strato context` prints (`contextProblem` in core/context.ts) or reads as a provider error; the harness's context line uses the same check.
+  - Real acts in the harness need evidence, which is narrower than "every request went through the fake", since no harness can see a connection of the provider's own: its `connect` or its `poll` made requests through the fake, and no poll gave items without a request.
+    Otherwise the act line says not verifiable offline.
+    A provider that reads through the fake but writes on its own connection is caught only after its write, as an act line that fails with no write through the fake.
+  - The harness also checks keys (each polled thread's key reads back as that thread, in its canonical form) and push against an optional `expect.push` list of item ids; a subscription must say how it ended.
+  - `provider trust` shows the folder, the command and the hash, then asks a first `yes` before it runs the provider once without secrets (the module imported, or `describe`) to show its descriptor, and records the trust on a second `yes`.
+    `provider test <id>` runs a configured provider only as trusted; by path, it runs the code there as it is, which is how an author tests before trusting.
   - Left for later: the board's Connect page with Trust; `provider record`; `setup --connect` of an external provider is wired through the same descriptor steps but not covered by a test (it needs a terminal); `doctor` and the board reading the exec processes' `health`; a revocation command for a trust (removing the entry from `trusted.json` by hand works).
 
 ### proof
