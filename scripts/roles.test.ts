@@ -212,4 +212,14 @@ describe("doctor and open per role", () => {
       expect(spawned, String(role)).not.toContain(absent);
     }
   });
+
+  test("open <ticket of a named Linear account>: the ticket flow too, with that account's link", async () => {
+    const r = rig();
+    writeFileSync(join(r.state, "config.json"), JSON.stringify({ owner: { name: "Alice" }, slack: { team: "Acme", workspace: "acme", me: "UALICE" }, providers: { linear: { accounts: { partners: { workspace: "acme-partners", prefixes: ["ENG"] } } } } }));
+    const res = await cli(r, ["open", "linear@partners:ENG-12"]);
+    expect(res.code, res.err).toBe(0);
+    const spawned = readFileSync(join(r.dir, "spawns.log"), "utf8");
+    expect(spawned).toContain("implement the ticket up to a merge request");
+    expect(spawned).toContain("https://linear.app/acme-partners/issue/ENG-12");
+  });
 });

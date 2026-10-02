@@ -21,6 +21,11 @@ describe("checkable", () => {
     for (const summary of ["not for Alice: Bob owns it", "taken by Bob", "closed: handed over to Carol", "duplicate of topic B"]) expect(checkable({ ...base, summary })).toBe(false);
     expect(checkable({ ...base, summary: "closed: Bob confirmed the payout went out" })).toBe(true);
   });
+  test("only a tool with a settled marker shows the button: not a named Linear account's ticket, nor an unknown tool's key", () => {
+    expect(checkable({ ...base, key: "linear@partners:ENG-12" })).toBe(false);
+    expect(checkable({ ...base, key: "github:acme/api%2342" })).toBe(false);
+    expect(checkable({ ...base, key: "slack@partners:C0ACME0002:1759219200.000300" })).toBe(true);
+  });
 });
 
 /** Slack remplacé dans le processus serve : chaque appel est noté, reactions.add répond selon FAKE_REACTION. */

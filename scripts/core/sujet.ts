@@ -1,5 +1,6 @@
 import { normalizeDue } from "./due.ts";
-import { isTicketKey, sujetKey } from "./keys.ts";
+import { isTicketKey, parseKey, sujetKey } from "./keys.ts";
+import { descriptorOf } from "./links.ts";
 import { applySetToTasks, legacyTasks, syncTaskStatus, type Task } from "./tasks.ts";
 import { isItemEvent } from "./triage.ts";
 import { truncate } from "./text.ts";
@@ -405,10 +406,13 @@ export function freshness(ms: number): { h: number; k: number } {
 const NOT_SETTLED = /^\s*((clos|closed)\s*:\s*)?(pas pour|pris par|passé à|doublon|rattaché|not for|taken by|handed (?:over )?to|duplicate|attached to)/i;
 
 /**
- * A closed topic whose original thread may receive ✅: settled (not "not for …", "taken by …"), born from a Slack
- * message (not from a ticket), and not already checked.
+ * A closed topic whose original thread may receive the tool's settled marker (Slack: ✅): settled (not "not for …",
+ * "taken by …"), not already checked, and of a tool that declares a `done` marker, the test the gate's `donePlan`
+ * applies (a ticket, a mail thread or a tool without one never shows the button).
  */
 export function checkable(s: Pick<Sujet, "status" | "key" | "summary" | "checked">): boolean {
   if (s.status !== "closed" || s.checked || isTicketKey(s.key)) return false;
+  const p = parseKey(s.key);
+  if (!p || p.long || !descriptorOf(p.provider)?.done) return false;
   return !NOT_SETTLED.test(s.summary ?? "");
 }

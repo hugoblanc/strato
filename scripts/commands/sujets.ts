@@ -10,8 +10,8 @@ import { claimResume, createSujet, dropSujet, endResume, ensureState, loadSujets
 import { attention, inboundNote, isStuck, routeDecision } from "../claude/model.ts";
 import { gateLine } from "../core/cards.ts";
 import { locale, t } from "../core/i18n.ts";
-import { canonicalKey, conversationOfKey, parseKey, sujetKey, threadOfKey, ticketUrl } from "../core/keys.ts";
-import { providerDescriptors, providerLabel, ticketClaims } from "../core/links.ts";
+import { canonicalKey, conversationOfKey, parseKey, permalinkOfKey, sujetKey, threadOfKey, ticketUrl } from "../core/keys.ts";
+import { descriptorOf, providerDescriptors, providerLabel, ticketClaims } from "../core/links.ts";
 import { LEGACY_SLACK_READS, mcpReadRules } from "../core/mcp.ts";
 import { toolLabel } from "../core/targets.ts";
 import { missingSettings, resolveAccounts, settings } from "../core/settings.ts";
@@ -108,8 +108,11 @@ export async function open(args: string[]) {
   const claims = ref && !key ? ticketClaims(ref) : [];
   if (claims.length > 1) fail(t("cli.open.ambiguousTicket", { id: claims[0].native, tools: claims.map((c) => toolLabel(c.provider, c.account)).join(", ") }));
   if (!ref || !key) fail("usage: open [<Slack link | ABC-123 | Linear link>] --msg <id> --title …   (or --from … --channel … --text … without --msg)");
-  const issueId = key.startsWith("linear:") ? key.slice("linear:".length) : null;
-  const permalink = issueId ? (ticketUrl(issueId) ?? ref) : ref;
+  // a ticket of any tracker account (linear:, linear@partners:, an external tracker): the ticket flow, its own link
+  const parsed = parseKey(key);
+  const tracker = parsed && !parsed.long && descriptorOf(parsed.provider)?.kinds.includes("tracker") ? parsed : null;
+  const issueId = tracker ? tracker.native : null;
+  const permalink = issueId ? ((key.startsWith("linear:") ? ticketUrl(issueId) : permalinkOfKey(key)) ?? ref) : ref;
 
   const existing = findSujet(loadSujets(), key);
   if (existing && existing.status !== "closed") {
@@ -118,7 +121,7 @@ export async function open(args: string[]) {
   }
   const trigger: Trigger = kept ? { ...kept, permalink } : {
     from: opts.from ?? (issueId ? settings().owner.name : "?"),
-    channel: opts.channel ?? (issueId ? "Linear" : (threadOfKey(key)?.channel ?? providerLabel(parseKey(key)?.provider ?? ""))),
+    channel: opts.channel ?? (tracker ? toolLabel(tracker.provider, tracker.account) : (threadOfKey(key)?.channel ?? providerLabel(parseKey(key)?.provider ?? ""))),
     text: opts.text ?? "",
     permalink,
   };
