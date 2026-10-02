@@ -7,6 +7,7 @@
  */
 import { appToken, appTokenRefusal, connexionSocket, defaultSlack, NO_TOKEN, probeSlack, REPLIES_MAX, SlackClient, SlackError } from "../../app/slack.ts";
 import { bestText, channelLabel, conversationKind, nextSyncCursor, permalinkFor, slackItem, type SlackMatch } from "../../chat/slack-model.ts";
+import { t } from "../../core/i18n.ts";
 import { linkOfNative } from "../../core/links.ts";
 import { settings } from "../../core/settings.ts";
 import { slackWorkspaceFromUrl, tokenKindProblem } from "../../core/setup.ts";
@@ -57,7 +58,8 @@ export function clientOf(ctx: AccountContext): SlackClient {
 /** Who the person is, as triage reads it: their id and their groups, from the identity the core gives. */
 const cfgOf = (ctx: AccountContext) => ({ me: ctx.identity?.me ?? "", subteams: ctx.identity?.groups ?? [] });
 
-const fail = (code: string, message: string, fatal = true): ProviderError => ({ code, message, retryable: !fatal, fatal });
+/** An error this provider throws; its message in the person's language when it is one of Strato's own texts. */
+const providerFail = (code: string, message: string, fatal = true): ProviderError => ({ code, message, retryable: !fatal, fatal });
 
 /**
  * Setup's check of a candidate app-level token: Slack opens a Socket Mode connection URL for it (nothing is connected).
@@ -66,14 +68,14 @@ const fail = (code: string, message: string, fatal = true): ProviderError => ({ 
 async function checkAppToken(ctx: AccountContext): Promise<void> {
   const xapp = ctx.secret("SLACK_APP_TOKEN");
   if (!xapp) return;
-  if (!xapp.startsWith("xapp-")) throw fail("wrong_token_kind", "an App-Level Token starts with xapp- (Basic Information > App-Level Tokens, scope connections:write)");
+  if (!xapp.startsWith("xapp-")) throw providerFail("wrong_token_kind", t("provider.slack.error.appTokenKind"));
   let refusal: string | null;
   try {
     refusal = await appTokenRefusal(xapp, ctx.fetch);
   } catch (e) {
-    throw fail("network", `Slack unreachable: ${(e as Error).message}`, false);
+    throw providerFail("network", t("provider.slack.error.unreachable", { error: (e as Error).message }), false);
   }
-  if (refusal) throw fail(refusal, `Slack refuses the app-level token: ${refusal}${refusal === "missing_scope" ? " (it needs connections:write)" : ""}`);
+  if (refusal) throw providerFail(refusal, t(refusal === "missing_scope" ? "provider.slack.error.appTokenScope" : "provider.slack.error.appTokenRefused", { code: refusal }));
 }
 
 export const slackProvider = defineProvider({
@@ -94,14 +96,14 @@ export const slackProvider = defineProvider({
     if (ctx.account.id === "default" && !ctx.verifying) {
       const cfg = settings().slack;
       const p = await probeSlack(cfg);
-      if (!p.found) throw p.transient ? fail(p.transient, `no answer (${p.transient})`, false) : fail("invalid_auth", NO_TOKEN(cfg));
+      if (!p.found) throw p.transient ? providerFail(p.transient, `no answer (${p.transient})`, false) : providerFail("invalid_auth", NO_TOKEN(cfg));
       ({ team, me } = p.found);
       tenant = p.found.teamId;
       url = p.found.url ?? "";
     } else if (!client.token) {
-      throw fail("invalid_auth", `Slack account "${ctx.account.id}": no SLACK_USER_TOKEN in its secret file`);
+      throw providerFail("invalid_auth", t("provider.slack.error.noUserToken", { account: ctx.account.id }));
     } else if (ctx.verifying && tokenKindProblem(client.token)) {
-      throw fail("wrong_token_kind", tokenKindProblem(client.token) as string);
+      throw providerFail("wrong_token_kind", tokenKindProblem(client.token) as string);
     } else {
       let r: Record<string, unknown>;
       try {
@@ -113,7 +115,7 @@ export const slackProvider = defineProvider({
       me = String(r.user_id ?? "");
       tenant = String(r.team_id ?? "") || undefined;
       url = String(r.url ?? "").replace(/\/$/, "");
-      if (typeof s.team === "string" && s.team && s.team !== team) throw fail("wrong_workspace", `Slack account "${ctx.account.id}": its token belongs to the workspace "${team}", not "${s.team}"`);
+      if (typeof s.team === "string" && s.team && s.team !== team) throw providerFail("wrong_workspace", t("provider.slack.error.wrongWorkspace", { account: ctx.account.id, got: team, want: String(s.team) }));
       if (ctx.verifying) await checkAppToken(ctx);
     }
     if (url) client.base = url;
@@ -187,7 +189,7 @@ export const slackProvider = defineProvider({
 
   async replies(ctx: AccountContext, thread: string, opts: { since: number; max: number }): Promise<Item[]> {
     const [channel, ts] = thread.split(":");
-    if (!channel || !ts) throw fail("not_found", `not a Slack thread: ${thread}`, false);
+    if (!channel || !ts) throw providerFail("not_found", `not a Slack thread: ${thread}`, false);
     const client = clientOf(ctx);
     const sinceSec = opts.since / 1000;
     let messages: SlackMatch[];
@@ -224,7 +226,7 @@ export const slackProvider = defineProvider({
 
   async context(ctx: AccountContext, thread: string, opts: { since?: number; max: number }): Promise<ContextResult> {
     const [channel, ts] = thread.split(":");
-    if (!channel || !ts) throw fail("not_found", `not a Slack thread: ${thread}`, false);
+    if (!channel || !ts) throw providerFail("not_found", `not a Slack thread: ${thread}`, false);
     const client = clientOf(ctx);
     try {
       const extra: Record<string, string> = opts.since ? { oldest: String(Math.floor(opts.since / 1000)) } : {};

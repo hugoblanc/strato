@@ -8,6 +8,7 @@
  * A links-only account (the `tracker` section without an account of its own) never reaches this code: its auth is
  * "none", which no Linear method is, so the core neither reads, polls nor acts through it.
  */
+import { t } from "../../core/i18n.ts";
 import { defineProvider } from "../api.ts";
 import type { AccountContext, ContextResult, Detected, Identity, IngestCursor, Item, PollResult, ProviderError } from "../sdk.ts";
 import { LinearError, linearProviderError, linearQuery } from "./client.ts";
@@ -38,7 +39,8 @@ import {
 /** Notifications read per page; a pass reads pages back to its cursor, `maxItems` at most. */
 const PAGE = 50;
 
-const fail = (code: string, message: string, fatal: boolean): ProviderError => ({ code, message, retryable: !fatal, fatal });
+/** An error this provider throws; its message in the person's language when it is one of Strato's own texts. */
+const providerFail = (code: string, message: string, fatal: boolean): ProviderError => ({ code, message, retryable: !fatal, fatal });
 
 /** A read that failed, as the error the provider throws. */
 async function read<T>(ctx: AccountContext, query: string, variables: Record<string, unknown> = {}): Promise<T> {
@@ -94,13 +96,13 @@ async function createdSince(ctx: AccountContext, teams: string[], floor: number,
 /** Who the person is, from the viewer; a workspace other than the one the profile names is refused. */
 async function viewer(ctx: AccountContext): Promise<Identity> {
   // the tracker section alone: Linear's links and ticket ids, never a connection
-  if (ctx.account.auth === "none") throw fail("links_only", `Linear is set up for its links and ticket ids only: connect it with setup --connect linear`, true);
+  if (ctx.account.auth === "none") throw providerFail("links_only", `Linear is set up for its links and ticket ids only: connect it with setup --connect linear`, true);
   const data = await read<{ viewer?: LinearPerson; organization?: { name?: string; urlKey?: string } }>(ctx, VIEWER_QUERY);
   const identity = identityOf(data);
-  if (!identity) throw fail("invalid_answer", "Linear did not say who you are", false);
+  if (!identity) throw providerFail("invalid_answer", t("provider.linear.error.noViewer"), false);
   const wanted = ctx.account.settings.workspace;
   if (typeof wanted === "string" && wanted && identity.tenant && identity.tenant.toLowerCase() !== wanted.toLowerCase()) {
-    throw fail("wrong_workspace", `Linear account "${ctx.account.id}": its key belongs to the workspace "${identity.tenant}", not "${wanted}"`, true);
+    throw providerFail("wrong_workspace", t("provider.linear.error.wrongWorkspace", { account: ctx.account.id, got: identity.tenant, want: wanted }), true);
   }
   return identity;
 }
@@ -108,7 +110,7 @@ async function viewer(ctx: AccountContext): Promise<Identity> {
 /** One issue with its fields and comments, or a not-found error that will not clear. */
 async function issueOf(ctx: AccountContext, native: string): Promise<LinearIssue> {
   const t = ticketOfNative(native);
-  if (!t) throw fail("not_found", `not a Linear issue: ${native}`, false);
+  if (!t) throw providerFail("not_found", `not a Linear issue: ${native}`, false);
   let data: { issue?: LinearIssue | null };
   try {
     data = await linearQuery<{ issue?: LinearIssue | null }>(ctx, ISSUE_QUERY, { id: t.issue, first: CONTEXT_PAGE });

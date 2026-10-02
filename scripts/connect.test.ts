@@ -221,6 +221,11 @@ describe("setup --connect", () => {
     writeConfig(r, { slack: { team: "Globex" } });
     const other = await connect(r, ["slack", "--auth", "paste-token"], "xoxp-acme-fake-0000\n\n");
     expect(other.err).toContain('its token belongs to the workspace "Acme", not "Globex"');
+    // a French profile reads the built-in provider's reason in French too
+    writeConfig(r, { slack: { team: "Globex" }, ui: { locale: "fr" } });
+    const fr = await connect(r, ["slack", "--auth", "paste-token"], "xoxp-acme-fake-0000\n\n");
+    expect(fr.err).toContain("son jeton appartient à l'espace « Acme », pas à « Globex »");
+    writeConfig(r, { slack: { team: "Globex" } });
     const app = await connect(r, ["slack", "--account", "partners", "--auth", "paste-token"], "xoxp-partners-fake-2222\nxoxp-oops\n");
     expect(app.err).toContain("an App-Level Token starts with xapp-");
     expect(existsSync(strato(r))).toBe(false);
