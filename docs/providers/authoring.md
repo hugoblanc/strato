@@ -455,6 +455,10 @@ An exchange answers once unless it says `"repeat": true`: the poll checks poll s
 An exchange that answers once and is never reached fails the network check, so a fixture cannot go unused silently (the writes are not counted when the acts were not verifiable offline).
 A GET, or an exchange marked `"safe": true`, writes nothing: the only requests a dry run may make, and the only ones answered while the timeout check times out the writes.
 `act` names the thread, the text, the `status` and `assignee` values, and for a tool that declares an audience the `audience` (`{ "to": [...], "cc": [...], "visibility": "internal" }`) and `subject` of the sample task.
+A status value is the name the person approved (`Done`, `In Progress`): your `act` maps it to whatever your tool writes, such as a transition id.
+An assignee value is what the person approved, as they wrote it: `me` (the connected person, `ctx.identity.me`), `none` (unassign), an email, a display name or a user id; your `act` resolves it, and refuses with `invalid_target` and outcome `none` when it names nobody.
+In `expect.items`, `"kind": null` means the item must be ignored (no request raised), and `rules` replaces the account's triage settings for that entry only (`{ "watch": [] }`), to check one item under other settings than the fixture's.
+`strato provider test <path> --fixtures <dir>` reads the fixture files from another folder than `<path>/fixtures/`, for example to keep private recordings out of the provider's repository.
 `errors` adds cases to the errors check: every request is answered with `response`, then a read (a poll, else `connect`) must fail as `expect` says: `fatal`, `retryable`, `retryAfterMs: true` (a positive wait), `code`.
 `expect.push` lists the ids of the items a subscription delivers while the push check listens, in order; leave it out for a provider that does not push.
 
@@ -471,7 +475,7 @@ A GET, or an exchange marked `"safe": true`, writes nothing: the only requests a
 | text | no control characters in ids and names, texts under 1 MiB |
 | targets (modules) | `parseTarget` on each `expect.targets` sample |
 | act, dry | a dry result through the gate, and no request that writes |
-| act | the write carries the text and, for an idempotent kind, the idempotency key |
+| act | a text write (`comment`, `post`, `reply`) carries the text; `setStatus` and `assign` only need one write to reach the fake, since tools often write them as an id they look up first (a transition, a user); an idempotent kind carries the idempotency key |
 | act (unreached) | every declared `post`, `reply` and `comment` is reached by a task; otherwise a fail that names the rule of "How a text becomes an action" that sent the text elsewhere |
 | undo | the act is undone through the gate |
 | act, timeout | a write that times out never says `outcome: "none"`; reads are answered, so a provider that reads before it writes reaches its write; skipped when no write was attempted |

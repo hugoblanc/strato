@@ -517,8 +517,9 @@ function planOf(key: string, taskId: string): { sha: string; kind: ActionKind } 
 
 /**
  * Every action kind a task can carry, dry first, then for real against the fake once the provider was seen talking
- * through it (its connect or its poll made requests there, and no poll gave items without one): the write must carry
- * the text and, for an idempotent kind, the idempotency key; an undoable kind is then undone; a write that times out
+ * through it (its connect or its poll made requests there, and no poll gave items without one): a text write must
+ * carry the text, a status or an assignee only has to reach the fake (tools write them as ids they look up), and an
+ * idempotent kind must carry the idempotency key; an undoable kind is then undone; a write that times out
  * must never say it surely did not happen. `offline`: no such evidence, the real write is reported not verifiable.
  * A text goes to the thread's key, then, when `post` is declared and not reached yet, to its conversation's key. A
  * declared kind that no task reached fails, with the rule that sent the text elsewhere.
@@ -536,7 +537,8 @@ async function actChecks(provider: Provider, d: ProviderDescriptor, actions: Act
   const conversation = items.find((i) => i.thread === thread)?.conversation.id;
   const conversationKey = conversation ? formatKey(d.id, "default", conversation) : null;
   if (actions.includes("post") && conversation && conversationKey && conversationKey !== key) tasks.push({ name: "text, new message", task: textTask(conversationKey), carries: text, native: conversation, extra: true });
-  if (actions.includes("setStatus")) tasks.push({ name: "setStatus", task: { id: "t1", kind: "action", act: "setStatus", value: fx.act?.status ?? "Done", to: key }, carries: fx.act?.status ?? "Done", native: thread });
+  // a status or an assignee is often written as an id the provider looks up (a transition, a user): any write counts
+  if (actions.includes("setStatus")) tasks.push({ name: "setStatus", task: { id: "t1", kind: "action", act: "setStatus", value: fx.act?.status ?? "Done", to: key }, carries: "", native: thread });
   if (actions.includes("assign")) tasks.push({ name: "assign", task: { id: "t1", kind: "action", act: "assign", value: fx.act?.assignee ?? "me", to: key }, carries: "", native: thread });
   const unreachable = actions.filter((k) => !TASK_KINDS.includes(k));
   if (unreachable.length) report.line("skip", "act", t("cli.provider.test.unreachable", { kinds: unreachable.join(", ") }));
@@ -579,7 +581,7 @@ async function actChecks(provider: Provider, d: ProviderDescriptor, actions: Act
     const idem = `${key}#t1#${sha.slice(0, 12)}#1`;
     const carried = (r: Recorded) => (!carries || r.body.includes(carries)) && (!idempotent.includes(kind) || r.body.includes(idem) || Object.values(r.headers).some((v) => v.includes(idem)));
     if (!real.ok) report.line("fail", `act ${kind}`, "refused" in real ? real.refused.message : real.failed.message);
-    else if (!writes.length) report.line("fail", `act ${kind}`, t("cli.provider.test.noWrite"));
+    else if (!writes.length) report.line("fail", `act ${kind}`, kind === "setStatus" ? t("cli.provider.test.noStatusWrite") : kind === "assign" ? t("cli.provider.test.noAssignWrite") : t("cli.provider.test.noWrite"));
     else if (!writes.some(carried)) report.line("fail", `act ${kind}`, idempotent.includes(kind) ? t("cli.provider.test.noIdem", { key: idem }) : t("cli.provider.test.noText"));
     else report.line("ok", `act ${kind}`, real.sent.link);
 

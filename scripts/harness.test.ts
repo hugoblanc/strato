@@ -4,7 +4,7 @@
  * run is a real `strato` process on a throwaway state, the harness answering from the fixtures, offline.
  */
 import { afterEach, describe, expect, test } from "bun:test";
-import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { canonicalJson, FakeTool, matches } from "./providers/harness/fake.ts";
 import { cleanupRigs, cli, type Rig, rig, SCRIPTS } from "./test-rig.ts";
@@ -136,6 +136,26 @@ describe("provider test fails a broken provider on the check it breaks", () => {
     const c = await harness(rig(), chat);
     expect(line(c, "act text")).toContain("skip    act text: a task's text goes out as post on this tool, which it does not declare: without threadInfo");
     expect(line(c, "act comment")).toContain("fail    act comment: declared, but no task reaches it");
+  }, 60_000);
+
+  test("a status written as an id the provider looks up passes: setStatus only has to reach the tool", async () => {
+    const r = rig();
+    const folder = await scaffold(r);
+    patch(folder, 'actions: ["comment"],', 'actions: ["comment", "setStatus"],');
+    patch(
+      folder,
+      '    if (a.kind !== "comment") return',
+      '    if (a.kind === "setStatus") {\n      if (input.dryRun) return { ok: true, ref: "", link: `https://${HOST}/t/${a.target.native}`, dry: `move ${a.target.native} to ${a.status}` };\n      await api(ctx, "POST", `/api/threads/${encodeURIComponent(a.target.native)}/transitions`, { transition: { id: "31" } });\n      return { ok: true, ref: a.target.native, link: `https://${HOST}/t/${a.target.native}` };\n    }\n    if (a.kind !== "comment") return',
+    );
+    const dir = join(folder, "fixtures");
+    for (const name of readdirSync(dir).filter((f) => f.endsWith(".json"))) {
+      const fx = JSON.parse(readFileSync(join(dir, name), "utf8"));
+      fx.exchanges.push({ request: { method: "POST", url: "https://demo.example/api/threads/OPS-7/transitions", body: { transition: { id: "31" } } }, response: { body: {} }, repeat: true });
+      writeFileSync(join(dir, name), JSON.stringify(fx));
+    }
+    const h = await harness(r, folder);
+    expect(line(h, "act setStatus,")).toStartWith("ok      act setStatus, dry");
+    expect(h.lines.find((l) => /^\S+\s+act setStatus$|^\S+\s+act setStatus: /.test(l)) ?? "").toStartWith("ok");
   }, 60_000);
 
   test("a fixture's own error answers, an exchange never reached, a cursor too large, English triage kinds", async () => {
