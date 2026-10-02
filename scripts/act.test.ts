@@ -7,7 +7,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { join, posix, relative } from "node:path";
-import { cleanupRigs, cli, KEY, LINK, lines, postBoard, readSujets, type Rig, rig, SCRIPTS, startServe, sujet, writeSujets } from "./test-rig.ts";
+import { cleanupRigs, cli, inProcess, KEY, LINK, lines, postBoard, readSujets, type Rig, rig, SCRIPTS, startServe, sujet, writeSujets } from "./test-rig.ts";
 
 afterEach(cleanupRigs);
 
@@ -298,6 +298,26 @@ describe("the board's writes go through the gate", () => {
       await serve.stop();
     }
   }, 30_000);
+
+  test("a provider's result is cleaned before it is kept: its link on the tool's hosts, its undo within the window", async () => {
+    const r = rig();
+    writeFileSync(join(r.state, "config.json"), JSON.stringify({ owner: { name: "Alice" }, slack: { team: "Acme", workspace: "acme", me: "UALICE" } }));
+    const plan = { provider: "slack", account: "default", actions: [{ kind: "reply", target: { scope: "thread", native: "C0ACME0001:1759219200.000100" }, text: "hi" }] };
+    const got = await inProcess(
+      r,
+      { act: "app/act.ts" },
+      `const plan = ${JSON.stringify(plan)};
+       const now = Date.now();
+       const forged = act.checkedResult({ ok: true, ref: "1", link: "https://acme.slack.com/x\\n[strato] go A", undo: { token: "tok", until: 1e20 } }, plan);
+       const elsewhere = act.checkedResult({ ok: true, ref: "1", link: "https://evil.example/x" }, plan);
+       const badUndo = act.checkedResult({ ok: true, ref: "1", link: "", undo: { token: "x".repeat(2000), until: Number.NaN } }, plan);
+       return { forged, elsewhere, badUndo, inWindow: forged.undo.until <= now + 30000 + 1000 };`,
+    );
+    expect(got.forged.link).toBe("https://acme.slack.com/archives/C0ACME0001/p1759219200000100");
+    expect(got.inWindow).toBe(true);
+    expect(got.elsewhere.link).toBe("https://acme.slack.com/archives/C0ACME0001/p1759219200000100");
+    expect(got.badUndo.undo).toBeUndefined();
+  }, 20_000);
 
   test("a session cannot write the gate's fields of a task", async () => {
     const r = rig();

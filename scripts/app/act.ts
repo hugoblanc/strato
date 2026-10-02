@@ -6,7 +6,7 @@
  */
 import { ACT_TIMEOUT_MS, type ActionPlan, type ActOrigin, donePlan, type GateAccount, idempotencyKey, type InFlight, planOfTask, planRefusal, planSha, type Refusal, type SentRecord, taskRefusal, unknownOf } from "../core/gate.ts";
 import { t } from "../core/i18n.ts";
-import { linkOfNative } from "../core/links.ts";
+import { checkedLink, descriptorOf, linkOfNative } from "../core/links.ts";
 import { findSujet, type Sujet } from "../core/sujet.ts";
 import { toolLabel } from "../core/targets.ts";
 import { closeTask, findTask, reopenTask, type Task, tasksOf } from "../core/tasks.ts";
@@ -81,10 +81,29 @@ async function call(run: () => Promise<ActResult>): Promise<ActResult> {
   }
 }
 
-/** A provider's answer read defensively: a provider that breaks its contract never counts as a success. */
-function checkedResult(r: unknown): ActResult {
+/** The longest undo token Strato keeps: it is stored on the topic and sent back to the provider as is. */
+const UNDO_TOKEN_MAX = 1024;
+
+/**
+ * A provider's answer read defensively: a provider that breaks its contract never counts as a success. A success is
+ * then cleaned for what Strato does with it: its link must be an https link on the tool's hosts (else the plan's own
+ * thread link, else none), since it reaches the topic, the task's note and the session; an undo is kept only with a
+ * string token of at most 1 KiB and a finite deadline, cut to the tool's declared window.
+ */
+export function checkedResult(r: unknown, plan: ActionPlan): ActResult {
   const x = r as Partial<ActResult> | null;
-  if (x && x.ok === true && typeof (x as { ref?: unknown }).ref === "string" && typeof (x as { link?: unknown }).link === "string") return x as ActResult;
+  if (x && x.ok === true && typeof (x as { ref?: unknown }).ref === "string" && typeof (x as { link?: unknown }).link === "string") {
+    const ok = x as Extract<ActResult, { ok: true }>;
+    const link = checkedLink(ok.link, plan.provider) ?? planLink(plan) ?? "";
+    const undoMs = descriptorOf(plan.provider)?.undoMs;
+    const u = ok.undo as { token?: unknown; until?: unknown } | undefined;
+    const undo =
+      u && typeof u.token === "string" && u.token.length <= UNDO_TOKEN_MAX && typeof u.until === "number" && Number.isFinite(u.until) && typeof undoMs === "number"
+        ? { token: u.token, until: Math.min(u.until, Date.now() + undoMs) }
+        : null;
+    const { undo: _u, ...rest } = ok;
+    return { ...rest, ref: ok.ref.slice(0, UNDO_TOKEN_MAX), link, ...(undo ? { undo } : {}) };
+  }
   if (x && x.ok === false && x.error && typeof x.error.code === "string") return { ok: false, error: providerError(x.error, "write") };
   return { ok: false, error: { code: "internal", message: "the provider answered something that is not a result", retryable: false, fatal: false, outcome: "unknown" } };
 }
@@ -127,7 +146,7 @@ export async function actOnTask(req: { key: string; taskId: string; sha: string;
   const actor = actorOf(p.entry);
   const ctx = accountContext(p.entry);
   const action = p.plan.actions[0];
-  const result = actor?.act ? checkedResult(await call(() => (actor.act as NonNullable<typeof actor.act>)(ctx, { action, idempotencyKey: idempotencyKey(req.key, req.taskId, p.sha, p.attempt), dryRun: false }))) : { ok: false as const, error: { code: "unsupported", message: "no act", retryable: false, fatal: true, outcome: "none" as const } };
+  const result = actor?.act ? checkedResult(await call(() => (actor.act as NonNullable<typeof actor.act>)(ctx, { action, idempotencyKey: idempotencyKey(req.key, req.taskId, p.sha, p.attempt), dryRun: false })), p.plan) : { ok: false as const, error: { code: "unsupported", message: "no act", retryable: false, fatal: true, outcome: "none" as const } };
   const tool = toolLabel(p.plan.provider, p.plan.account);
   const at = nowIso();
   const base = { type: "act", by: req.by, key: req.key, task: req.taskId, account: accountName(p.plan), kinds: kindsOf(p.plan), sha: short(p.sha), attempt: p.attempt };
@@ -173,7 +192,7 @@ export async function dryRunTask(req: { key: string; taskId: string; sha: string
   }
   const sha = planSha(plan.plan);
   const actor = actorOf(entry);
-  const result = actor?.act ? checkedResult(await call(() => (actor.act as NonNullable<typeof actor.act>)(accountContext(entry), { action: plan.plan.actions[0], idempotencyKey: idempotencyKey(req.key, req.taskId, sha, task?.attempt ?? 1), dryRun: true }))) : { ok: false as const, error: { code: "unsupported", message: "no act", retryable: false, fatal: true, outcome: "none" as const } };
+  const result = actor?.act ? checkedResult(await call(() => (actor.act as NonNullable<typeof actor.act>)(accountContext(entry), { action: plan.plan.actions[0], idempotencyKey: idempotencyKey(req.key, req.taskId, sha, task?.attempt ?? 1), dryRun: true })), plan.plan) : { ok: false as const, error: { code: "unsupported", message: "no act", retryable: false, fatal: true, outcome: "none" as const } };
   logEvent({ type: "act-dry", by: req.by, key: req.key, task: req.taskId, account: accountName(plan.plan), kinds: kindsOf(plan.plan), sha: short(sha), ok: result.ok, ...(result.ok ? {} : { error: result.error.code }) });
   return result.ok ? { ok: true, result } : { ok: false, failed: result.error };
 }
@@ -202,7 +221,7 @@ export async function actDone(req: { key: string; by: ActOrigin; after?: (s: Suj
   const sha = planSha(plan.plan);
   const actor = actorOf(entry);
   const action = plan.plan.actions[0];
-  const result = actor?.act ? checkedResult(await call(() => (actor.act as NonNullable<typeof actor.act>)(accountContext(entry), { action, idempotencyKey: idempotencyKey(req.key, "done", sha, 1), dryRun: false }))) : { ok: false as const, error: { code: "unsupported", message: "no act", retryable: false, fatal: true, outcome: "none" as const } };
+  const result = actor?.act ? checkedResult(await call(() => (actor.act as NonNullable<typeof actor.act>)(accountContext(entry), { action, idempotencyKey: idempotencyKey(req.key, "done", sha, 1), dryRun: false })), plan.plan) : { ok: false as const, error: { code: "unsupported", message: "no act", retryable: false, fatal: true, outcome: "none" as const } };
   const base = { type: "act", by: req.by, key: req.key, task: null, account: accountName(plan.plan), kinds: kindsOf(plan.plan), sha: short(sha), attempt: 1 };
   if (!result.ok) {
     logEvent({ ...base, ok: false, error: result.error.code, outcome: result.error.outcome ?? "none" });
@@ -250,7 +269,7 @@ export async function undoTask(req: { key: string; taskId: string; by: ActOrigin
     return { ok: false, refused: r };
   }
   const actor = actorOf(c.entry);
-  const result = actor?.undo ? checkedResult(await call(() => (actor.undo as NonNullable<typeof actor.undo>)(accountContext(c.entry), c.sent.undo.token))) : { ok: false as const, error: { code: "unsupported", message: "no undo", retryable: false, fatal: true, outcome: "none" as const } };
+  const result = actor?.undo ? checkedResult(await call(() => (actor.undo as NonNullable<typeof actor.undo>)(accountContext(c.entry), c.sent.undo.token)), c.sent.plan) : { ok: false as const, error: { code: "unsupported", message: "no undo", retryable: false, fatal: true, outcome: "none" as const } };
   const base = { type: "act-undo", by: req.by, key: req.key, task: req.taskId, account: accountName(c.sent.plan), sha: short(c.sent.sha) };
   if (!result.ok) {
     logEvent({ ...base, ok: false, error: result.error.code });
