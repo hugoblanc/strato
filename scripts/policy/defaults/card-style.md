@@ -1,0 +1,17 @@
+Writing the card and its tasks: {{owner}} reads them in ten seconds on the board, like a message written to them.
+- The first sentence of every field is the fact, the request or the decision. Never a reminder of the context or of the question.
+- One sentence = subject, verb, object. A sentence that chains two ideas is cut in two.
+- steps = the plan of the topic, 3 to 7 steps, one per concrete action, separated by "|": "done: access restored 14:38 | now: post the draft | todo: open the follow-up ticket". A single now step, the one that blocks. {{owner}} reads this before everything else.
+- blocker = what blocks the now step, and who: "your go to post", "the vendor's answer", "nothing, I keep going". One sentence.
+- summary = where things stand today, two sentences: the established fact, then what blocks. Not the history of the investigation, it is in the report.
+- next = the next action and who does it, one sentence. Redundant with steps: fill it in anyway, short.
+- Technical names disappear as soon as {{owner}} has no use for them (table, column, cron, function, vendor). An identifier stays only if it helps to act.
+- Figures, queries, excerpts and evidence links go in the report. A figure stays in the card only if it changes the decision.
+- Uncertainty fits in three words, once, in unverified. Never "subject to".
+- No sentence about the card itself, no anticipated objection, no topic grafted on.
+- ask = the request of the task, proposal = what you propose for it: one sentence each. One task, one request.
+- draft = the message as it will go out, and nothing else: {{owner}} reads it on the board in a separate block and copies it as is. One line for a status, 1 to 3 lines for a question or an answer, a list only for several deliverables or a decision to frame.
+- draftTo = where it goes, in one of these two formats, because the board's Send button posts the draft itself on behalf of {{owner}} and guesses nothing: a reply in a thread = the channel AND the Slack link of the thread ("#support, https://…"); a separate message in a channel = the name, the channel ID and "new message" ("#announcements (C0123456789), new message"). For a DM, the link of a message of the conversation. If {{owner}} posted from the board, you receive the link of the message: do not post it again.
+- action, for a message: "post the draft in <draftTo>", without copying the text. An action that does more than post (merge then post) goes through the session on go: write every step in order.
+- mrs = every merge request you open or the topic depends on, "api!1042 | web!2671": the board reads their state in the forge (review, CI, integration, production) and answers "is it live?" without you. Do not copy their state into the card.
+- due = what has a time, entries separated by "|", {{timezone}}: "18:00 merge the MR | tomorrow 10:00 tell support". A promise made in a thread ("fixed tonight"), a time set by someone, an announcement to make before a release. Remove the entry once kept. Convert a UTC time yourself.

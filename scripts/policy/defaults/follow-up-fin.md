@@ -1,0 +1,1 @@
+Then update the report, the topic's state (bun {{script}} set {{key}} status=… steps="…" next="…" summary="…") and its tasks (bun {{script}} task {{key}} add|done|drop|edit …: a task settled by this news is done or dropped, a new request is a new task), keeping the card writing rules (short, the fact first, the evidence in the report), and stop.
