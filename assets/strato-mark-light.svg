@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 48 48" fill="none"><circle cx="24" cy="24" r="21.5" stroke="#e8eaed" stroke-width="3" fill="none"/>
+<g transform="rotate(-35 24 24)">
+<rect x="6.4" y="20.7" width="3.5" height="7.6" rx="0.5" fill="#e8eaed" fill-opacity="0.85"/><rect x="10.3" y="20.7" width="3.5" height="7.6" rx="0.5" fill="#e8eaed" fill-opacity="0.85"/><rect x="14.2" y="20.7" width="3.5" height="7.6" rx="0.5" fill="#e8eaed" fill-opacity="0.85"/><rect x="30.2" y="20.7" width="3.5" height="7.6" rx="0.5" fill="#e8eaed" fill-opacity="0.85"/><rect x="34.1" y="20.7" width="3.5" height="7.6" rx="0.5" fill="#e8eaed" fill-opacity="0.85"/><rect x="38" y="20.7" width="3.5" height="7.6" rx="0.5" fill="#e8eaed" fill-opacity="0.85"/>
+<rect x="17.8" y="23.7" width="1.9" height="1.6" fill="#e8eaed"/><rect x="28.3" y="23.7" width="1.9" height="1.6" fill="#e8eaed"/>
+<rect x="19.5" y="19" width="9" height="11" rx="2" fill="#e8eaed"/>
+<path d="M20 16.9Q24 12.6 28 16.9Z" fill="#e8eaed" fill-opacity="0.85"/>
+<rect x="23.3" y="16.7" width="1.4" height="2.5" fill="#e8eaed"/>
+<rect x="23.4" y="12.8" width="1.2" height="2.6" fill="#e8eaed" fill-opacity="0.85"/>
+<circle cx="24" cy="11" r="2.8" fill="#f2b84b"/>
+</g></svg>

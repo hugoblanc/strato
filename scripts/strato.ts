@@ -45,7 +45,8 @@ import { type MasterRequest } from "./core/master.ts";
 import { serve } from "./server/serve.ts";
 import { setup } from "./commands/setup.ts";
 import { task } from "./commands/tasks.ts";
-import { readFileSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 
 // lock unavailable or unreadable state file: the command stops on one clear line, exit code 1, no stack
 process.on("uncaughtException", (e) => {
@@ -101,6 +102,15 @@ switch (cmd) {
   case "refresh":
     await refresh(rest);
     break;
+  case "brand": {
+    // writes the logo files (mark, lockup, favicon, social image) into assets/ at the root of the repo
+    const { brandFiles } = await import("./core/brand.ts");
+    const dir = join(import.meta.dir, "..", "assets");
+    mkdirSync(dir, { recursive: true });
+    for (const [name, content] of Object.entries(brandFiles())) writeFileSync(join(dir, name), content);
+    out(`assets written in ${dir}`);
+    break;
+  }
   case "gc":
     await gc(rest);
     break;

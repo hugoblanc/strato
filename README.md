@@ -1,3 +1,10 @@
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="assets/strato-lockup-light.svg">
+    <img alt="Strato" src="assets/strato-lockup.svg" width="300">
+  </picture>
+</p>
+
 # Strato
 
 Strato is a Slack control tower for one person, built as a [Claude Code](https://claude.com/claude-code) skill.

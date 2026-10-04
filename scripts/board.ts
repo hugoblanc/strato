@@ -6,6 +6,7 @@
  * The page has its own shell (Tailwind v4 from a CDN, IBM Plex), separate from the iTerm2 panel, which stays in panel.ts.
  * Every visible word goes through core/i18n.ts: t() on the server, tr() in the page's script.
  */
+import { faviconHref, stratoMark } from "./core/brand.ts";
 import { postOnlyAction, truncate, t, clientMessages, locale, type MessageKey, type ActivityStep, type AgentNode, agentCounts, type Due, type MasterRequest, type MrStage, MR_STAGE_ORDER, parseDue, REVUE_STALE_MS, REVUE_WINDOWS, DRAFT_MAX, draftDestination, draftText, isSnoozed, type Snooze, parseSteps, permalinkOfKey, repoLabel, type SessionContext, settings, shellQuote, ticketIdOfKey, ticketUrl, type SocketHealth, socketDeaf, type Sujet, sujetKeys, takenBy, freshness, gateSince, checkable, openTasks, tasksOf, taskDraftText, taskReady, sendsUnseenMessage, type Task, type TaskKind } from "./lib.ts";
 import { type StaleSignal, staleSignals } from "./core/refresh.ts";
 import { escapeHtml, textToHtml } from "./panel.ts";
@@ -1401,16 +1402,8 @@ body {
 @media (prefers-reduced-motion: reduce) { * { transition: none !important; animation: none !important; } }
 `;
 
-/** The switch glyph: a track, a branch leaving it, and the lamp at its end. Used as logo and favicon. */
-export function switchGlyph(size: number, lampColor = "#f2b84b", stroke = "currentColor"): string {
-  return `<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M3 17h18M3 17l6-6h6" stroke="${stroke}" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/><circle cx="18.5" cy="8" r="3" fill="${lampColor}"/></svg>`;
-}
-
-/** The favicon: the glyph on a dark background, as an SVG data URI. */
-export function faviconHref(lit = true): string {
-  const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32"><rect width="32" height="32" rx="7" fill="#15181d"/><path d="M6 23h20M6 23l8-8h8" stroke="#e8eaed" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" fill="none"/><circle cx="24.5" cy="10" r="4" fill="${lit ? "#f2b84b" : "#4b5058"}"/></svg>`;
-  return `data:image/svg+xml,${encodeURIComponent(svg)}`;
-}
+/** The logo and the favicon live in core/brand.ts, the single source of the mark. */
+export { faviconHref } from "./core/brand.ts";
 
 const JS = `
 (function () {
@@ -2517,7 +2510,7 @@ export function boardPage(view: string, version = ""): string {
 <body class="font-sans antialiased text-[13.5px]">
 <nav class="sticky top-0 z-10 border-b border-line bg-bg/85 backdrop-blur">
 <div class="mx-auto flex max-w-[1080px] items-center justify-between gap-4 px-5 py-2.5">
-<div class="flex items-center gap-2.5 text-ink"><span class="inline-flex text-ink">${switchGlyph(20)}</span><span class="text-[15px] font-semibold tracking-tight">Strato</span><span class="text-[12.5px] text-muted">board</span><div id="version-slot" class="ml-1 flex items-center gap-2">${version}</div></div>
+<div class="flex items-center gap-2.5 text-ink"><span class="inline-flex text-ink">${stratoMark(22)}</span><span class="text-[15px] font-semibold tracking-tight">Strato</span><span class="text-[12.5px] text-muted">board</span><div id="version-slot" class="ml-1 flex items-center gap-2">${version}</div></div>
 <button type="button" data-palette-open title="${escapeHtml(t("board.header.search.tip"))}" class="mx-2 hidden h-8 min-w-0 max-w-[420px] flex-1 items-center gap-2 rounded-lg border border-line bg-surface px-3 text-left text-[12.5px] text-muted hover:border-muted/60 hover:text-ink sm:flex"><span aria-hidden="true">⌕</span><span class="min-w-0 flex-1 truncate">${escapeHtml(t("board.header.search"))}</span><kbd class="shrink-0">⌘K</kbd></button>
 <div class="flex items-center gap-1 text-[12.5px]"><span id="sync-pill" class="mr-2 inline-flex items-center gap-2 rounded-full border border-line px-2.5 py-0.5 text-[12.5px] text-muted"><span class="lamp" aria-hidden="true"></span><span data-sync-label>…</span></span><button type="button" id="drawer-show" hidden data-drawer-show class="${BTN} mr-1" title="${escapeHtml(t("board.drawer.show.tip"))}"></button><button type="button" data-theme-toggle class="${BTN_TEXT}" title="${escapeHtml(t("board.header.theme.tip"))}">${t("board.js.theme.auto")}</button><a href="/?liste" class="${BTN_TEXT}" title="${escapeHtml(t("board.header.list.tip"))}">${t("board.header.list")}</a><button type="button" data-refresh class="${BTN_TEXT}" title="${escapeHtml(t("board.header.refresh.tip"))}">${t("board.header.refresh")}</button></div>
 </div>
