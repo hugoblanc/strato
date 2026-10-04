@@ -1,0 +1,45 @@
+# Slack app for Strato: https://api.slack.com/apps -> Create New App -> From an app manifest.
+#
+# Strato acts as you, with a user token (xoxp-): it reads what you can read and posts as you, on your click.
+# No bot user is needed. Socket Mode is optional: it lets `listen` receive messages within a second instead of
+# `watch` polling the search API. After installing the app:
+#   - User OAuth Token (xoxp-...): Strato's user token, see SETUP.md "Connect Slack".
+#   - Socket Mode only: Basic Information -> App-Level Tokens -> generate one with the `connections:write` scope
+#     (xapp-...). It is not part of the manifest.
+display_information:
+  name: Strato
+  description: Routes your Slack to Claude Code work sessions on your machine. Posts only on your click.
+  background_color: "#1b1406"
+oauth_config:
+  scopes:
+    user:
+      # find and catch up on messages (watch, backlog, the listener's catch-up, setup --detect)
+      - search:read
+      # read threads and channel names: public, private, DMs, group DMs
+      - channels:history
+      - groups:history
+      - im:history
+      - mpim:history
+      - channels:read
+      - groups:read
+      - im:read
+      - mpim:read
+      # people's names, and your Slack groups (setup --detect)
+      - users:read
+      - usergroups:read
+      # the board's Send (a draft, as you) and its check mark on a settled thread
+      - chat:write
+      - reactions:write
+settings:
+  # events on behalf of the user: the app receives what you see, no bot has to join channels
+  event_subscriptions:
+    user_events:
+      - message.channels
+      - message.groups
+      - message.im
+      - message.mpim
+  interactivity:
+    is_enabled: false
+  org_deploy_enabled: false
+  socket_mode_enabled: true
+  token_rotation_enabled: false

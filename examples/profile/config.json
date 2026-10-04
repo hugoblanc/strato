@@ -1,0 +1,34 @@
+{
+  "owner": { "name": "Alice" },
+  "slack": {
+    "team": "Acme",
+    "workspace": "acme",
+    "me": "U01ALICE00",
+    "subteams": ["S01PLATFRM"],
+    "teamAlias": "@platform",
+    "watchChannels": ["C01PLATREQ"],
+    "ignoreChannels": ["C01RANDOM0"],
+    "ignoreAuthors": ["Deploy Bot", "PagerDuty"],
+    "teammates": ["Bob", "Carol"],
+    "appId": "A01STRATO0",
+    "appTokenFile": "~/.config/strato/slack-app.env",
+    "pollInterval": 60
+  },
+  "tracker": { "kind": "linear", "workspace": "acme", "prefixes": ["PLAT", "OPS"] },
+  "forge": {
+    "kind": "gitlab",
+    "host": "gitlab.com",
+    "repos": { "api": "acme/api", "web": "acme/web" },
+    "aliases": { "backend": "api", "frontend": "web" },
+    "iidRanges": [],
+    "defaultRepo": "api",
+    "integrationBranch": "dev",
+    "releaseBranch": "main"
+  },
+  "workers": {
+    "skipPermissions": false,
+    "allow": ["mcp__linear__get_issue", "mcp__linear__list_issues", "mcp__linear__list_comments"],
+    "shadow": true
+  },
+  "ui": { "iterm": false, "port": 4343, "slackApp": true, "locale": "en" }
+}
