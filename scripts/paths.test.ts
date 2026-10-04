@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { envValue, resolveStateDir } from "./core/paths.ts";
+import { envValue, findStateRoot, resolveStateDir } from "./core/paths.ts";
 import { cleanupRigs, rig, run, SCRIPTS } from "./test-rig.ts";
 
 const WS = "/w";
@@ -47,5 +47,18 @@ describe("environment variables", () => {
       rmSync(ws, { recursive: true, force: true });
       cleanupRigs();
     }
+  });
+});
+
+describe("findStateRoot", () => {
+  test("finds the project from any of its subfolders, the way git finds .git", () => {
+    const dirs = new Set(["/work/acme/.aiguilleur"]);
+    const exists = (p: string) => dirs.has(p);
+    expect(findStateRoot("/work/acme/api/.claude/worktrees/eng-12", exists)).toBe("/work/acme");
+    expect(findStateRoot("/work/acme", exists)).toBe("/work/acme");
+    expect(findStateRoot("/work/other", exists)).toBeNull();
+  });
+  test(".strato and the legacy .aiguilleur both mark a project", () => {
+    expect(findStateRoot("/a/b/c", (p) => p === "/a/.strato")).toBe("/a");
   });
 });

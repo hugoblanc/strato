@@ -11,7 +11,7 @@ import { closeSync, copyFileSync, existsSync, fsyncSync, openSync, readFileSync,
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { claudeBin } from "../claude/model.ts";
-import { envValue, resolveStateDir } from "../core/paths.ts";
+import { envValue, findStateRoot, resolveStateDir } from "../core/paths.ts";
 import { resolveSettings, useSettings } from "../core/settings.ts";
 import { parseDuration } from "../core/text.ts";
 import { usePolicyDirs } from "../policy/prompts.ts";
@@ -86,12 +86,18 @@ export function writeJson(path: string, value: unknown) {
 }
 
 
-/** The workspace without config.json: the environment, else the project that contains the skill, else the cwd. */
+/**
+ * The workspace without config.json: the environment, else the project that contains the skill, else the nearest
+ * folder above the cwd that holds a state folder, else the cwd. The skill path only helps when the skill is a real
+ * folder of the project: Bun resolves symbolic links, so a skill linked from a shared clone reports the clone's path.
+ * Walking up from the cwd (like git looks for .git) then finds the project from any of its subfolders and worktrees.
+ */
 function derivedWorkspace(): string {
   const fromEnv = envValue(process.env, "WORKSPACE");
   if (fromEnv) return expandHome(fromEnv);
   const i = SCRIPT.indexOf("/.claude/");
-  return i > 0 ? SCRIPT.slice(0, i) : process.cwd();
+  if (i > 0) return SCRIPT.slice(0, i);
+  return findStateRoot(process.cwd()) ?? process.cwd();
 }
 
 export const STATE = resolveStateDir(process.env, derivedWorkspace());

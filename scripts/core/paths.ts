@@ -5,7 +5,7 @@
  * folder and their `AIGUILLEUR_*` variables. Both are still read, after the new names. Pure: tested without disk.
  */
 import { existsSync } from "node:fs";
-import { join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 
 type Env = Record<string, string | undefined>;
 
@@ -29,4 +29,15 @@ export function resolveStateDir(env: Env, workspace: string, exists: (path: stri
   const legacy = join(workspace, LEGACY_STATE_DIR_NAME);
   if (exists(current)) return current;
   return exists(legacy) ? legacy : current;
+}
+
+/** The nearest folder at or above `from` that holds a `.strato` or `.aiguilleur` state folder, or null. */
+export function findStateRoot(from: string, exists: (p: string) => boolean = existsSync): string | null {
+  let dir = resolve(from);
+  for (;;) {
+    if (exists(join(dir, ".strato")) || exists(join(dir, ".aiguilleur"))) return dir;
+    const up = dirname(dir);
+    if (up === dir) return null;
+    dir = up;
+  }
 }
