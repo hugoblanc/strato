@@ -149,7 +149,8 @@ function clip(text: string, max: number): string {
 export function statusOf(l: BoardLine, now: number): CardStatus {
   const step = l.running === "busy" ? l.trail[l.trail.length - 1] : undefined;
   const text = step ? t("board.card.status.workingOn", { step: clip(step.text, 80) }) : sentence(l.verdict);
-  const since = l.waitingSince ?? (l.bloc === "travail" ? l.runningSince : null) ?? null;
+  // an alert without a wait of its own (a session stopped, blocked) dates from when Claude Code reported that state
+  const since = l.waitingSince ?? l.runningSince ?? null;
   const at = since ? Date.parse(since) : Number.NaN;
   return {
     kind: l.tone === "muted" ? "idle" : BLOC_KIND[l.bloc],
@@ -176,6 +177,9 @@ export function namesPersonServed(text: string, owner = settings().owner.name): 
   return /[^a-z](you|your|yours|toi|ton|ta|tes|te|tu)[^a-z]|[^a-z]t['’]/.test(x);
 }
 
+/** "Nothing", "rien, je vérifie à 17:32": a blocker that says nothing blocks. */
+export const saysNothingBlocks = (text: string) => /^(rien|aucune?|personne|nothing|none|nobody|no one|n\/a)\b/i.test(text.trim());
+
 /** Does the blocker say again what the task already asks? Half of the shorter one's words in common. */
 export function repeatsNeed(blocker: string, need: string): boolean {
   const a = words(blocker);
@@ -194,7 +198,7 @@ export function blockerOf(l: BoardLine, first: Task | undefined): string | null 
   const s = l.sujet;
   const text = (s.blocker || s.next || "").trim();
   if (l.bloc !== "attend" || !text || isQuickGo(l)) return null;
-  if (namesPersonServed(text)) return null;
+  if (saysNothingBlocks(text) || namesPersonServed(text)) return null;
   if (first && repeatsNeed(text, first.ask)) return null;
   return clip(text, 200);
 }
@@ -325,7 +329,7 @@ export function cardOf(l: BoardLine, opts: CardOptions): CardView {
   const step = l.running === "busy" ? l.trail[l.trail.length - 1]?.text : undefined;
   const quoted = !!step && !!a?.text && fold(oneLine(a.text)).startsWith(fold(oneLine(step)).slice(0, 40));
   const newer = a?.text?.trim() && a.at && Date.parse(a.at) > Date.parse(s.updatedAt) && !quoted;
-  const word: CardWord | null = newer && a?.at ? { text: clip(a.text, 280), at: a.at, age: ageOnce(a.at) } : null;
+  const word: CardWord | null = newer && a?.at ? { text: a.text.trim().slice(0, 2000), at: a.at, age: ageOnce(a.at) } : null;
   const tasks = cardTasks(s, now);
   const ask = !open.length && s.ask?.trim() ? clip(s.ask, 200) : null;
   const proposal = !open.length && s.proposal?.trim() ? clip(s.proposal, 280) : null;

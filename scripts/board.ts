@@ -691,7 +691,7 @@ function staleView(key: string, st: CardView["stale"], ctx: BoardContext): strin
   const button = `<button type="button" data-revalidate="${escapeHtml(key)}" title="${escapeHtml(t("board.card.revalidate.tip"))}" class="${BTN_SM}">${t("board.card.revalidate")}</button>`;
   const what = st.signals.length ? t("board.stale.line", { signals: escapeHtml(st.signals.join(t("board.stale.separator"))) }) : "";
   const since = st.requestedAt ? ` <span class="text-muted">${t("board.stale.requested", { when: when(st.requestedAt, ctx) })}</span>` : "";
-  return `<p class="flex max-w-[78ch] flex-wrap items-center gap-x-2 gap-y-1 text-[12.5px] leading-relaxed text-muted" data-stale>${what ? `<span>${what}</span>` : ""}${since}${st.requestedAt ? "" : button}</p>`;
+  return `<p class="flex max-w-[88ch] flex-wrap items-center gap-x-2 gap-y-1 text-[12.5px] leading-relaxed text-muted" data-stale>${what ? `<span>${what}</span>` : ""}${since}${st.requestedAt ? "" : button}</p>`;
 }
 
 /**
@@ -795,9 +795,9 @@ function actBox(s: Sujet, x: Task, hint: boolean, ops: string, shadow: boolean):
     ? shadowButton()
     : `<button type="button" data-act-go class="${BTN_PRIMARY}"${why ? ` disabled title="${escapeHtml(why)}"` : ` title="${escapeHtml(t("board.act.go.tip"))}"`}>${t(maybe && !why ? "board.js.post.again" : "board.task.go")}${hint && !why ? KEY_HINT : ""}</button>`;
   const status = why ? escapeHtml(why) : maybe ? escapeHtml(t("gate.mayHaveGone", { id: x.id, link: maybe.link ?? s.permalink })) : "";
-  return `<div class="max-w-[78ch] cursor-auto rounded-lg border border-accent/40 bg-accent-soft/30 px-4 py-3" data-actbox data-key="${escapeHtml(s.key)}" data-task="${escapeHtml(x.id)}"${sha}${maybe ? " data-retry" : ""}>
+  return `<div class="cursor-auto rounded-lg border border-accent/40 bg-accent-soft/30 px-4 py-3" data-actbox data-key="${escapeHtml(s.key)}" data-task="${escapeHtml(x.id)}"${sha}${maybe ? " data-retry" : ""}>
 <div class="text-[12.5px] font-semibold text-accent-ink">${escapeHtml(t("board.act.label", { tool }))}</div>
-<p class="mt-1 text-[13.5px] leading-relaxed text-ink">${sentence}</p>
+<p class="mt-1 max-w-[88ch] text-[13.5px] leading-relaxed text-ink">${sentence}</p>
 <div class="mt-2.5 flex items-center gap-2">${button}<span class="min-w-0 truncate text-[12.5px] ${why || maybe ? "text-warn" : "text-muted"}" data-go-status>${status}</span>${ops}</div>
 </div>`;
 }
@@ -831,9 +831,9 @@ function taskBox(s: Sujet, x: Task, hint: boolean): string {
     // the hash of the plan shown: Send sends it back, and the gate acts only if the task still hashes to it
     const plan = planOfTask(s, x);
     const sha = "plan" in plan ? ` data-sha="${planSha(plan.plan)}"` : "";
-    return `<form class="max-w-[78ch] cursor-auto rounded-lg border border-accent/40 bg-accent-soft/30 px-4 py-3" data-draft data-key="${key}" data-task="${id}" data-draft-to="${escapeHtml(x.draftTo ?? "")}"${sha}${maybe ? " data-retry" : ""} data-postable="${why || viaSession || shadow ? "0" : "1"}">
+    return `<form class="cursor-auto rounded-lg border border-accent/40 bg-accent-soft/30 px-4 py-3" data-draft data-key="${key}" data-task="${id}" data-draft-to="${escapeHtml(x.draftTo ?? "")}"${sha}${maybe ? " data-retry" : ""} data-postable="${why || viaSession || shadow ? "0" : "1"}">
 <div class="flex items-center gap-2 text-[12.5px]"><span class="font-semibold text-accent-ink">${t("board.draft.label")}</span>${draftToLink(x, dest)}<span class="ml-auto shrink-0 text-[11.5px] tabular-nums text-muted">${t("board.draft.chars", { n: text.length })}</span></div>${audienceLine(plan)}
-<div class="mt-1.5 max-h-80 overflow-y-auto whitespace-pre-wrap text-[13.5px] leading-relaxed text-ink" data-draft-text>${draftHtml(tool ?? providerOfKey(s.key), text)}</div>
+<div class="mt-1.5 max-h-80 max-w-[88ch] overflow-y-auto whitespace-pre-wrap text-[13.5px] leading-relaxed text-ink" data-draft-text>${draftHtml(tool ?? providerOfKey(s.key), text)}</div>
 <textarea name="draft" rows="${Math.min(14, Math.max(4, text.split("\n").length + Math.ceil(text.length / 90)))}" hidden data-draft-edit class="mt-1.5 w-full resize-y rounded-md border border-line bg-bg px-2.5 py-2 text-[13.5px] leading-relaxed focus:border-accent focus:outline-none focus:ring-2 focus:ring-accent/20">${escapeHtml(text)}</textarea>
 ${legacy ? `<p class="mt-1 text-[11.5px] text-muted">${t("board.draft.legacy")}</p>` : ""}
 ${viaSession ? `<div class="mt-2.5 flex flex-wrap items-center gap-2">${shadow ? shadowButton() : `<button type="button" data-go="${key}" data-task="${id}" class="${BTN_PRIMARY}" title="${escapeHtml(t("board.draft.viaSession.tip"))}">${t("board.draft.viaSession")}${keyHint}</button>`}<span class="min-w-0 truncate text-[12.5px] text-muted" data-go-status>${escapeHtml(truncate(x.action ?? "", 140))}</span>${ops}</div>` : postButtons}
@@ -842,23 +842,39 @@ ${viaSession ? `<div class="mt-2.5 flex flex-wrap items-center gap-2">${shadow ?
   }
   if (x.action?.trim() && sendsUnseenMessage(x)) {
     // posting words the person never saw: no Go, the session is asked for one draft per message
-    return `<div class="max-w-[78ch] cursor-auto rounded-lg border border-warn/40 bg-warn-soft/30 px-4 py-3" data-key="${key}" data-task="${id}" data-unseen>
+    return `<div class="cursor-auto rounded-lg border border-warn/40 bg-warn-soft/30 px-4 py-3" data-key="${key}" data-task="${id}" data-unseen>
 <div class="text-[12.5px] font-semibold text-warn">${t("board.card.onYourGo")}</div>
-<p class="mt-1 text-[13.5px] leading-relaxed text-ink">${escapeHtml(x.action.replace(/\\n/g, " "))}</p>
+<p class="mt-1 max-w-[88ch] text-[13.5px] leading-relaxed text-ink">${escapeHtml(x.action.replace(/\\n/g, " "))}</p>
 <p class="mt-1.5 text-[12.5px] leading-snug text-warn">${escapeHtml(t("board.task.textsMissing"))}</p>
 <div class="mt-2.5 flex items-center gap-2"><button type="button" data-ask-texts="${key}" data-msg="${escapeHtml(t("task.askTexts", { id: x.id }))}" class="${BTN}" title="${escapeHtml(t("board.task.askTexts.tip"))}">${escapeHtml(t("board.task.askTexts"))}</button><span class="min-w-0 truncate text-[12.5px] text-muted" data-go-status></span>${ops}</div>
 </div>`;
   }
   if (x.action?.trim()) {
-    return `<div class="max-w-[78ch] cursor-auto rounded-lg border border-accent/40 bg-accent-soft/30 px-4 py-3" data-gocard data-key="${key}" data-task="${id}">
+    return `<div class="cursor-auto rounded-lg border border-accent/40 bg-accent-soft/30 px-4 py-3" data-gocard data-key="${key}" data-task="${id}">
 <div class="text-[12.5px] font-semibold text-accent-ink">${t("board.card.onYourGo")}</div>
-<p class="mt-1 text-[13.5px] leading-relaxed text-ink">${escapeHtml(x.action.replace(/\\n/g, " "))}</p>
+<p class="mt-1 max-w-[88ch] text-[13.5px] leading-relaxed text-ink">${escapeHtml(x.action.replace(/\\n/g, " "))}</p>
 <div class="mt-2.5 flex items-center gap-2">${shadow ? shadowButton() : `<button type="button" data-go="${key}" data-task="${id}" class="${BTN_PRIMARY}" title="${escapeHtml(t("board.task.go.tip"))}">${t("board.task.go")}${keyHint}</button>`}<span class="min-w-0 truncate text-[12.5px] text-muted" data-go-status></span>${ops}</div>
 </div>`;
   }
   const missing = x.kind === "draft" ? `<p class="mr-auto text-[12.5px] text-warn">${escapeHtml(t("board.task.draftMissing"))}</p>` : "";
   // no box: Done and Drop on the right, where the draft and the action boxes put them
-  return `<div class="flex max-w-[78ch] flex-wrap items-center gap-2" data-task-ops>${missing}${ops}</div>`;
+  return `<div class="flex flex-wrap items-center gap-2" data-task-ops>${missing}${ops}</div>`;
+}
+
+/**
+ * Light markdown for what sessions write in prose (last word, proposal): **bold** and `code`, escaped first. Display
+ * only: what a button sends is the raw text.
+ */
+export function mdLite(text: string): string {
+  return escapeHtml(text)
+    .replace(/\*\*([^*\n]+?)\*\*/g, '<strong class="font-semibold text-ink">$1</strong>')
+    .replace(/`([^`\n]+?)`/g, '<code class="rounded bg-soft px-1 font-mono text-[12.5px]">$1</code>');
+}
+
+/** A task's need at reading weight: its first sentence semibold, the rest normal, so a long ask never reads as a shout. */
+function needHtml(need: string): string {
+  const m = need.match(/^(.{8,160}?[.?!:])(\s+[\s\S]*)$/);
+  return m ? `<span class="font-semibold text-ink">${escapeHtml(m[1])}</span>${escapeHtml(m[2])}` : need.length <= 160 ? `<span class="font-semibold text-ink">${escapeHtml(need)}</span>` : escapeHtml(need);
 }
 
 /** The kind of a task, in the colours of what it asks: a decision, an answer, a draft to read, a go on an action. */
@@ -882,19 +898,34 @@ export function taskBlock(s: Sujet, x: CardTask, hint = false): string {
   const id = escapeHtml(x.id);
   const body = `tb-${k}#${id}`;
   const expanded = x.open ? "true" : "false";
-  const proposal = x.task.proposal?.trim() ? `<p class="max-w-[78ch] text-[13.5px] leading-snug text-ink/85" title="${escapeHtml(x.task.proposal.replace(/\\n/g, " "))}">${escapeHtml(clip(x.task.proposal.replace(/\\n/g, " "), 320))}</p>` : "";
+  const proposalText = (x.task.proposal ?? "").replace(/\\n/g, "\n").trim();
+  const proposal = proposalText ? `<p class="max-w-[88ch] whitespace-pre-wrap text-[13.5px] leading-snug text-ink/85" data-proposal>${mdLite(proposalText)}</p>` : "";
+  // a decision or a question whose proposal is on screen: one click approves exactly that text, through the session
+  const approvable = (x.kind === "decide" || x.kind === "answer") && proposalText && !taskDraftText(x.task) && !x.task.action?.trim() && s.sessionId;
   const open = `<button type="button" data-toggle="${body}" aria-expanded="${expanded}" class="${BTN_SM} shrink-0 group-aria-expanded:hidden" title="${escapeHtml(t("board.card.task.open.tip"))}">${escapeHtml(t(x.kind === "draft" ? "board.card.task.review" : "board.card.task.view"))}</button>`;
   return `<div class="border-t border-line first:border-t-0" id="task-${k}#${id}" data-task-item data-task="${id}" data-task-fresh style="--fh:${fresh.h};--fk:${fresh.k}">
-<div role="button" tabindex="0" data-toggle="${body}" aria-expanded="${expanded}" class="group flex cursor-pointer items-center gap-2.5 px-3 py-2 hover:bg-soft/40" title="${escapeHtml(x.task.ask.replace(/\\n/g, " "))}">${kindChip(x.kind)}<span class="min-w-0 flex-1 truncate text-[13.5px] text-ink/85 group-aria-expanded:whitespace-normal group-aria-expanded:font-semibold group-aria-expanded:text-ink">${escapeHtml(x.need)}</span><span class="shrink-0 text-[12.5px] tabular-nums text-muted"><span data-age>${escapeHtml(x.age)}</span></span>${open}</div>
-<div id="${body}" data-panel${x.open ? "" : " hidden"} class="flex cursor-auto flex-col gap-2.5 px-3 pb-3">${proposal}${taskBox(s, x.task, hint)}</div>
+<div role="button" tabindex="0" data-toggle="${body}" aria-expanded="${expanded}" class="group flex cursor-pointer items-center gap-2.5 px-3 py-2 hover:bg-soft/40" title="${escapeHtml(x.task.ask.replace(/\\n/g, " "))}">${kindChip(x.kind)}<span class="min-w-0 flex-1 truncate text-[13.5px] text-ink/85 group-aria-expanded:whitespace-normal">${needHtml(x.need)}</span><span class="shrink-0 text-[12.5px] tabular-nums text-muted"><span data-age>${escapeHtml(x.age)}</span></span>${open}</div>
+<div id="${body}" data-panel${x.open ? "" : " hidden"} class="flex cursor-auto flex-col gap-2.5 px-3 pb-3">${proposal}${approvable ? approveRow(s, x, proposalText) : taskBox(s, x.task, hint)}</div>
 </div>`;
+}
+
+/**
+ * The buttons of a decision or a question with a proposal: Approve writes "go: <the proposal shown>" to the session,
+ * through the same endpoint as the instruction form (nothing goes to the thread from here); Answer something else
+ * opens that form. Done and Drop on the right.
+ */
+function approveRow(s: Sujet, x: CardTask, proposal: string): string {
+  const k = escapeHtml(s.key);
+  const msg = t("board.card.task.approve.text", { proposal });
+  const approve = settings().workers.shadow || msg.length > 4000 ? "" : `<button type="button" data-validate data-key="${k}" data-task="${escapeHtml(x.id)}" data-msg="${escapeHtml(msg)}" class="${BTN_PRIMARY}" title="${escapeHtml(t("board.card.task.approve.tip"))}">${escapeHtml(t("board.card.task.approve"))}</button>`;
+  return `<div class="flex flex-wrap items-center gap-2" data-approve>${approve}<button type="button" data-write-open="${k}" class="${BTN}">${escapeHtml(t("board.card.task.other"))}</button><span class="min-w-0 truncate text-[12.5px] text-muted" data-go-status></span>${taskOps(s.key, x.task)}</div>`;
 }
 
 /** The tasks of a card, oldest first. g g sends the first one when it is ready: the only one expanded by default. */
 function tasksStack(s: Sujet, tasks: CardTask[]): string {
   if (!tasks.length) return "";
   const hint = taskReady(tasks[0].task) ? tasks[0].id : null;
-  return `<div class="flex max-w-[78ch] flex-col overflow-hidden rounded-lg border border-line bg-surface" data-tasks>${tasks.map((x) => taskBlock(s, x, x.id === hint)).join("")}</div>`;
+  return `<div class="flex flex-col overflow-hidden rounded-lg border border-line bg-surface" data-tasks>${tasks.map((x) => taskBlock(s, x, x.id === hint)).join("")}</div>`;
 }
 
 /** The action zone of a card: its open tasks. Empty when none is open: a closed task never shows a Go nor an amber box. */
@@ -936,10 +967,9 @@ const PULSE = `<span class="relative inline-flex h-1.5 w-1.5"><span class="absol
 /** The one line that says the session's state: a sentence, its age, and the time the card was written on hover. */
 function statusView(c: CardView, cardAt: string, ctx: BoardContext): string {
   const st = c.status;
-  const shown = clip(st.text, 64);
   const tip = [st.text, t("board.card.status.cardAt", { time: ctx.timeOf(cardAt) })].join("\n");
   const age = st.age ? `<span class="text-muted" data-age>· ${escapeHtml(st.age)}</span>` : "";
-  return `<span class="inline-flex min-w-0 items-center gap-1.5 text-[12.5px] font-medium tabular-nums ${STATUS_INK[st.tone]}" data-status-kind="${st.kind}" title="${escapeHtml(tip)}">${st.pulse ? PULSE : shape(st.tone)}<span class="min-w-0 truncate">${escapeHtml(shown)}</span>${age}</span>`;
+  return `<span class="inline-flex min-w-0 max-w-full items-center gap-1.5 text-[12.5px] font-medium tabular-nums ${STATUS_INK[st.tone]}" data-status-kind="${st.kind}" title="${escapeHtml(tip)}">${st.pulse ? PULSE : shape(st.tone)}<span class="min-w-0 truncate">${escapeHtml(st.text)}</span>${age ? `<span class="shrink-0">${age}</span>` : ""}</span>`;
 }
 
 /** The last message of the thread, in its author's words. */
@@ -948,7 +978,7 @@ function saidView(c: CardView, ctx: BoardContext): string {
   if (!m) return "";
   const age = m.age ? `<time datetime="${escapeHtml(m.at)}" title="${escapeHtml(ctx.timeOf(m.at))}" class="tabular-nums">${escapeHtml(m.age)}</time>` : "";
   const tail = m.url ? `<a href="${escapeHtml(m.url)}" data-open class="shrink-0 whitespace-nowrap text-[12.5px] text-muted hover:text-link hover:underline underline-offset-2" title="${escapeHtml(t("board.card.said.open"))}">${age || "↗"}</a>` : age ? `<span class="shrink-0 whitespace-nowrap text-[12.5px] text-muted">${age}</span>` : "";
-  return `<p class="flex min-w-0 max-w-[78ch] items-baseline gap-x-2 text-[13.5px] leading-snug text-ink/85" data-said><span class="shrink-0 font-semibold text-ink">${escapeHtml(m.who)}</span>${m.where ? `<span class="shrink-0 text-muted">${escapeHtml(m.where)}</span>` : ""}${m.text ? `<q class="min-w-0 italic">${escapeHtml(m.text)}</q>` : ""}${tail}</p>`;
+  return `<p class="flex min-w-0 max-w-[88ch] items-baseline gap-x-2 text-[13.5px] leading-snug text-ink/85" data-said><span class="shrink-0 font-semibold text-ink">${escapeHtml(m.who)}</span>${m.where ? `<span class="shrink-0 text-muted">${escapeHtml(m.where)}</span>` : ""}${m.text ? `<q class="min-w-0 italic">${escapeHtml(m.text)}</q>` : ""}${tail}</p>`;
 }
 
 /** What the session said since the card was written. */
@@ -956,7 +986,11 @@ function wordView(c: CardView, ctx: BoardContext): string {
   const w = c.word;
   if (!w) return "";
   const age = w.age ? ` · <time datetime="${escapeHtml(w.at)}" title="${escapeHtml(ctx.timeOf(w.at))}" class="tabular-nums">${escapeHtml(w.age)}</time>` : "";
-  return `<p class="flex min-w-0 max-w-[78ch] items-baseline gap-x-2 gap-y-0.5 text-[12.5px] leading-snug text-muted max-sm:flex-col" data-word><span class="shrink-0">${t("board.card.word")}${age}</span><span class="min-w-0 text-ink/80">${escapeHtml(w.text)}</span></p>`;
+  const id = `word-${c.key}`;
+  // two buttons, one shown: the clamp class on the text (kept across redraws) says which
+  const btn = (label: string, cls: string) => `<button type="button" data-expand-for="${escapeHtml(id)}" class="${cls} mt-0.5 text-[12.5px] font-medium text-muted hover:text-ink">${label}</button>`;
+  const more = w.text.length > 160 ? `${btn(t("board.card.word.more"), "hidden peer-[.line-clamp-2]:inline")}${btn(t("board.card.word.less"), "peer-[.line-clamp-2]:hidden")}` : "";
+  return `<div class="flex min-w-0 max-w-[88ch] items-baseline gap-x-2 gap-y-0.5 text-[12.5px] leading-snug text-muted max-sm:flex-col max-sm:items-stretch" data-word><span class="shrink-0">${t("board.card.word")}${age}</span><div class="flex min-w-0 flex-col items-start"><p id="${escapeHtml(id)}" data-expand="line-clamp-2" class="peer line-clamp-2 w-full whitespace-pre-wrap text-ink/80 [overflow-wrap:anywhere]">${mdLite(w.text)}</p>${more}</div></div>`;
 }
 
 /** The plan in one strip: ✓ done, ● now, ○ next. */
@@ -964,18 +998,18 @@ function planView(c: CardView): string {
   const p = c.plan;
   if (!p) return "";
   const glyph = { done: "✓", now: "●", todo: "○" } as const;
-  const cls = { done: "text-muted", now: "font-semibold text-ink", todo: "text-muted" } as const;
+  const cls = { done: "text-muted/70", now: "font-semibold text-ink", todo: "text-muted" } as const;
   const mark = { done: "", now: "text-accent", todo: "" } as const;
   const item = (state: keyof typeof glyph, text: string) => `<li class="inline-flex items-baseline gap-1.5 ${cls[state]}"><span class="${mark[state]}" aria-hidden="true">${glyph[state]}</span><span>${escapeHtml(text)}</span></li>`;
   const items = [...(p.doneHidden ? [item("done", t(p.doneHidden > 1 ? "board.card.plan.doneHidden.other" : "board.card.plan.doneHidden.one", { n: p.doneHidden }))] : []), ...p.steps.map((x) => item(x.state, x.text)), ...(p.todoHidden ? [`<li class="text-muted">+${p.todoHidden}</li>`] : [])];
-  return `<ol class="flex max-w-[78ch] flex-wrap gap-x-4 gap-y-1 text-[12.5px] leading-snug" data-plan aria-label="${escapeHtml(t("board.card.plan"))}">${items.join("")}</ol>`;
+  return `<ol class="flex flex-wrap gap-x-4 gap-y-1 text-[12.5px] leading-snug" data-plan aria-label="${escapeHtml(t("board.card.plan"))}">${items.join("")}</ol>`;
 }
 
 /** A card without open task: its request and proposal, or where it stands. */
 function needView(c: CardView): string {
   const n = c.need;
   if (!n) return "";
-  return `<div class="flex max-w-[78ch] flex-col gap-1 text-[13.5px] leading-snug" data-need>${n.ask ? `<p class="text-ink">${escapeHtml(n.ask)}</p>` : ""}${n.proposal ? `<p class="text-ink/80">${escapeHtml(n.proposal)}</p>` : ""}${n.summary ? `<p class="text-ink/80">${escapeHtml(n.summary)}</p>` : ""}</div>`;
+  return `<div class="flex max-w-[88ch] flex-col gap-1 text-[13.5px] leading-snug" data-need>${n.ask ? `<p class="text-ink">${escapeHtml(n.ask)}</p>` : ""}${n.proposal ? `<p class="text-ink/80">${escapeHtml(n.proposal)}</p>` : ""}${n.summary ? `<p class="text-ink/80">${escapeHtml(n.summary)}</p>` : ""}</div>`;
 }
 
 /** The context, folded behind one line of counts: origin, threads, merge requests, the next due date, finished tasks. */
@@ -1009,7 +1043,7 @@ function contextView(l: BoardLine, c: CardView, ctx: BoardContext): string {
     finishedField(s, x, ctx),
   ].filter(Boolean);
   return `${summary}
-<div id="card-${k}" data-panel hidden class="cursor-auto"><dl class="flex max-w-[78ch] flex-col gap-2.5 rounded-lg bg-bg px-4 py-3">${rows.join("")}</dl></div>`;
+<div id="card-${k}" data-panel hidden class="cursor-auto"><dl class="flex flex-col gap-2.5 rounded-lg bg-bg px-4 py-3">${rows.join("")}</dl></div>`;
 }
 
 /**
@@ -1030,7 +1064,7 @@ function writePanel(l: BoardLine, c: CardView): string {
   const key = escapeHtml(s.key);
   // in shadow mode the go chip is hidden too: nothing goes out on a go
   const shown = chips().filter((x) => !(x.text === "go" && (c.tasks.length || settings().workers.shadow)));
-  return `<div id="write-${key}" data-panel hidden class="max-w-[78ch] cursor-auto">
+  return `<div id="write-${key}" data-panel hidden class="cursor-auto">
 <form class="flex flex-col gap-2" id="send-${key}" data-send data-key="${key}">
 <textarea name="text" rows="2" required placeholder="${escapeHtml(t("board.send.placeholder"))}" title="${escapeHtml(t("board.send.tip"))}" class="w-full resize-y rounded-lg border border-line bg-bg px-3 py-2 text-[13.5px] leading-relaxed placeholder:text-muted focus:border-muted focus:outline-none focus:ring-2 focus:ring-ink/10"></textarea>
 <div class="flex flex-wrap items-center gap-1">${shown.map((x) => `<button type="button" data-chip="${escapeHtml(x.text)}"${x.confirm ? ` data-chip-confirm` : ""} class="inline-flex h-6 items-center rounded-full border border-muted/50 px-2 text-[11.5px] text-ink/80 hover:border-ink/60 hover:text-ink disabled:cursor-not-allowed disabled:opacity-40">${escapeHtml(x.label)}</button>`).join("")}<span class="ml-auto flex items-center gap-3"><span class="min-w-0 truncate text-[12.5px] text-muted" data-status></span><button type="submit" class="${BTN}">${t("board.send.button", { letter: escapeHtml(s.letter) })}<span class="ml-1.5 font-normal text-muted">⌘↩</span></button></span></div>
@@ -1075,12 +1109,12 @@ export function lineView(l: BoardLine, ctx: BoardContext): string {
   const fresh = l.bloc === "attend" && l.waitingSince ? freshness(now - Date.parse(l.waitingSince)) : null;
   const freshAttr = fresh ? ` data-fresh style="--fh:${fresh.h};--fk:${fresh.k}"` : "";
   const held = l.pin?.held ? " data-held" : "";
-  const blocker = c.blocker ? `<p class="max-w-[78ch] text-[12.5px] leading-snug text-muted" data-blocker-line><span class="font-medium">${t("board.card.blocker")}</span> <span class="text-ink/85" data-blocker>${escapeHtml(c.blocker)}</span></p>` : "";
+  const blocker = c.blocker ? `<p class="max-w-[88ch] text-[12.5px] leading-snug text-muted" data-blocker-line><span class="font-medium">${t("board.card.blocker")}</span> <span class="text-ink/85" data-blocker>${escapeHtml(c.blocker)}</span></p>` : "";
   return `<li${freshAttr}${held} id="line-${k}" class="cursor-pointer scroll-mt-20 px-5 py-4 border-b border-line last:border-b-0 hover:bg-soft/40 data-[cursor]:bg-soft/60 data-[held]:bg-accent/5 data-[cursor]:shadow-[inset_3px_0_0_var(--color-ink)]" data-row="card-${k}" data-key="${k}" data-letter="${escapeHtml(s.letter)}" data-sig="${escapeHtml(sig)}">
 <div class="flex min-w-0 items-start gap-4">
 <span class="inline-flex h-7 min-w-7 shrink-0 items-center justify-center rounded-md bg-soft px-1.5 text-[13.5px] font-semibold text-ink">${escapeHtml(s.letter)}</span>
 <div class="flex min-w-0 flex-1 flex-col gap-2.5">
-<div class="flex flex-wrap items-baseline gap-x-3 gap-y-1"><a href="/?sujet=${encodeURIComponent(s.key)}" class="min-w-0 text-[15px] font-semibold leading-snug text-ink hover:underline underline-offset-2">${escapeHtml(s.title)}</a><span data-new hidden class="shrink-0 rounded-full bg-soft px-2 py-0.5 text-[11.5px] font-medium leading-4 text-ink">${t("board.line.new")}</span><span class="ml-auto flex min-w-0 max-w-full">${statusView(c, s.updatedAt, ctx)}</span></div>
+<div class="flex flex-wrap items-baseline gap-x-3 gap-y-1"><a href="/?sujet=${encodeURIComponent(s.key)}" class="min-w-0 text-[15px] font-semibold leading-snug text-ink hover:underline underline-offset-2">${escapeHtml(s.title)}</a><span data-new hidden class="shrink-0 rounded-full bg-soft px-2 py-0.5 text-[11.5px] font-medium leading-4 text-ink">${t("board.line.new")}</span><span class="ml-auto flex min-w-0 max-w-full sm:max-w-[26rem]">${statusView(c, s.updatedAt, ctx)}</span></div>
 ${saidView(c, ctx)}
 ${wordView(c, ctx)}
 ${blocker}
@@ -2145,10 +2179,11 @@ const JS = `
   // survives the redraw. Otherwise the redraws during the 10 to 15 s of a delivery bring the Go button back active
   // without a spinner, and each new click sends another "go" to the session.
   var busy = {};
-  var BUSY_SEL = "[data-act-go],[data-update-apply],[data-ask-texts],[data-check],[data-revalidate],[data-revalidate-all],[data-go],[data-term],[data-dive],[data-confirm],[data-task-op],[data-revue],[data-unsnooze],[data-dismiss],[data-snooze],[data-unpost],form[data-snooze-date] button[type=submit]";
+  var BUSY_SEL = "[data-validate],[data-act-go],[data-update-apply],[data-ask-texts],[data-check],[data-revalidate],[data-revalidate-all],[data-go],[data-term],[data-dive],[data-confirm],[data-task-op],[data-revue],[data-unsnooze],[data-dismiss],[data-snooze],[data-unpost],form[data-snooze-date] button[type=submit]";
   var SPIN = '<span class="mr-1.5 inline-block h-3 w-3 animate-spin rounded-full border-2 border-current border-r-transparent align-[-2px]" aria-hidden="true"></span>';
   function busyIdOf(b) {
     if (b.hasAttribute("data-go")) return "go:" + goIdOf(b);
+    if (b.hasAttribute("data-validate")) return "validate:" + b.getAttribute("data-key") + "#" + b.getAttribute("data-task");
     if (b.hasAttribute("data-act-go")) { var ab = b.closest("[data-actbox]"); return "act:" + (ab && ab.getAttribute("data-key")) + "#" + (ab && ab.getAttribute("data-task")); }
     if (b.hasAttribute("data-term")) return "term:" + b.getAttribute("data-term");
     if (b.hasAttribute("data-dive")) return "dive:" + b.getAttribute("data-dive");
@@ -2213,6 +2248,9 @@ const JS = `
       var locked = goIdOf(b) in goLock;
       b.disabled = locked;
       if (locked) b.setAttribute("data-go-locked", ""); else b.removeAttribute("data-go-locked");
+    });
+    app.querySelectorAll("[data-validate]").forEach(function (b) {
+      if (b.getAttribute("aria-busy") !== "true") b.disabled = (b.getAttribute("data-key") + "#" + b.getAttribute("data-task")) in goLock;
     });
     app.querySelectorAll("form[data-send]").forEach(function (f) {
       var locked = (f.getAttribute("data-key") + "#") in goLock;
@@ -2321,8 +2359,31 @@ const JS = `
       else { editing[k] = { text: ta.defaultValue, base: ta.defaultValue }; setEdit(f, true, editing[k].text); ta.focus({ preventScroll: true }); ta.setSelectionRange(ta.value.length, ta.value.length); }
       return;
     }
+    var exf = el.closest("[data-expand-for]");
+    if (exf) { ev.preventDefault(); ev.stopPropagation(); var xt = document.getElementById(exf.getAttribute("data-expand-for")); if (xt) xt.classList.toggle(xt.getAttribute("data-expand") || "line-clamp-4"); return; }
     var ex = el.closest("[data-expand]");
-    if (ex) { ev.stopPropagation(); ex.classList.toggle("line-clamp-4"); return; }
+    if (ex) { ev.stopPropagation(); ex.classList.toggle(ex.getAttribute("data-expand") || "line-clamp-4"); return; }
+    // Approve: "go: <the proposal shown>" to the session, as the instruction form would; one per version of the card
+    var va = el.closest("[data-validate]");
+    if (va) {
+      ev.preventDefault(); ev.stopPropagation();
+      var vid = va.getAttribute("data-key") + "#" + va.getAttribute("data-task");
+      if (vid in goLock || folded(va)) return;
+      lockGo(vid);
+      runBusy(va, tr("board.js.go.busy"), function () {
+        return sendText(va.getAttribute("data-key"), va.getAttribute("data-msg"), va.parentElement.querySelector("[data-go-status]")).then(function (ok) { goDelivered(vid, ok); });
+      });
+      return;
+    }
+    var wo = el.closest("[data-write-open]");
+    if (wo) {
+      ev.preventDefault(); ev.stopPropagation();
+      var wk = wo.getAttribute("data-write-open");
+      setPanel("write-" + wk, true);
+      var wf = formFor(wk), wta = wf && wf.querySelector("textarea");
+      if (wta) wta.focus({ preventScroll: false });
+      return;
+    }
     var up = el.closest("[data-unpost]");
     if (up) {
       ev.preventDefault(); ev.stopPropagation();

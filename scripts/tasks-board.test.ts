@@ -1,7 +1,7 @@
 /** The board renders tasks: one block per open task with its own age and box, closed tasks only in the details. */
 import { sendsUnseenMessage, taskReady } from "./core/tasks.ts";
 import { describe, expect, test } from "bun:test";
-import { type BoardInput, blocOrder, boardView, buildBoard, classify, isQuickGo, lineView, pinLine } from "./board.ts";
+import { type BoardInput, blocOrder, boardView, buildBoard, classify, isQuickGo, lineView, mdLite, pinLine } from "./board.ts";
 import type { Sujet, Task } from "./lib.ts";
 
 const base: Sujet = {
@@ -117,6 +117,29 @@ describe("tasks on the board", () => {
     expect(html).toContain("Tu veux envoyer le DM à Judy ?");
     expect(html).not.toContain("data-go=");
     expect(html).not.toContain("rejouer le script SQL en prod");
+  });
+});
+
+describe("a decision with a proposal", () => {
+  const decide = sujet({ tasks: [task({ id: "t1", kind: "decision", ask: "5 % ou 0 % ?", proposal: "Garder **5 %** jusqu'à lundi.", action: "", draft: "", draftTo: "" })] });
+  test("Valider writes go and the proposal shown to the session, as the instruction form would; nothing posts", () => {
+    const html = lineView(classify(decide, [], null, "idle", timeOf), ctx);
+    expect(html).toContain(`data-validate data-key="${base.key}" data-task="t1" data-msg="go : Garder **5 %** jusqu&#39;à lundi."`);
+    expect(html).toContain(">Valider</button>");
+    expect(html).toContain(`data-write-open="${base.key}"`);
+    expect(html).toContain("Répondre autre chose");
+    expect(html).not.toContain("data-post");
+    expect(html).not.toContain("data-go=");
+    // the proposal reads as markdown, the button sends the raw text
+    expect(html).toContain('Garder <strong class="font-semibold text-ink">5 %</strong>');
+  });
+  test("no Valider without a proposal, nor without a session", () => {
+    const bare = sujet({ tasks: [task({ id: "t1", kind: "decision", ask: "5 % ou 0 % ?", proposal: "", action: "", draft: "", draftTo: "" })] });
+    expect(lineView(classify(bare, [], null, "idle", timeOf), ctx)).not.toContain("data-validate");
+    expect(lineView(classify({ ...decide, sessionId: null }, [], null, null, timeOf), ctx)).not.toContain("data-validate");
+  });
+  test("light markdown: bold and code, everything else escaped", () => {
+    expect(mdLite("**a** <b> `x`")).toBe('<strong class="font-semibold text-ink">a</strong> &lt;b&gt; <code class="rounded bg-soft px-1 font-mono text-[12.5px]">x</code>');
   });
 });
 

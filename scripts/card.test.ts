@@ -2,7 +2,7 @@
 import { describe, expect, test } from "bun:test";
 import { type BoardEvent, type BoardLine, classify } from "./board.ts";
 import type { Sujet, Task } from "./lib.ts";
-import { cardOf, namesPersonServed, planOf, repeatsNeed, threadRefs } from "./views/card.ts";
+import { cardOf, namesPersonServed, planOf, repeatsNeed, saysNothingBlocks, threadRefs } from "./views/card.ts";
 
 const NOW = Date.parse("2026-09-21T12:00:00Z");
 const timeOf = (iso: string) => iso.slice(11, 16);
@@ -49,6 +49,15 @@ describe("the blocker", () => {
     expect(card(line(sujet({ blocker: "Zoé confirms the release window", tasks }))).blocker).toBe("Zoé confirms the release window");
     expect(namesPersonServed("Zoé confirms", "Alice Martin")).toBe(false);
     expect(namesPersonServed("t'attend sur le choix", "Alice Martin")).toBe(true);
+  });
+  test("is dropped when it says nothing blocks, in English and in French", () => {
+    const tasks = [task({})];
+    for (const text of ["Rien, les corrections tournent", "rien, je vérifie à 17:32", "Nothing: the CI runs", "Aucun blocage", "aucune", "Personne ne bloque", "nobody", "None"]) {
+      expect(saysNothingBlocks(text)).toBe(true);
+      expect(card(line(sujet({ blocker: text, tasks }))).blocker).toBeNull();
+    }
+    expect(saysNothingBlocks("Zoé confirms the window")).toBe(false);
+    expect(saysNothingBlocks("Rientz signs the contract")).toBe(false);
   });
   test("is not shown on a topic that waits on someone else: the status names them", () => {
     expect(card(line(sujet({ status: "waiting", gate: "none", waiting: "Zoé", blocker: "Zoé confirms" }))).blocker).toBeNull();
