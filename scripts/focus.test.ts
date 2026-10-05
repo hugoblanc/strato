@@ -63,6 +63,10 @@ describe("the mode", () => {
     expect(focus).toContain('<main id="app" class="w-full">');
     // a URL without mode follows the browser's memory; a URL with one wins
     expect(focus).toContain('localStorage.getItem("strato-mode") === "focus"');
+    // the redirect keeps the rest of the URL (sel), and the inline script parses
+    const head = flow.match(/<script>(try \{ if \(!\/\[\?&\]mode=[^<]*)<\/script>/)?.[1] ?? "";
+    expect(head).toContain('"&" + location.search.slice(1)');
+    expect(() => new Function(head)).not.toThrow();
   });
 });
 

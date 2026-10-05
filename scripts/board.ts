@@ -1894,7 +1894,7 @@ export function boardPage(view: string, version = "", mode: BoardMode = "flow"):
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
 <script>try { var t = localStorage.getItem("aiguilleur-theme"); if (t === "light" || t === "dark") document.documentElement.setAttribute("data-theme", t); } catch (e) {}</script>
-<script>try { if (!/[?&]mode=/.test(location.search) && localStorage.getItem("strato-mode") === "focus" && "${mode}" !== "focus") location.replace("/board?mode=focus" + location.search.replace(/^\?/, "&")); } catch (e) {}</script>
+<script>try { if (!/[?&]mode=/.test(location.search) && localStorage.getItem("strato-mode") === "focus" && "${mode}" !== "focus") location.replace("/board?mode=focus" + (location.search ? "&" + location.search.slice(1) : "")); } catch (e) {}</script>
 <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4.3.3" integrity="sha384-aJ9rL4k6lF+91guGvUFVSkpIcge7Zd9EiI4TQDLoK9kFaFJgKHgjEXVvG/qA5COj" crossorigin="anonymous"></script>
 <script src="https://cdn.jsdelivr.net/npm/idiomorph@0.8.0/dist/idiomorph.min.js" integrity="sha384-e8O/d5cD6uoo78UI/d99hf1dEsbvkgBZNIetwKEi79V9qexl0Bdc2wxEqLEaj58U" crossorigin="anonymous"></script>
 <style type="text/tailwindcss">${THEME}</style>
