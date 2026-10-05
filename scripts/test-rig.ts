@@ -53,6 +53,11 @@ export function rig(): Rig {
   for (const d of [state, join(dir, "ws"), join(dir, "home"), join(dir, "bin")]) mkdirSync(d, { recursive: true });
   writeFileSync(join(dir, "bin", "claude"), FAKE_CLAUDE);
   chmodSync(join(dir, "bin", "claude"), 0o755);
+  // a test never opens the real browser: `open` (macOS) and `xdg-open` only write the URL to opened.log
+  for (const opener of ["open", "xdg-open"]) {
+    writeFileSync(join(dir, "bin", opener), `#!/bin/sh\necho "$@" >> "${join(dir, "opened.log")}"\n`);
+    chmodSync(join(dir, "bin", opener), 0o755);
+  }
   writeFileSync(join(state, "config.json"), JSON.stringify({ owner: { name: "Alice" }, slack: { team: "Acme", workspace: "acme", me: "UALICE" } }));
   const env: Record<string, string> = {
     ...(process.env as Record<string, string>),

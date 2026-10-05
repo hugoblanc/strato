@@ -506,6 +506,33 @@ function keyLink(key: string, s: Sujet): string {
   return url ? link(url, label) : escapeHtml(label);
 }
 
+/** Threads shown on the meta line besides the original one; the older ones fold behind "+N", tickets always show. */
+const RECENT_THREADS = 2;
+
+/**
+ * The topic's other threads and tickets for the meta line: tickets, then the most recent threads, the older threads
+ * folded in a panel that survives the redraws (`data-panel`), so that a long topic keeps a short header.
+ */
+function otherLinks(s: Sujet): string[] {
+  const keys = sujetKeys(s).filter((k) => k !== s.key);
+  const tickets = keys.filter((k) => ticketIdOfKey(k));
+  const threads = keys
+    .filter((k) => !ticketIdOfKey(k))
+    .map((k, i) => ({ k, i, at: threadInfoOfKey(k)?.at ?? -Infinity }))
+    .sort((a, b) => b.at - a.at || b.i - a.i)
+    .map((x) => x.k);
+  // folding a single thread would save nothing: it takes as much room as the "+1" that replaces it
+  if (threads.length <= RECENT_THREADS + 1) return keys.map((k) => keyLink(k, s));
+  const shown = [...tickets, ...threads.slice(0, RECENT_THREADS)].map((k) => keyLink(k, s));
+  const older = threads.slice(RECENT_THREADS);
+  const id = `threads-${s.key}`;
+  return [
+    ...shown,
+    `<button type="button" data-toggle="${escapeHtml(id)}" class="rounded px-1 text-muted hover:bg-soft hover:text-ink aria-expanded:text-ink" aria-expanded="false" title="${escapeHtml(t("board.line.olderThreads.tip"))}">${escapeHtml(t("board.line.olderThreads", { n: older.length }))}</button>`,
+    `<span id="${escapeHtml(id)}" data-panel hidden class="inline-flex flex-wrap gap-x-4 gap-y-1">${older.map((k) => `<span>${keyLink(k, s)}</span>`).join("")}</span>`,
+  ];
+}
+
 function clip(text: string, max: number): string {
   const t = text.replace(/\s+/g, " ").trim();
   return t.length > max ? `${t.slice(0, max - 1)}…` : t;
@@ -629,6 +656,24 @@ function deliveryRow(d: Delivery, ctx: BoardContext): string {
   return `<li class="flex flex-wrap items-center gap-x-2.5 gap-y-0.5"><a href="${escapeHtml(d.url)}" target="_blank" rel="noopener" class="font-mono text-[12.5px] text-link hover:underline underline-offset-2">${escapeHtml(d.repo)}!${d.iid}</a>${badge(d.label, tone, false, when)}${d.blocker ? `<span class="${tone === "warn" ? "text-warn" : "text-muted"}">${escapeHtml(d.blocker)}</span>` : ""}${title ? `<span class="min-w-0 truncate text-muted" title="${escapeHtml(title)}">${escapeHtml(clip(title, 70))}</span>` : ""}</li>`;
 }
 
+/** A merge request in production for longer than this no longer needs its own row: it joins the shipped line. */
+const SHIPPED_AFTER_MS = 60 * 60_000;
+
+/**
+ * The merge requests: those still moving keep a full row; those in production for more than an hour fold into one
+ * line of links, the state and the titles being settled.
+ */
+function deliveryRows(mrs: Delivery[], ctx: BoardContext): string {
+  const now = nowOf(ctx);
+  const settled = (d: Delivery) => d.stage === "prod" && !d.blocker && d.at !== null && now - Date.parse(d.at) > SHIPPED_AFTER_MS;
+  const shipped = mrs.filter(settled);
+  const moving = mrs.filter((d) => !settled(d)).map((d) => deliveryRow(d, ctx));
+  if (shipped.length < 2) return mrs.map((d) => deliveryRow(d, ctx)).join("");
+  const links = shipped.map((d) => `<a href="${escapeHtml(d.url)}" target="_blank" rel="noopener" title="${escapeHtml(mrTitle(d.title))}" class="font-mono text-[12.5px] text-link hover:underline underline-offset-2">${escapeHtml(d.repo)}!${d.iid}</a>`).join(" ");
+  const line = `<li class="flex flex-wrap items-center gap-x-2.5 gap-y-0.5">${badge(t("board.delivery.shipped", { n: shipped.length }), STAGE_TONE.prod, false, "")}${links}</li>`;
+  return [...moving, line].join("");
+}
+
 const DUE_CLASS: Record<DueView["state"], string> = { past: "text-warn", soon: "text-ink font-medium", later: "text-muted" };
 
 function dueRow(d: DueView, ctx: BoardContext): string {
@@ -655,7 +700,7 @@ function factsBlock(l: BoardLine, ctx: BoardContext): string {
   }
   rows.push(blockerLine(l));
   const list = (items: string) => `<ul class="flex min-w-0 flex-col gap-1 text-[12.5px]">${items}</ul>`;
-  if (mrs.length) rows.push(fieldRow(t("board.card.delivery"), list(mrs.map((d) => deliveryRow(d, ctx)).join("")), " data-delivery"));
+  if (mrs.length) rows.push(fieldRow(t("board.card.delivery"), list(deliveryRows(mrs, ctx)), " data-delivery"));
   if (dues.length) rows.push(fieldRow(t("board.card.due"), list(dues.map((d) => dueRow(d, ctx)).join(""))));
   const body = rows.filter(Boolean).join("");
   return body ? `<dl class="flex max-w-[78ch] flex-col gap-1.5" data-facts>${body}</dl>` : "";
@@ -989,8 +1034,7 @@ export function lineView(l: BoardLine, ctx: BoardContext): string {
   const now = nowOf(ctx);
   const sujetUrl = `/?sujet=${encodeURIComponent(s.key)}`;
   // the original thread is the link of the meta line ("Ann in #releases"), the other threads and tickets follow
-  const others = sujetKeys(s).filter((k) => k !== s.key).map((k) => keyLink(k, s));
-  const sub: string[] = [t("board.line.askerIn", { asker: escapeHtml(s.asker), where: keyLink(s.key, s) }), ...others, t("board.line.card", { when: when(s.updatedAt, ctx) })];
+  const sub: string[] = [t("board.line.askerIn", { asker: escapeHtml(s.asker), where: keyLink(s.key, s) }), ...otherLinks(s), t("board.line.card", { when: when(s.updatedAt, ctx) })];
   if (l.lastMessage) {
     const who = l.lastMessage.kind === "moi" ? t("board.line.you") : l.lastMessage.from;
     const label = `${who} ${ago(l.lastMessage.at, now)}`;

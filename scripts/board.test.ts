@@ -399,6 +399,25 @@ describe("delivery and due dates", () => {
     expect(m.attente[0].dues?.[2].day).toBe("demain");
     expect(html).toContain("dépassée");
   });
+  test("a topic with many threads shows the two most recent, the older ones fold behind +N", () => {
+    const threads = [1, 2, 3, 4, 5].map((i) => `C0ACMECMP01:178878${i}000.000100`);
+    const html = boardView(buildBoard(input({ now, sujets: [sujet({ status: "waiting", waiting: "Zoé", threads })] })), ctx);
+    expect(html).toContain("+3 plus anciens");
+    const head = html.slice(0, html.indexOf("+3 plus anciens"));
+    expect(head).toContain("p1788785000000100");
+    expect(head).toContain("p1788784000000100");
+    expect(head).not.toContain("p1788781000000100");
+    expect(html).toMatch(/id="threads-[^"]+" data-panel hidden/);
+  });
+  test("MRs in prod for more than an hour fold into one line, the moving ones keep their row", () => {
+    const mr = (iid: number, stage: "prod" | "dev", title: string) => ({ repo: "api", iid, title, url: `https://gitlab.com/x/${iid}`, stage, label: stage === "prod" ? "en prod" : "sur dev", blocker: null, at: "2026-09-21T08:00:00Z" });
+    const html = boardView(buildBoard(withMr({ deliveries: new Map([[base.key, [mr(1, "prod", "first shipped"), mr(2, "prod", "second shipped"), mr(3, "dev", "still moving")]]]) })), ctx);
+    expect(html).toContain("2 en prod");
+    expect(html).toContain("api!1");
+    expect(html).toContain("api!2");
+    expect(html).toContain(">still moving<");
+    expect(html).not.toContain(">first shipped<");
+  });
   test("the radar lists MRs not yet in prod and due dates within 36 h", () => {
     const html = boardView(buildBoard(withMr()), ctx);
     expect(html).toContain("data-radar");

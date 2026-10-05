@@ -100,7 +100,10 @@ describe("connecting Linear", () => {
     // the connected tracker is where tickets come from: doctor no longer says there is none
     expect(doctor.out).toContain("tickets  : from Linear\n");
     expect(doctor.out).toContain("· 7 MCP read tool(s) of the connected tools allowed");
-    const refused = await withLinear(rig(), ["setup", "--connect", "linear", "--auth", "api-key"], "lin_api_revoked\n");
+    const rr = rig();
+    const refused = await withLinear(rr, ["setup", "--connect", "linear", "--auth", "api-key"], "lin_api_revoked\n");
+    // without --print the key page is opened, through the rig's stub and never the real browser
+    expect(readFileSync(join(rr.dir, "opened.log"), "utf8")).toContain("https://linear.app/settings/account/security");
     expect(refused.code).toBe(1);
     expect(refused.err).toContain("nothing stored");
   }, 40_000);
