@@ -46,6 +46,18 @@ const INTENDED: { why: string; names: RegExp; from: string; to: string }[] = [
     from: "1. Read the ticket and its comments (tracker MCP), then",
     to: "1. Read the ticket and its comments (the Linear MCP, get_issue), then",
   },
+  {
+    why: "the board reads the blocker beside the open task: it names who or what blocks, never the task again, and stays empty when the person served blocks or nothing does (docs/design/board-modes.md, section 6.3)",
+    names: /^(?!overrides\/)/,
+    from: `- blocker = what blocks the now step, and who: "your go to post", "the vendor's answer", "nothing, I keep going". One sentence.`,
+    to: `- blocker = who or what blocks the now step: "the vendor's answer", "Zoé's review", "the CI on api!1042". Never the task again. Empty when Alice is the one blocking: the open task already says it. Empty when nothing blocks.`,
+  },
+  {
+    why: "the board uses the first open task's ask as the card's headline: a verb first, 80 characters at most (docs/design/board-modes.md, section 6.3)",
+    names: /^(?!overrides\/)/,
+    from: "- ask = the request of the task, proposal = what you propose for it: one sentence each. One task, one request.\n",
+    to: "- ask = the request of the task, proposal = what you propose for it: one sentence each. One task, one request.\n- The first open task's ask starts with a verb and fits 80 characters: the board uses it as the card's headline. The details go in proposal.\n",
+  },
 ];
 
 function check(name: string, text: string): void {

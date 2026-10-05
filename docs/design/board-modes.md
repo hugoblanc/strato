@@ -1,6 +1,7 @@
 # Board: reading first, two modes
 
-Status: proposal, 2026-10-05.
+Status: built, 2026-10-05, on the branch `feat/board-modes` (all six slices of section 7).
+Section 10 lists where the build departs from this proposal.
 Scope: the board page (`/board`), its card, its redraw, and the card-writing policy that feeds it.
 Out of scope: the model of topics, tasks and gates, the sessions, the providers.
 
@@ -136,6 +137,10 @@ A card probably late says so on one line, with its own Revalidate button: "Zoé 
 - Cards stacked by block, as today, at L1 with L2 folded.
 - Every primary action stays one click on the card.
 - A click on the title, or Enter on the selected card, opens the detail in a sheet that slides in from the left, so it never fights the terminal docked on the right. Escape closes it.
+- The sheet is the focus mode's detail renderer (`focusDetail`), served in the fragment when it asks for `sel`: it survives the morphing redraw, the URL carries it, and a reload opens it again.
+- While it is open, its card keeps its place and its first line, with "Open in the detail on the left": every form, button and id exists once on the page, so the actions in the sheet are the card's own (same endpoints, plan hashes, go lock, pin).
+- Focus moves into the sheet and Tab stays there; Escape or Close gives it back to the title. `j` / `k` move the sheet to the next topic. ⌘ or Ctrl-click on a title still opens the report, which the detail's own title and its Report link also reach.
+- The backdrop stops at a drawer docked on the right or at the bottom, which stays usable; below 640 px the sheet takes the full width; `prefers-reduced-motion` turns the slide off.
 
 ### 5.2 Focus mode (new)
 
@@ -160,15 +165,18 @@ presentation model  cardOf(line, now) -> CardView      new, pure, tested
 views               views/parts.ts  rows, card, task, draft, status
                     views/flow.ts   blocks of cards
                     views/focus.ts  list + detail
-client              client/actions.js   every data-* action, mode independent
-                    client/sync.js      redraw by morphing, pin, selection
-                    client/flow.js      sheet
-                    client/focus.js     list, keyboard
+client              client/core.js      strings, posts, toast
+                    client/sync.js      redraw by morphing, pin, selection, stream
+                    client/actions.js   every data-* action, mode independent
                     client/drawer.js    terminals
+                    client/keyboard.js  shortcuts, palette
+                    client/focus.js     focus list and detail
+                    client/sheet.js     flow mode's sheet
+                    client/boot.js      first paint, timers
 ```
 
 - **`CardView` is the only place that decides what is said and in which order.** It applies the deduplication rules of section 4.1 (blocker that repeats the need, single status, ages). Both modes render it. Unit tests cover each rule.
-- **The client is split into modules served as static files.** They are embedded at build time (`import … with { type: "text" }`), so the compiled binary keeps working without the source tree.
+- **The client is split into parts that share one scope.** `board.ts` imports them as text (`import … with { type: "text" }`) and concatenates them in a fixed order inside one function, so the page still gets one inline script and the compiled binary embeds them without the source tree. They are not ES modules: a part calls what another declares.
 - **The redraw morphs instead of replacing.** Elements are matched by `data-key` and stable ids; the focused field, the caret, open panels and typed text survive by construction. Candidate: idiomorph, pinned on jsDelivr with an integrity hash like Tailwind today, or a small keyed patcher if its size matters. The restore code of section 2.2 goes away.
 - **Stable placement is decided by the server.** The client sends `pin=<key>` with each fragment request: the line selected, under the pointer, or acted on last. `buildBoard` keeps a pinned line in the block and position it had at the previous render, with its new state shown in place. The pin is released when the person moves to another line, presses Escape, or after two minutes without interaction. Doing it on the server keeps both modes identical and testable.
 - **Endpoint:** `GET /board/fragment?mode=flow|focus&pin=<key>&sel=<key>`. `mode` only picks the layout.
@@ -178,21 +186,23 @@ client              client/actions.js   every data-* action, mode independent
 The card's quality depends on what sessions write.
 Two changes to the card-writing policy:
 
-- **`blocker` names who or what blocks, never the task again.** When the person served is the blocker, the open task already says it.
-- **The first open task carries the need.** Its `ask` starts with a verb and fits 80 characters; the board uses it as the card's headline.
+- **`blocker` names who or what blocks, never the task again.** When the person served is the blocker, it stays empty: the open task already says it. When nothing blocks, it stays empty too.
+- **The first open task carries the need.** Its `ask` starts with a verb and fits 80 characters; the board uses it as the card's headline. The details go in `proposal`.
 
 No new field is needed.
+Both rules are in the shipped default, `scripts/policy/defaults/card-style.md`; an installation with its own `policy/card-style.md` adds them there.
+`CardView` still drops a blocker that repeats the need, points at the person served or says nothing blocks, for the cards written before.
 
 ## 7. Delivery in slices
 
 Each slice ships on its own and leaves the board working.
 
-1. **Stability:** pin and morphing redraw. Fixes the jump and the resets.
-2. **Card model:** `CardView` and its rules; the flow mode renders through it. This is the visible reading improvement.
-3. **Client split:** the inline script becomes modules, without behaviour change. The golden tests guard it.
-4. **Focus mode** behind the switch.
-5. **Sheet** in the flow mode.
-6. **Policy update** for the sessions' card writing.
+1. **Stability:** pin and morphing redraw. Fixes the jump and the resets. Done.
+2. **Card model:** `CardView` and its rules; the flow mode renders through it. This is the visible reading improvement. Done.
+3. **Client split:** the inline script becomes parts, without behaviour change. The golden tests guard it. Done.
+4. **Focus mode** behind the switch. Done.
+5. **Sheet** in the flow mode. Done.
+6. **Policy update** for the sessions' card writing. Done.
 
 ## 8. Tests
 
@@ -206,4 +216,19 @@ Each slice ships on its own and leaves the board working.
 - **Default mode** once the focus mode exists.
 - **The plan strip in L1:** the policy says it is read first; showing it on every card costs one line.
 - **Finished tasks:** keep the last two in L2, or move them all to the report.
-- **The sheet:** from the left as proposed, or a centred modal.
+- **The sheet:** from the left as built, or a centred modal.
+
+## 10. As built
+
+Where the build departs from the proposal, or settles what it left open:
+
+- **Approve on a decision.** A decision or a question with a proposal gets Approve, which writes "go: <the proposal shown>" to the session through the instruction endpoint, under the same go lock as Go; "Answer something else" opens the instruction form.
+- **Several tasks open at once.** The first open task is expanded; the others open in place on click, and any number can stay open. A panel the person opened or folded keeps its state across redraws; an untouched one follows the server, so the next task opens when the first one closes.
+- **Client parts, not modules.** See section 6.2: one scope, concatenated in order, one inline script.
+- **The sheet's card.** The card shown in the sheet shrinks to its first line instead of staying whole behind the backdrop: a whole card would put every form and id on the page twice.
+- **Focus mode rules.**
+  - The list rows come from the `CardView`: letter, title, compact status, the thread's last message, the first two open tasks with their kind, "+N other tasks".
+  - The first task's button acts from the row only when its whole content fits the two-line preview and the action only posts what is shown (`rowAction`); the row carries the detail's plan hash and raw draft, so the click posts the same plan. Anything else becomes Open, and a draft being edited in the detail is never sent from its row.
+  - Every open topic's detail is rendered and all but the selected one hidden: selecting is instant, and each detail keeps its own panels and typing.
+  - Enter writes to the session; Escape releases the pin and keeps the selection; after an action, `j` / `k` go to the next row waiting on the person.
+  - The switch is a link (`/board?mode=focus`); the browser remembers the choice, and a URL that names a mode wins.

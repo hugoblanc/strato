@@ -336,7 +336,7 @@ The board shows one block per open task, with its own age, box and Done / Drop b
 | Task field | Content |
 | --- | --- |
 | `kind` | `draft`, `action`, `decision` or `question` |
-| `ask` | What is asked, in one sentence |
+| `ask` | What is asked, in one sentence; for the first open task, a verb first and 80 characters at most: the board shows it as the card's headline |
 | `proposal` | What the session proposes |
 | `action` | The exact action that goes out on go: "post the draft in <destination>", or ticket, or command |
 | `draft` | For a message: the text as it will go out, and nothing else |
@@ -349,7 +349,7 @@ The board shows one block per open task, with its own age, box and Done / Drop b
 | --- | --- |
 | `why` | Why it is for the owner |
 | `steps` | The plan: 3 to 7 steps separated by "\|", prefixed `done:`, `now:` or `todo:`, a single `now` |
-| `blocker` | What blocks the `now` step, and who, in one sentence |
+| `blocker` | Who or what blocks the `now` step, never the task again; empty when the owner blocks (the open task says it) or nothing does |
 | `mrs` | The topic's merge requests, "<repo>!1042 \| <repo>!2671", repos from `forge.repos` |
 | `due` | Deadlines, "18:00 merge the MR \| tomorrow 10:00 tell support", local time. `set` rewrites them as absolute dates |
 | `unverified` | What is not checked, or "nothing" |

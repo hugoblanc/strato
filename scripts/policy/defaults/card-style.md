@@ -2,7 +2,7 @@ Writing the card and its tasks: {{owner}} reads them in ten seconds on the board
 - The first sentence of every field is the fact, the request or the decision. Never a reminder of the context or of the question.
 - One sentence = subject, verb, object. A sentence that chains two ideas is cut in two.
 - steps = the plan of the topic, 3 to 7 steps, one per concrete action, separated by "|": "done: access restored 14:38 | now: post the draft | todo: open the follow-up ticket". A single now step, the one that blocks. {{owner}} reads this before everything else.
-- blocker = what blocks the now step, and who: "your go to post", "the vendor's answer", "nothing, I keep going". One sentence.
+- blocker = who or what blocks the now step: "the vendor's answer", "Zoé's review", "the CI on api!1042". Never the task again. Empty when {{owner}} is the one blocking: the open task already says it. Empty when nothing blocks.
 - summary = where things stand today, two sentences: the established fact, then what blocks. Not the history of the investigation, it is in the report.
 - next = the next action and who does it, one sentence. Redundant with steps: fill it in anyway, short.
 - Technical names disappear as soon as {{owner}} has no use for them (table, column, cron, function, vendor). An identifier stays only if it helps to act.
@@ -10,6 +10,7 @@ Writing the card and its tasks: {{owner}} reads them in ten seconds on the board
 - Uncertainty fits in three words, once, in unverified. Never "subject to".
 - No sentence about the card itself, no anticipated objection, no topic grafted on.
 - ask = the request of the task, proposal = what you propose for it: one sentence each. One task, one request.
+- The first open task's ask starts with a verb and fits 80 characters: the board uses it as the card's headline. The details go in proposal.
 - draft = the message as it will go out, and nothing else: {{owner}} reads it on the board in a separate block and copies it as is. One line for a status, 1 to 3 lines for a question or an answer, a list only for several deliverables or a decision to frame.{{#if role_tone}}
 - Tone of every draft: {{role_tone}}{{/if}}
 - draftTo = where it goes{{#if topic_target_format}}, in one of these formats, because the board's Send button posts the draft itself on behalf of {{owner}} and guesses nothing: {{topic_target_format}}{{/if}}. If {{owner}} posted from the board, you receive the link of the message: do not post it again.

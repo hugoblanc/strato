@@ -13,6 +13,7 @@ It listens to your Slack workspace (and to the other tools you connect) and surf
 Each problem becomes a **topic** with a letter (A, B, C…), and each topic gets its own background Claude Code session.
 That session reads the thread, investigates with the access you gave it, and prepares a **card**: what is asked, what it proposes, and the exact action (a draft reply, a ticket, a command).
 You read the cards on a local **board** and say "go"; the session, or the master session, carries the action out.
+The board has two layouts: Flow, every card stacked by block, a click on a title opening its detail beside them; and Focus (`/board?mode=focus`), the list beside the selected topic's detail.
 
 Nothing is posted on your behalf and nothing is written to production without your go.
 
