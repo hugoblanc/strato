@@ -21,6 +21,7 @@ import clientCore from "./client/core.js" with { type: "text" };
 import clientDrawer from "./client/drawer.js" with { type: "text" };
 import clientFocus from "./client/focus.js" with { type: "text" };
 import clientKeyboard from "./client/keyboard.js" with { type: "text" };
+import clientSheet from "./client/sheet.js" with { type: "text" };
 import clientSync from "./client/sync.js" with { type: "text" };
 
 /** A line of events.ndjson: a routed Slack message, or a session transition. */
@@ -1103,6 +1104,16 @@ function heldNote(l: BoardLine): string {
 }
 
 /**
+ * The card's first line: the title, the "new" mark, the status. On a flow card the title opens the sheet; ⌘ or Ctrl-click,
+ * or the detail's own title, still reaches the report it links to.
+ */
+function cardHead(l: BoardLine, c: CardView, ctx: BoardContext, sheet: boolean): string {
+  const s = l.sujet;
+  const opens = sheet ? ` data-sheet-open="${escapeHtml(s.key)}" title="${escapeHtml(t("board.sheet.open.tip"))}"` : "";
+  return `<div class="flex flex-wrap items-baseline gap-x-3 gap-y-1"><a href="/?sujet=${encodeURIComponent(s.key)}"${opens} class="min-w-0 text-[15px] font-semibold leading-snug text-ink hover:underline underline-offset-2">${escapeHtml(s.title)}</a><span data-new hidden class="shrink-0 rounded-full bg-soft px-2 py-0.5 text-[11.5px] font-medium leading-4 text-ink">${t("board.line.new")}</span><span class="ml-auto flex min-w-0 max-w-full sm:max-w-[26rem]">${statusView(c, s.updatedAt, ctx)}</span></div>`;
+}
+
+/**
  * A topic's card body, rendered from its CardView in the reading order: title and status, the thread's last message,
  * the session's last word, the stale line, the plan, the tasks, the folded context, the tools. The flow card and the
  * focus mode's detail are this body; the detail opens the context and keeps the instruction form shown.
@@ -1111,7 +1122,7 @@ function cardBody(l: BoardLine, c: CardView, ctx: BoardContext, detail: boolean)
   const s = l.sujet;
   const blocker = c.blocker ? `<p class="max-w-[88ch] text-[12.5px] leading-snug text-muted" data-blocker-line><span class="font-medium">${t("board.card.blocker")}</span> <span class="text-ink/85" data-blocker>${escapeHtml(c.blocker)}</span></p>` : "";
   const tail = detail ? `${s.sessionId ? writePanel(l, c, true) : ""}\n${toolsRow(l, false)}` : `${toolsRow(l)}\n${s.sessionId ? writePanel(l, c) : ""}`;
-  return `<div class="flex flex-wrap items-baseline gap-x-3 gap-y-1"><a href="/?sujet=${encodeURIComponent(s.key)}" class="min-w-0 text-[15px] font-semibold leading-snug text-ink hover:underline underline-offset-2">${escapeHtml(s.title)}</a><span data-new hidden class="shrink-0 rounded-full bg-soft px-2 py-0.5 text-[11.5px] font-medium leading-4 text-ink">${t("board.line.new")}</span><span class="ml-auto flex min-w-0 max-w-full sm:max-w-[26rem]">${statusView(c, s.updatedAt, ctx)}</span></div>
+  return `${cardHead(l, c, ctx, !detail)}
 ${saidView(c, ctx)}
 ${wordView(c, ctx)}
 ${blocker}
@@ -1127,8 +1138,11 @@ ${tail}`;
 
 const letterChip = (letter: string) => `<span class="inline-flex h-7 min-w-7 shrink-0 items-center justify-center rounded-md bg-soft px-1.5 text-[13.5px] font-semibold text-ink">${escapeHtml(letter)}</span>`;
 
-/** A topic's card in the flow mode. */
-export function lineView(l: BoardLine, ctx: BoardContext): string {
+/**
+ * A topic's card in the flow mode. `inSheet`: its detail is open in the sheet, and the card keeps only its first line
+ * and its place: the actions live once on the page, in the sheet, so no id or form exists twice.
+ */
+export function lineView(l: BoardLine, ctx: BoardContext, inSheet = false): string {
   const s = l.sujet;
   const now = nowOf(ctx);
   const c = cardOf(l, { now, channelNames: CHANNEL_NAMES });
@@ -1142,7 +1156,7 @@ export function lineView(l: BoardLine, ctx: BoardContext): string {
 <div class="flex min-w-0 items-start gap-4">
 ${letterChip(s.letter)}
 <div class="flex min-w-0 flex-1 flex-col gap-2.5">
-${cardBody(l, c, ctx, false)}
+${inSheet ? `${cardHead(l, c, ctx, true)}\n<p class="text-[12.5px] text-muted" data-in-sheet>${escapeHtml(t("board.sheet.shown"))}</p>` : cardBody(l, c, ctx, false)}
 </div>
 </div>
 </li>`;
@@ -1151,9 +1165,9 @@ ${cardBody(l, c, ctx, false)}
 /** A block's count, discreet: a number in a pill, not a big counter. */
 const count = (n: number) => `<span class="inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-soft px-1.5 text-[11.5px] font-medium tabular-nums text-muted">${n}</span>`;
 
-function blocView(bloc: Bloc, lines: BoardLine[], ctx: BoardContext): string {
+function blocView(bloc: Bloc, lines: BoardLine[], ctx: BoardContext, sheetKey: string | null = null): string {
   // the go queue: only the card under the cursor, or the first one, shows its whole draft (CSS .go-queue)
-  const list = (ls: BoardLine[], queue = false, quickList = false) => `<ul class="overflow-hidden rounded-lg border border-line bg-surface${queue ? " go-queue" : ""}"${quickList ? " data-quick" : ""}>${ls.map((l) => lineView(l, ctx)).join("\n")}</ul>`;
+  const list = (ls: BoardLine[], queue = false, quickList = false) => `<ul class="overflow-hidden rounded-lg border border-line bg-surface${queue ? " go-queue" : ""}"${quickList ? " data-quick" : ""}>${ls.map((l) => lineView(l, ctx, l.sujet.key === sheetKey)).join("\n")}</ul>`;
   const p = lines.findIndex((l) => l.pin);
   const others = blocOrder(bloc, lines.filter((_, i) => i !== p));
   const quick = bloc === "attend" ? others.filter(isQuickGo) : [];
@@ -1441,8 +1455,10 @@ ${m.listener.deaf ? `<p class="flex items-center gap-2 rounded-lg border border-
  * The page's content: review and banners at the top, "waiting on you" and the folded radar below, then "to review",
  * "at work", "waiting on someone", the snoozed topics, the sessions outside Strato and today's closed topics, folded.
  */
-export function boardView(m: BoardModel, ctx: BoardContext): string {
+export function boardView(m: BoardModel, ctx: BoardContext, sel: string | null = null): string {
   const vctx = { ...ctx, now: ctx.now ?? m.now };
+  const inSheet = (sel && openLines(m).find((l) => l.sujet.key === sel)) || null;
+  const sk = inSheet ? inSheet.sujet.key : null;
   const hero = heroView(m, ctx, vctx);
   const sessions =
     m.sessions.length || m.otherSessions
@@ -1468,15 +1484,33 @@ ${m.otherSessions ? `<p class="text-[12.5px] text-muted">${t(m.otherSessions > 1
   return `<div class="flex flex-col gap-9" data-view="board" data-attend="${openLines(m).filter((l) => l.bloc === "attend").length}">
 ${hero}
 <div class="-mt-4 flex flex-col gap-4">
-${blocView("attend", m.attend, vctx)}
+${blocView("attend", m.attend, vctx, sk)}
 ${radar(m, vctx)}
 </div>
-${blocView("revoir", m.revoir, vctx)}
-${blocView("travail", m.travail, vctx)}
-${blocView("attente", m.attente, vctx)}
+${blocView("revoir", m.revoir, vctx, sk)}
+${blocView("travail", m.travail, vctx, sk)}
+${blocView("attente", m.attente, vctx, sk)}
 ${paused}
 ${sessions}
-${closed}
+${closed}${inSheet ? `\n${sheetView(inSheet, vctx)}` : ""}
+</div>`;
+}
+
+/**
+ * The sheet of the flow mode (docs/design/board-modes.md, section 5.1): the topic's detail, the focus mode's own
+ * renderer, sliding in from the left so it never covers a terminal docked on the right. `sel` in the URL keeps it open
+ * across redraws and reloads; its stable ids let the morph keep what is typed and opened inside it.
+ */
+function sheetView(l: BoardLine, ctx: BoardContext): string {
+  const s = l.sujet;
+  return `<div id="sheet" data-sheet data-key="${escapeHtml(s.key)}" class="sheet">
+<div class="sheet-backdrop" data-sheet-close aria-hidden="true"></div>
+<div class="sheet-panel flex flex-col border-r border-line bg-bg" role="dialog" aria-modal="true" aria-label="${escapeHtml(s.title)}" tabindex="-1" data-sheet-panel>
+<div class="sticky top-0 z-[1] flex items-center gap-2 border-b border-line bg-bg/90 px-5 py-2 backdrop-blur max-sm:px-4"><span class="min-w-0 flex-1 truncate text-[12.5px] text-muted">${escapeHtml(t("board.sheet.title"))}</span><button type="button" data-sheet-close class="${BTN_TEXT}" title="${escapeHtml(t("board.sheet.close.tip"))}">${t("board.sheet.close")} <kbd class="ml-1">Esc</kbd></button></div>
+<div class="min-w-0 px-6 pb-16 pt-5 max-sm:px-4">
+${focusDetail(l, ctx, true)}
+</div>
+</div>
 </div>`;
 }
 
@@ -1813,6 +1847,19 @@ body[data-resizing] { user-select: none; }
   .focus-list { position: sticky; top: var(--nav-h, 53px); align-self: start; height: calc(100dvh - var(--nav-h, 53px)); }
   body[data-split="bottom"] .focus-list { height: calc(100dvh - var(--nav-h, 53px) - max(var(--dock-h, 46vh), 240px)); }
 }
+/* the flow mode's sheet: from the left, over the board, under the drawer, which stays usable on the right or at the bottom */
+.sheet { position: fixed; inset: 0; z-index: 15; pointer-events: none; }
+.sheet-backdrop { position: absolute; inset: 0; pointer-events: auto; background: rgb(0 0 0 / 0.32); animation: sheet-fade 0.2s ease-out; }
+.sheet-panel { position: absolute; top: 0; bottom: 0; left: 0; width: min(780px, calc(100vw - 56px)); overflow-y: auto; overscroll-behavior: contain; pointer-events: auto; box-shadow: 8px 0 28px rgb(0 0 0 / 0.22); animation: sheet-in 0.22s cubic-bezier(0.2, 0.8, 0.2, 1); outline: none; }
+body[data-split="right"] .sheet-backdrop { right: max(var(--dock-w, 46vw), 360px); }
+body[data-split="right"] .sheet-panel { width: max(320px, min(780px, calc(100vw - max(var(--dock-w, 46vw), 360px) - 56px))); }
+body[data-split="bottom"] .sheet-backdrop, body[data-split="bottom"] .sheet-panel { bottom: max(var(--dock-h, 46vh), 240px); }
+.sheet[data-closing] .sheet-panel { animation: sheet-out 0.16s ease-in forwards; }
+.sheet[data-closing] .sheet-backdrop { animation: sheet-fade 0.16s ease-in reverse forwards; }
+@media (max-width: 639px) { .sheet-panel, body[data-split="right"] .sheet-panel { width: 100vw; box-shadow: none; } }
+@keyframes sheet-in { from { transform: translateX(-100%); } }
+@keyframes sheet-out { to { transform: translateX(-100%); } }
+@keyframes sheet-fade { from { opacity: 0; } }
 @media (prefers-reduced-motion: reduce) { * { transition: none !important; animation: none !important; } }
 `;
 
@@ -1823,7 +1870,7 @@ export { faviconHref } from "./core/brand.ts";
  * The client script, in parts that share one scope (client/*.js), concatenated in this order inside one function.
  * Imported as text: `bun build --compile` embeds them, and the binary has no file next to its code.
  */
-const CLIENT = [clientCore, clientSync, clientActions, clientDrawer, clientKeyboard, clientFocus, clientBoot];
+const CLIENT = [clientCore, clientSync, clientActions, clientDrawer, clientKeyboard, clientFocus, clientSheet, clientBoot];
 const JS = `\n(function () {\n${CLIENT.join("")}})();\n`;
 
 /** The Flow / Focus switch of the top bar: links, so the URL carries the mode; the script remembers the choice. */
@@ -1847,7 +1894,7 @@ export function boardPage(view: string, version = "", mode: BoardMode = "flow"):
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
 <script>try { var t = localStorage.getItem("aiguilleur-theme"); if (t === "light" || t === "dark") document.documentElement.setAttribute("data-theme", t); } catch (e) {}</script>
-<script>try { if (!/[?&]mode=/.test(location.search) && localStorage.getItem("strato-mode") === "focus" && "${mode}" !== "focus") location.replace("/board?mode=focus"); } catch (e) {}</script>
+<script>try { if (!/[?&]mode=/.test(location.search) && localStorage.getItem("strato-mode") === "focus" && "${mode}" !== "focus") location.replace("/board?mode=focus" + location.search.replace(/^\?/, "&")); } catch (e) {}</script>
 <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4.3.3" integrity="sha384-aJ9rL4k6lF+91guGvUFVSkpIcge7Zd9EiI4TQDLoK9kFaFJgKHgjEXVvG/qA5COj" crossorigin="anonymous"></script>
 <script src="https://cdn.jsdelivr.net/npm/idiomorph@0.8.0/dist/idiomorph.min.js" integrity="sha384-e8O/d5cD6uoo78UI/d99hf1dEsbvkgBZNIetwKEi79V9qexl0Bdc2wxEqLEaj58U" crossorigin="anonymous"></script>
 <style type="text/tailwindcss">${THEME}</style>
@@ -1871,7 +1918,7 @@ export function boardPage(view: string, version = "", mode: BoardMode = "flow"):
 <div id="drawer-body" class="relative min-h-0 flex-1"></div>
 </aside>
 <div id="palette" hidden class="fixed inset-0 z-30 flex items-start justify-center bg-black/40 px-4 pt-[12vh]"><div class="w-full max-w-[640px] overflow-hidden rounded-xl border border-line bg-surface shadow-2xl"><div class="flex items-center gap-2 border-b border-line px-3"><span class="text-muted">⌕</span><input type="text" autocomplete="off" spellcheck="false" placeholder="${escapeHtml(t("board.palette.placeholder"))}" class="h-11 w-full bg-transparent text-[13.5px] text-ink outline-none placeholder:text-muted"><kbd class="shrink-0">${t("board.palette.escape")}</kbd></div><ul data-palette-list class="max-h-[50vh] overflow-y-auto p-1.5"></ul></div></div>
-<div id="toast" role="status" hidden class="fixed bottom-5 left-1/2 -translate-x-1/2 rounded-md bg-ink px-3.5 py-2 text-[13.5px] text-bg shadow-lg"></div>
+<div id="toast" role="status" hidden class="fixed z-40 bottom-5 left-1/2 -translate-x-1/2 rounded-md bg-ink px-3.5 py-2 text-[13.5px] text-bg shadow-lg"></div>
 <script>window.STRATO_I18N = ${JSON.stringify(clientMessages()).replace(/</g, "\\u003c")};</script>
 <script>${JS}</script>
 </body>

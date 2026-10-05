@@ -372,12 +372,12 @@ export async function serve(args: string[]) {
     const t = readJson<{ lastTick?: number }>(F.tick, {}).lastTick;
     return t ? new Date(t * 1000).toISOString() : null;
   }
-  /** The board's content in a mode; `sel` is the topic selected in the focus mode. */
+  /** The board's content in a mode; `sel` is the topic selected in the focus mode, or shown in the flow mode's sheet. */
   async function renderBoard(sujets: Sujet[], pin: Pin | null = null, mode: BoardMode = "flow", sel: string | null = null): Promise<string> {
     const { sessions, others, running, remote, since, lastAgent, trail, agents } = await boardSessions(sujets);
     const model = buildBoard({ sujets, events: boardEvents(), live: liveStates(sujets), running, remote, since, lastAgent, trail, agents, teammates: cfg.teammates, sessions, otherSessions: others, now: new Date(), timeOf: dayTime, lastTick: lastTickIso(), socket: readJson<{ socket?: Partial<SocketHealth> }>(F.tick, {}).socket, slackAppId: cfg.appId, snoozed: new Map(Object.entries(readJson<Record<string, Snooze>>(F.snooze, {}))), revue: readJson<MasterRequest[]>(F.master, []).filter((r) => r.kind === "revue").at(-1) ?? null, demandes: readJson<MasterRequest[]>(F.master, []).filter((r) => r.kind === "demande"), users: readJson<Record<string, string>>(F.users, {}), deliveries: deliveries.of(sujets), heartbeat: readJson<{ beat?: number }>(F.tick, {}).beat, undo: undoByTopic(sujets) });
     const ctx = { timeOf: dayTime, readAt: dayTime(new Date().toISOString()) };
-    return mode === "focus" ? focusView(pinLine(model, pin), ctx, sel) : boardView(pinLine(model, pin), ctx);
+    return mode === "focus" ? focusView(pinLine(model, pin), ctx, sel) : boardView(pinLine(model, pin), ctx, sel);
   }
   /** Board messages being delivered, "key\0text": a duplicate during delivery is refused. */
   const inFlight = new Set<string>();

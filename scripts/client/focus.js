@@ -7,8 +7,8 @@ var acted = null;
 var shownDetail = null;
 function noteActed(key) { if (focusMode && key) acted = key; }
 function detailOf(key) { var d = null; app.querySelectorAll("[data-detail]").forEach(function (x) { if (x.getAttribute("data-key") === key) d = x; }); return d; }
-/** Where a row's actions live: its detail in the focus mode, the card itself in the flow mode. */
-function cardEl(row) { return (focusMode && row && detailOf(row.getAttribute("data-key"))) || row; }
+/** Where a row's actions live: its detail (the focus mode's, or the flow mode's sheet), else the card itself. */
+function cardEl(row) { return (row && detailOf(row.getAttribute("data-key"))) || row; }
 /** The selection drives the detail: only the selected topic's is shown, and the page comes back to its top. */
 function paintFocus() {
   if (!focusMode) return;

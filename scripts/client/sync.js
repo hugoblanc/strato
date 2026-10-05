@@ -41,6 +41,8 @@ function fragmentUrl() {
   if (pinned) q.push("pin=" + encodeURIComponent(pinned.key) + "&pinBloc=" + pinned.bloc + "&pinIndex=" + pinned.index + (pinned.quick ? "&pinQuick=1" : ""));
   // the focus mode asks for its layout and the topic it shows in the detail
   if (focusMode) q.push("mode=focus" + (cursorKey ? "&sel=" + encodeURIComponent(cursorKey) : ""));
+  // the flow mode asks for the topic its sheet shows
+  else if (sheetKey) q.push("sel=" + encodeURIComponent(sheetKey));
   return "/board/fragment" + (q.length ? "?" + q.join("&") : "");
 }
 // Morphing instead of replacing keeps the DOM identity of what did not change: the focused field, its caret, what the
@@ -148,6 +150,7 @@ function afterRender() {
   paintTitle();
   if (cursorKey) setCursor(cursorKey, false);
   focusDefault();
+  paintSheet();
   if (pinned && !rowOf(pinned.key)) pinned = null;
 }
 // The top bar's pill: the state of Strato and of the board, repainted every 5 s without waiting for a redraw.

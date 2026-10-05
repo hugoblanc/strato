@@ -10,6 +10,7 @@ document.addEventListener("keydown", function (ev) {
   if (ev.key === "Escape" && keysLocked) { keysLocked = false; flash(tr("board.js.keys.back")); return; }
   var openMenu = app.querySelector("details[data-menu][open]");
   if (ev.key === "Escape" && openMenu) { openMenu.open = false; return; }
+  if (ev.key === "Escape" && sheetKey) { ev.preventDefault(); closeSheet(); return; }
   if (ev.key === "Escape" && !ev.defaultPrevented && (pinned || cursorKey)) { pinned = null; if (focusMode) acted = null; else setCursor(null, false); redraw(true); return; }
   if (ev.metaKey || ev.ctrlKey || ev.altKey || (t instanceof HTMLElement && (t.tagName === "TEXTAREA" || t.tagName === "INPUT" || t.isContentEditable))) return;
   if (keysLocked) {
@@ -21,12 +22,14 @@ document.addEventListener("keydown", function (ev) {
   var i = list.findIndex(function (r) { return r.getAttribute("data-key") === cursorKey; });
   var row = i >= 0 ? list[i] : null;
   var k = ev.key;
-  if (k === "j" || k === "k") { ev.preventDefault(); var n = k === "j" ? Math.min(list.length - 1, i + 1) : Math.max(0, i < 0 ? 0 : i - 1); var w = nextWaiting(k === "j" ? 1 : -1); if (w) n = list.indexOf(w); select(list[n].getAttribute("data-key"), true); markSeen(list[n].getAttribute("data-key")); return; }
+  if (k === "j" || k === "k") { ev.preventDefault(); var n = k === "j" ? Math.min(list.length - 1, i + 1) : Math.max(0, i < 0 ? 0 : i - 1); var w = nextWaiting(k === "j" ? 1 : -1); if (w) n = list.indexOf(w); select(list[n].getAttribute("data-key"), true); markSeen(list[n].getAttribute("data-key")); if (sheetKey) openSheet(list[n].getAttribute("data-key")); return; }
   if (k === "?") { ev.preventDefault(); flash(focusMode ? tr("board.js.help.focus") : HELP); clearTimeout(timer); timer = setTimeout(function () { toast.hidden = true; }, 9000); return; }
   if (!row) return;
   var key = row.getAttribute("data-key");
   // the focus mode acts on the selected topic's detail, the flow mode on the card itself
   var card = cardEl(row);
+  // Enter in the flow mode opens the selected card's detail in the sheet
+  if (k === "Enter" && !focusMode && !sheetKey && !(t instanceof Element && t.closest("a, button, summary, [role=button]"))) { ev.preventDefault(); openSheet(key); return; }
   if (k === "Enter" && focusMode && !(t instanceof Element && t.closest("a, button, summary, [role=button]"))) { ev.preventDefault(); var ta3 = card.querySelector("form[data-send] textarea"); if (ta3) ta3.focus({ preventScroll: false }); return; }
   // g arms, a second g within 2 s sends: a single stray key never posts anything to Slack
   if (k === "g") {
