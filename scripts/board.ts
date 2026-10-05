@@ -123,6 +123,8 @@ export interface BoardLine {
   stale?: StaleSignal[];
   /** Since when the wait shown by the badge lasts (open gate, third party), ISO: its age shows in the badge. */
   waitingSince?: string | null;
+  /** Set by pinLine on the line the person is working on: where it is shown, and whether that differs from where it belongs. */
+  pin?: { shownIn: Bloc; quick: boolean; held: boolean };
 }
 
 export interface BoardInput {
@@ -397,6 +399,49 @@ export function buildBoard(input: BoardInput): BoardModel {
     deaf: listener.deaf,
   };
   return { attend, revoir, travail, attente, closedToday, sessions, otherSessions: input.otherSessions, listener, paused, revue, demandes, sync, now };
+}
+
+/** The line the person is working on, and where it was on screen: the block, its index among the block's rows, and in "waiting on you" whether it sat in the "just a go" sub-list. */
+export interface Pin {
+  key: string;
+  bloc: Bloc;
+  index: number;
+  quick?: boolean;
+}
+
+export const BLOCS: readonly Bloc[] = ["attend", "revoir", "travail", "attente"];
+
+/** The pin a fragment request carries (`pin`, `pinBloc`, `pinIndex`, `pinQuick`), or null when it is absent or malformed. */
+export function pinOf(params: URLSearchParams): Pin | null {
+  const key = params.get("pin");
+  const bloc = params.get("pinBloc") as Bloc | null;
+  const index = Number(params.get("pinIndex") ?? "-");
+  if (!key || !bloc || !BLOCS.includes(bloc) || !Number.isInteger(index) || index < 0) return null;
+  return { key, bloc, index, quick: bloc === "attend" && params.get("pinQuick") === "1" };
+}
+
+/** A block's lines in the order the page shows them: in "waiting on you", the quick gos come first. */
+export function blocOrder(bloc: Bloc, lines: BoardLine[]): BoardLine[] {
+  if (bloc !== "attend") return lines;
+  return [...lines.filter(isQuickGo), ...lines.filter((l) => !isQuickGo(l))];
+}
+
+/**
+ * Keeps the line the person is working on where they saw it: their own action changes its session's state, and the
+ * line would otherwise jump to another block under their eyes. The line shows its new state in place; once the client
+ * stops sending the pin, the next render puts it where it belongs.
+ */
+export function pinLine(m: BoardModel, pin: Pin | null): BoardModel {
+  if (!pin) return m;
+  const from = BLOCS.find((b) => m[b].some((l) => l.sujet.key === pin.key));
+  if (!from) return m;
+  const line = m[from].find((l) => l.sujet.key === pin.key) as BoardLine;
+  const natural = blocOrder(from, m[from]).indexOf(line);
+  const target = blocOrder(pin.bloc, m[pin.bloc].filter((l) => l !== line));
+  const index = Math.min(pin.index, target.length);
+  const quick = pin.bloc === "attend" && !!pin.quick;
+  target.splice(index, 0, { ...line, pin: { shownIn: pin.bloc, quick, held: from !== pin.bloc || natural !== index || (quick !== isQuickGo(line) && pin.bloc === "attend") } });
+  return { ...m, [from]: m[from].filter((l) => l !== line), [pin.bloc]: target };
 }
 
 // ------------------------------------------------------------------ rendering
@@ -923,7 +968,7 @@ export function taskBlock(s: Sujet, x: Task, ctx: BoardContext, hint = false): s
   const text = (v: string, max: number) => `<p class="text-[13.5px] leading-snug text-ink/90" title="${escapeHtml(v.replace(/\\n/g, " "))}">${escapeHtml(clip(v.replace(/\\n/g, " "), max))}</p>`;
   const rows = [fieldRow(t("board.card.ask"), text(x.ask, 160)), ...(x.proposal?.trim() ? [fieldRow(t("board.card.proposal"), text(x.proposal, 220))] : [])].join("");
   const head = `<div class="flex items-center gap-2"><span class="font-mono text-[11.5px] font-medium text-muted" title="${escapeHtml(t("board.task.id.tip", { id: x.id }))}">${escapeHtml(x.id)}</span>${badge(taskKindLabel(x.kind), "accent", false, ` · ${span(age)}`)}</div>`;
-  return `<div class="flex flex-col gap-2 border-t border-dashed border-line pt-3 first:border-t-0 first:pt-0" data-task-item data-task="${escapeHtml(x.id)}" data-task-fresh style="--fh:${fresh.h};--fk:${fresh.k}">
+  return `<div class="flex flex-col gap-2 border-t border-dashed border-line pt-3 first:border-t-0 first:pt-0" id="task-${escapeHtml(s.key)}#${escapeHtml(x.id)}" data-task-item data-task="${escapeHtml(x.id)}" data-task-fresh style="--fh:${fresh.h};--fk:${fresh.k}">
 ${head}
 <dl class="flex max-w-[78ch] flex-col gap-1.5">${rows}</dl>
 ${taskBox(s, x, hint)}
@@ -1020,7 +1065,7 @@ ${l.remoteUrl ? `<a href="${escapeHtml(l.remoteUrl)}" data-open class="${BTN}">c
 <span class="ml-auto min-w-0 truncate text-[12.5px] text-muted" data-session-status></span>
 </div>
 ${l.lastAgent?.text && !quick ? `<details class="group min-w-0 text-[12.5px]" id="last-${key}"><summary class="flex min-w-0 cursor-pointer select-none list-none items-baseline gap-1.5 text-muted hover:text-ink"><span class="shrink-0 font-medium text-ink/80">${t("board.session.lastWord")}</span>${l.lastAgent.at ? `<span class="shrink-0">${when(l.lastAgent.at, ctx)}</span>` : ""}<span class="min-w-0 truncate group-open:hidden">${escapeHtml(clip(l.lastAgent.text, 160))}</span></summary><div class="mt-1.5 max-h-56 overflow-y-auto whitespace-pre-wrap rounded-md bg-bg px-3 py-2 leading-relaxed text-ink/85">${escapeHtml(l.lastAgent.text)}</div></details>` : ""}
-<form class="flex flex-col gap-2" data-send data-key="${key}">
+<form class="flex flex-col gap-2" id="send-${key}" data-send data-key="${key}">
 <textarea name="text" rows="2" required placeholder="${escapeHtml(t("board.send.placeholder"))}" title="${escapeHtml(t("board.send.tip"))}" class="w-full resize-y rounded-lg border border-line bg-bg px-3 py-2 text-[13.5px] leading-relaxed placeholder:text-muted focus:border-muted focus:outline-none focus:ring-2 focus:ring-ink/10"></textarea>
 <div class="flex flex-wrap gap-1">${shown.map((c) => `<button type="button" data-chip="${escapeHtml(c.text)}"${c.confirm ? ` data-chip-confirm` : ""} class="inline-flex h-6 items-center rounded-full border border-muted/50 px-2 text-[11.5px] text-ink/80 hover:border-ink/60 hover:text-ink disabled:cursor-not-allowed disabled:opacity-40">${escapeHtml(c.label)}</button>`).join("")}</div>
 <div class="flex items-center gap-3"><button type="submit" class="${BTN}">${t("board.send.button", { letter: escapeHtml(s.letter) })}<span class="ml-1.5 font-normal text-muted">⌘↩</span></button><span class="min-w-0 truncate text-[12.5px] text-muted" data-status></span></div>
@@ -1029,6 +1074,13 @@ ${l.lastAgent?.text && !quick ? `<details class="group min-w-0 text-[12.5px]" id
 }
 
 /** A topic line, in two columns: the topic on the left, the session and its message on the right; the details folded below. */
+/** On a line kept in place by the pin: one line saying it stays put, and where it belongs now when that is another block. */
+function heldNote(l: BoardLine): string {
+  if (!l.pin?.held) return "";
+  const text = l.pin.shownIn === l.bloc ? t("board.line.held") : t("board.line.heldMoved", { bloc: escapeHtml(blocTitle(l.bloc)) });
+  return `<p data-held-note class="text-[12px] text-accent-ink">${text}</p>`;
+}
+
 export function lineView(l: BoardLine, ctx: BoardContext): string {
   const s = l.sujet;
   const now = nowOf(ctx);
@@ -1046,7 +1098,8 @@ export function lineView(l: BoardLine, ctx: BoardContext): string {
   // what waits on you carries its freshness: a side border and the badge's age, from green (recent) to dark red (3 days and more)
   const fresh = l.bloc === "attend" && l.waitingSince ? freshness(now - Date.parse(l.waitingSince)) : null;
   const freshAttr = fresh ? ` data-fresh style="--fh:${fresh.h};--fk:${fresh.k}"` : "";
-  return `<li${freshAttr} class="cursor-pointer scroll-mt-20 px-5 py-4 border-b border-line last:border-b-0 hover:bg-soft/40 data-[cursor]:bg-soft/60 data-[cursor]:shadow-[inset_3px_0_0_var(--color-ink)]" data-row="card-${k}" data-key="${k}" data-letter="${escapeHtml(s.letter)}" data-sig="${escapeHtml(sig)}">
+  const held = l.pin?.held ? " data-held" : "";
+  return `<li${freshAttr}${held} id="line-${k}" class="cursor-pointer scroll-mt-20 px-5 py-4 border-b border-line last:border-b-0 hover:bg-soft/40 data-[cursor]:bg-soft/60 data-[held]:bg-accent/5 data-[cursor]:shadow-[inset_3px_0_0_var(--color-ink)]" data-row="card-${k}" data-key="${k}" data-letter="${escapeHtml(s.letter)}" data-sig="${escapeHtml(sig)}">
 <div class="grid gap-x-6 gap-y-4 md:grid-cols-[minmax(0,1fr)_330px]">
 <div class="flex min-w-0 items-start gap-4">
 <span class="mt-px inline-flex h-7 min-w-7 shrink-0 items-center justify-center rounded-md bg-soft px-1.5 text-[13.5px] font-semibold text-ink">${escapeHtml(s.letter)}</span>
@@ -1060,7 +1113,7 @@ ${factsBlock(l, ctx)}
 ${staleLine(l, ctx)}
 ${postedLine(s, ctx, Date.now(), l.undoUntil ?? null, l.bloc, l.undoTask ?? null)}
 ${draftMissing(s)}
-${actionCard(l, ctx)}
+${actionCard(l, ctx)}${heldNote(l)}
 <div class="-ml-2 flex flex-wrap items-center gap-x-1 gap-y-1.5">${toggle(`card-${s.key}`, t("board.card.details"))}<a href="${sujetUrl}" class="inline-flex h-7 items-center rounded-md px-2 text-[12.5px] font-medium text-link hover:bg-soft hover:underline underline-offset-2">${t("board.card.report")}</a></div>
 </div>
 </div>
@@ -1092,15 +1145,23 @@ const count = (n: number) => `<span class="inline-flex h-5 min-w-5 items-center 
 
 function blocView(bloc: Bloc, lines: BoardLine[], ctx: BoardContext): string {
   // the go queue: only the card under the cursor, or the first one, shows its whole draft (CSS .go-queue)
-  const list = (ls: BoardLine[], queue = false) => `<ul class="overflow-hidden rounded-lg border border-line bg-surface${queue ? " go-queue" : ""}">${ls.map((l) => lineView(l, ctx)).join("\n")}</ul>`;
-  const quick = bloc === "attend" ? lines.filter(isQuickGo) : [];
-  const rest = lines.filter((l) => !quick.includes(l));
-  const sub = (label: string, hint: string, ls: BoardLine[], queue = false) => `<p class="mt-1 flex items-center gap-2 text-[12.5px]" title="${escapeHtml(hint)}"><span class="font-semibold text-ink">${label}</span>${count(ls.length)}</p>${list(ls, queue)}`;
+  const list = (ls: BoardLine[], queue = false, quickList = false) => `<ul class="overflow-hidden rounded-lg border border-line bg-surface${queue ? " go-queue" : ""}"${quickList ? " data-quick" : ""}>${ls.map((l) => lineView(l, ctx)).join("\n")}</ul>`;
+  const p = lines.findIndex((l) => l.pin);
+  const others = blocOrder(bloc, lines.filter((_, i) => i !== p));
+  const quick = bloc === "attend" ? others.filter(isQuickGo) : [];
+  const rest = others.filter((l) => !quick.includes(l));
+  // the pinned line keeps its sub-list and its index in the order shown
+  if (p >= 0) {
+    const pl = lines[p];
+    if (pl.pin?.quick) quick.splice(Math.min(p, quick.length), 0, pl);
+    else rest.splice(Math.max(0, p - quick.length), 0, pl);
+  }
+  const sub = (label: string, hint: string, ls: BoardLine[], queue = false, quickList = false) => `<p class="mt-1 flex items-center gap-2 text-[12.5px]" title="${escapeHtml(hint)}"><span class="font-semibold text-ink">${label}</span>${count(ls.length)}</p>${list(ls, queue, quickList)}`;
   const body = !lines.length
     ? `<p class="rounded-lg border border-dashed border-line px-4 py-3 text-[13.5px] text-muted">${blocEmpty(bloc)}</p>`
     : quick.length
-      ? `${sub(roleT("board.bloc.quick.title"), roleT("board.bloc.quick.tip"), quick, quick.length > 1)}${rest.length ? sub(roleT("board.bloc.decision.title"), roleT("board.bloc.decision.tip"), rest) : ""}`
-      : list(lines);
+      ? `${sub(roleT("board.bloc.quick.title"), roleT("board.bloc.quick.tip"), quick, quick.length > 1, true)}${rest.length ? sub(roleT("board.bloc.decision.title"), roleT("board.bloc.decision.tip"), rest) : ""}`
+      : list(rest);
   return `<section class="flex flex-col gap-2.5" id="bloc-${bloc}">
 <h2 class="flex items-center gap-x-3"><span class="lamp lamp-${BLOC_LAMP[bloc]}${lines.length ? " lit" : ""}" aria-hidden="true"></span><span class="text-[17px] font-semibold tracking-tight text-ink" title="${escapeHtml(blocHint(bloc))}">${blocTitle(bloc)}</span>${count(lines.length)}</h2>
 ${body}
@@ -1390,7 +1451,8 @@ ${m.otherSessions ? `<p class="text-[12.5px] text-muted">${t(m.otherSessions > 1
 <ul class="mt-2.5 overflow-hidden rounded-lg border border-line bg-surface">${m.paused.map((p) => pausedRow(p.line, p.until, vctx, p.reason)).join("")}</ul>
 </details>`
     : "";
-  return `<div class="flex flex-col gap-9" data-view="board" data-attend="${m.attend.length}">
+  // the tab's counter says what really waits on you, wherever a pinned line is shown
+  return `<div class="flex flex-col gap-9" data-view="board" data-attend="${openLines(m).filter((l) => l.bloc === "attend").length}">
 ${hero}
 <div class="-mt-4 flex flex-col gap-4">
 ${blocView("attend", m.attend, vctx)}
@@ -1559,38 +1621,58 @@ const JS = `
     timer = setTimeout(function () { toast.hidden = true; }, 3000);
   }
   // The board always redraws, including while the cursor is in a field: holding the redraw while a field had the focus
-  // froze the page after each send (the focus stays in the emptied field). The active field is recreated identically
-  // in the same task (text, caret, inner scroll, focus without scrolling the page), so no keystroke falls in between.
-  // Only an ongoing composition (accents, IME) postpones the redraw.
+  // froze the page after each send (the focus stays in the emptied field). Only an ongoing composition (accents, IME)
+  // postpones the redraw.
   var composing = false, redrawPending = false;
   document.addEventListener("compositionstart", function () { composing = true; });
   document.addEventListener("compositionend", function () { composing = false; if (redrawPending) { redrawPending = false; redraw(true); } });
+  // When the field being typed in is gone after a redraw (topic closed, form folded, draft gone), the focus falls on the
+  // page, and the rest of the typing would turn into shortcuts ("ok go": k then g would post another topic's draft).
+  // The script then turns off one-letter shortcuts until the next click or Escape.
   function activeField() {
     var a = document.activeElement;
     if (!a || !(a.tagName === "TEXTAREA" || a.tagName === "INPUT") || !app.contains(a)) return null;
-    var f = a.closest("form[data-key]");
-    return { key: f ? f.getAttribute("data-key") : null, task: f ? f.getAttribute("data-task") : null, name: a.name || a.tagName, value: a.value, start: a.selectionStart, end: a.selectionEnd, top: a.scrollTop };
+    return { el: a, start: a.selectionStart, end: a.selectionEnd };
   }
-  // Returns false when the field could not get the focus back (topic closed, form folded, draft gone): the focus then
-  // falls on the page, and the rest of the typing would turn into shortcuts ("ok go": k then g would post another
-  // topic's draft). The script then turns off one-letter shortcuts until the next click or Escape.
-  function restoreField(st) {
+  function keepField(st) {
     if (!st) return true;
-    // a message sent with ⌘↩ empties its field on purpose: the writing is done
-    if (st.name === "text" && st.key in sending) return true;
-    if (st.key === null) return false;
-    var a = null;
-    app.querySelectorAll("form[data-key]").forEach(function (f) { if (!a && f.getAttribute("data-key") === st.key && (f.getAttribute("data-task") || null) === (st.task || null)) a = f.querySelector('[name="' + st.name + '"]'); });
-    if (!a) return false;
-    a.value = st.value;
-    try { a.focus({ preventScroll: true }); a.setSelectionRange(st.start, st.end); } catch (e) {}
-    a.scrollTop = st.top;
-    return document.activeElement === a;
+    if (!st.el.isConnected) return false;
+    // a node moved without moveBefore loses the focus: it is given back where the caret was
+    if (document.activeElement !== st.el) { try { st.el.focus({ preventScroll: true }); st.el.setSelectionRange(st.start, st.end); } catch (e) {} }
+    return document.activeElement === st.el;
   }
   var keysLocked = false;
   function lockKeys() { keysLocked = true; }
   // a click anywhere gives the shortcuts back: the user knows where they are again
   document.addEventListener("pointerdown", function () { keysLocked = false; }, true);
+  // The pin: the card the person is working on (selected or acted on), with the block and the index where they saw it.
+  // The server keeps it there while the pin holds, so their own action (Go, Done, a message) does not send it to
+  // another block under their eyes. Moving to another card, Escape, or two minutes without interaction release it.
+  var pinned = null, lastTouch = Date.now(), PIN_MS = 120000, PIN_BLOCS = ["attend", "revoir", "travail", "attente"];
+  ["pointerdown", "keydown", "input"].forEach(function (t) { document.addEventListener(t, function () { lastTouch = Date.now(); }, true); });
+  function pinTo(key) {
+    var r = key && rowOf(key), sec = r && r.closest("section[id^='bloc-']"), bloc = sec && sec.id.slice(5);
+    pinned = bloc && PIN_BLOCS.indexOf(bloc) >= 0 ? { key: key, bloc: bloc, index: Array.prototype.indexOf.call(sec.querySelectorAll("[data-row]"), r), quick: !!r.closest("ul[data-quick]") } : null;
+  }
+  function fragmentUrl() {
+    if (pinned && Date.now() - lastTouch > PIN_MS) pinned = null;
+    if (!pinned) return "/board/fragment";
+    return "/board/fragment?pin=" + encodeURIComponent(pinned.key) + "&pinBloc=" + pinned.bloc + "&pinIndex=" + pinned.index + (pinned.quick ? "&pinQuick=1" : "");
+  }
+  // Morphing instead of replacing keeps the DOM identity of what did not change: the focused field, its caret, what the
+  // person typed, the open details and panels survive the redraw by construction. The attributes the page owns stay.
+  function owned(attr, el) {
+    if (attr === "value") return (el.tagName === "TEXTAREA" || el.tagName === "INPUT") && el.value !== el.defaultValue;
+    if (attr === "open") return el.tagName === "DETAILS";
+    if (attr === "hidden") return el.hasAttribute("data-panel");
+    if (attr === "aria-expanded") return el.hasAttribute("data-toggle");
+    if (attr === "class") return el.hasAttribute("data-expand");
+    return false;
+  }
+  function morph(html) {
+    if (!window.Idiomorph) { app.innerHTML = html; return; }
+    window.Idiomorph.morph(app, html, { morphStyle: "innerHTML", callbacks: { beforeAttributeUpdated: function (attr, el) { return !owned(attr, el); } } });
+  }
   // Redraws leave in order but their answers can come back out of order: each request has its number, and an answer
   // older than the last one applied is dropped, otherwise it would put back a stale state.
   var drawSeq = 0, drawApplied = 0;
@@ -1599,29 +1681,22 @@ const JS = `
     redrawPending = false;
     var y = window.scrollY;
     var seq = ++drawSeq;
-    return fetch("/board/fragment", { cache: "no-store" })
+    return fetch(fragmentUrl(), { cache: "no-store" })
       .then(function (r) { if (!r.ok) throw new Error("HTTP " + r.status); return r.text(); })
       .then(function (html) {
         if (seq < drawApplied) return;
         drawApplied = seq;
-        // what the user opened or started writing survives the redraw
-        var opened = {}, drafts = {};
-        app.querySelectorAll("details[id]").forEach(function (d) { opened[d.id] = d.open; });
-        app.querySelectorAll("[data-panel][id]").forEach(function (p) { opened[p.id] = !p.hidden; });
-        app.querySelectorAll("form[data-send]").forEach(function (f) { var t = f.querySelector("textarea"); if (t && t.value) drafts[f.getAttribute("data-key")] = t.value; });
         var field = activeField();
-        app.innerHTML = html;
-        app.querySelectorAll("details[id]").forEach(function (d) { if (d.id in opened) d.open = opened[d.id]; });
-        app.querySelectorAll("[data-panel][id]").forEach(function (p) { if (p.id in opened) setPanel(p.id, opened[p.id]); });
-        // an unsent message comes back into its field; a send in progress keeps its greyed button and its "Sending…", not its text
+        morph(html);
+        // what the page paints itself: a send in progress keeps its greyed button and its "Sending…", and the last
+        // feedback of each topic stays under its field
         app.querySelectorAll("form[data-send]").forEach(function (f) {
           var k = f.getAttribute("data-key");
           if (k in sending) { paintSending(f, sending[k]); return; }
-          if (k in drafts) { f.querySelector("textarea").value = drafts[k]; var wd = f.querySelector("details[data-write]"); if (wd) wd.open = true; }
           if (k in lastStatus) f.querySelector("[data-status]").textContent = lastStatus[k];
         });
         restoreDrafts();
-        if (!restoreField(field)) lockKeys();
+        if (!keepField(field)) lockKeys();
         afterRender();
         if (keepScroll) window.scrollTo(0, y);
       })
@@ -2052,7 +2127,7 @@ const JS = `
     if (!ul.querySelector(":scope > li[data-cursor]") && ul.firstElementChild === row) return false;
     if (txt.scrollHeight <= txt.clientHeight + 1) return false;
     var key = row.getAttribute("data-key");
-    setCursor(key, true);
+    select(key, true);
     markSeen(key);
     flash(tr(btn.hasAttribute("data-post") ? "board.js.unfold.send" : "board.js.unfold.go"));
     return true;
@@ -2395,7 +2470,7 @@ const JS = `
     if (un) { ev.preventDefault(); runBusy(un, tr("board.js.unsnooze.busy"), function () { return post("/api/snooze", { key: un.getAttribute("data-unsnooze"), until: null }).then(function (x) { if (!x.ok) flash(tr("board.js.unsnooze.failed", { error: x.error })); return redraw(true); }); }); return; }
     if (el.closest("[data-snooze-menu] summary")) { snoozeLabels(); ev.stopPropagation(); return; }
     var jump = el.closest("[data-jump]");
-    if (jump) { ev.preventDefault(); ev.stopPropagation(); setCursor(jump.getAttribute("data-jump"), true); return; }
+    if (jump) { ev.preventDefault(); ev.stopPropagation(); select(jump.getAttribute("data-jump"), true); return; }
     var rv = el.closest("[data-revue]");
     if (rv) {
       ev.preventDefault(); ev.stopPropagation();
@@ -2445,11 +2520,14 @@ const JS = `
     r.setAttribute("data-cursor", "");
     if (scroll) r.scrollIntoView({ block: "nearest", behavior: "smooth" });
   }
+  /** The person moves to a card: it becomes the cursor and the pin, which releases the previous one. */
+  function select(key, scroll) { setCursor(key, scroll); pinTo(cursorKey); }
   var HELP = tr("board.js.help");
   document.addEventListener("keydown", function (ev) {
     var t = ev.target;
     if (ev.key === "Escape" && t instanceof HTMLElement && (t.tagName === "TEXTAREA" || t.tagName === "INPUT")) { t.blur(); return; }
     if (ev.key === "Escape" && keysLocked) { keysLocked = false; flash(tr("board.js.keys.back")); return; }
+    if (ev.key === "Escape" && !ev.defaultPrevented && (pinned || cursorKey)) { pinned = null; setCursor(null, false); redraw(true); return; }
     if (ev.metaKey || ev.ctrlKey || ev.altKey || (t instanceof HTMLElement && (t.tagName === "TEXTAREA" || t.tagName === "INPUT" || t.isContentEditable))) return;
     if (keysLocked) {
       if (ev.key.length === 1) { ev.preventDefault(); flash(tr("board.js.keys.locked")); }
@@ -2460,7 +2538,7 @@ const JS = `
     var i = list.findIndex(function (r) { return r.getAttribute("data-key") === cursorKey; });
     var row = i >= 0 ? list[i] : null;
     var k = ev.key;
-    if (k === "j" || k === "k") { ev.preventDefault(); var n = k === "j" ? Math.min(list.length - 1, i + 1) : Math.max(0, i < 0 ? 0 : i - 1); setCursor(list[n].getAttribute("data-key"), true); markSeen(list[n].getAttribute("data-key")); return; }
+    if (k === "j" || k === "k") { ev.preventDefault(); var n = k === "j" ? Math.min(list.length - 1, i + 1) : Math.max(0, i < 0 ? 0 : i - 1); select(list[n].getAttribute("data-key"), true); markSeen(list[n].getAttribute("data-key")); return; }
     if (k === "?") { ev.preventDefault(); flash(HELP); clearTimeout(timer); timer = setTimeout(function () { toast.hidden = true; }, 9000); return; }
     if (!row) return;
     var key = row.getAttribute("data-key");
@@ -2482,7 +2560,9 @@ const JS = `
     if (k === "o") { ev.preventDefault(); var a2 = row.querySelector("a[data-open]"); if (a2) a2.click(); return; }
     if (k === "p") { ev.preventDefault(); var sb = row.querySelector('[data-snooze="1h"]'); if (sb) sb.click(); return; }
   });
-  app.addEventListener("click", function (ev) { var r = ev.target instanceof Element && ev.target.closest("[data-row]"); if (r) setCursor(r.getAttribute("data-key"), false); });
+  // on pointerdown, not click: the action buttons stop the click before it reaches the card, and the card they act on
+  // must be pinned before their request leaves
+  app.addEventListener("pointerdown", function (ev) { var r = ev.target instanceof Element && ev.target.closest("[data-row]"); if (r) select(r.getAttribute("data-key"), false); }, true);
 
   function afterRender() {
     paintBusy();
@@ -2492,6 +2572,7 @@ const JS = `
     paintNew();
     paintTitle();
     if (cursorKey) setCursor(cursorKey, false);
+    if (pinned && !rowOf(pinned.key)) pinned = null;
   }
   afterRender();
 
@@ -2555,7 +2636,7 @@ const JS = `
     }
     closePalette();
     var key = it.h.key;
-    if (it.h.open && rowOf(key)) { setCursor(key, false); rowOf(key).scrollIntoView({ block: "center", behavior: "smooth" }); markSeen(key); return; }
+    if (it.h.open && rowOf(key)) { select(key, false); rowOf(key).scrollIntoView({ block: "center", behavior: "smooth" }); markSeen(key); return; }
     var paused = document.getElementById("paused");
     if (it.h.open && paused) { paused.open = true; paused.scrollIntoView({ block: "center", behavior: "smooth" }); flash(tr("board.js.search.paused", { letter: it.h.letter })); return; }
     window.open("/?sujet=" + encodeURIComponent(key), "_blank", "noopener");
@@ -2707,6 +2788,7 @@ export function boardPage(view: string, version = ""): string {
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
 <script>try { var t = localStorage.getItem("aiguilleur-theme"); if (t === "light" || t === "dark") document.documentElement.setAttribute("data-theme", t); } catch (e) {}</script>
 <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4.3.3" integrity="sha384-aJ9rL4k6lF+91guGvUFVSkpIcge7Zd9EiI4TQDLoK9kFaFJgKHgjEXVvG/qA5COj" crossorigin="anonymous"></script>
+<script src="https://cdn.jsdelivr.net/npm/idiomorph@0.8.0/dist/idiomorph.min.js" integrity="sha384-e8O/d5cD6uoo78UI/d99hf1dEsbvkgBZNIetwKEi79V9qexl0Bdc2wxEqLEaj58U" crossorigin="anonymous"></script>
 <style type="text/tailwindcss">${THEME}</style>
 </head>
 <body class="font-sans antialiased text-[13.5px]">

@@ -15,7 +15,7 @@ import { SHADOW_REFUSAL, shadowNow } from "../commands/setup.ts";
 import { actDone, type ActOutcome, actOnTask, refuseAct, undoTask } from "../app/act.ts";
 import { connectSlack, hasSlackToken, NO_TOKEN, threadDump } from "../app/slack.ts";
 import { ensureState, loadSujets, logEvent, reportOf, saveUpload, updateSujet, withLock } from "../app/store.ts";
-import { type BoardEvent, boardPage, type BoardSession, boardView, buildBoard, draftConflict, type LiveState, type VersionState, versionControl } from "../board.ts";
+import { type BoardEvent, boardPage, type BoardSession, boardView, buildBoard, draftConflict, type LiveState, type Pin, pinLine, pinOf, type VersionState, versionControl } from "../board.ts";
 import { applyUpdate, checkUpdates, localVersion } from "../app/update.ts";
 import { type SocketHealth } from "../chat/slack-model.ts";
 import { type AgentRow, claudeRefs, parsePs } from "../claude/model.ts";
@@ -372,10 +372,10 @@ export async function serve(args: string[]) {
     const t = readJson<{ lastTick?: number }>(F.tick, {}).lastTick;
     return t ? new Date(t * 1000).toISOString() : null;
   }
-  async function renderBoard(sujets: Sujet[]): Promise<string> {
+  async function renderBoard(sujets: Sujet[], pin: Pin | null = null): Promise<string> {
     const { sessions, others, running, remote, since, lastAgent, trail, agents } = await boardSessions(sujets);
     const model = buildBoard({ sujets, events: boardEvents(), live: liveStates(sujets), running, remote, since, lastAgent, trail, agents, teammates: cfg.teammates, sessions, otherSessions: others, now: new Date(), timeOf: dayTime, lastTick: lastTickIso(), socket: readJson<{ socket?: Partial<SocketHealth> }>(F.tick, {}).socket, slackAppId: cfg.appId, snoozed: new Map(Object.entries(readJson<Record<string, Snooze>>(F.snooze, {}))), revue: readJson<MasterRequest[]>(F.master, []).filter((r) => r.kind === "revue").at(-1) ?? null, demandes: readJson<MasterRequest[]>(F.master, []).filter((r) => r.kind === "demande"), users: readJson<Record<string, string>>(F.users, {}), deliveries: deliveries.of(sujets), heartbeat: readJson<{ beat?: number }>(F.tick, {}).beat, undo: undoByTopic(sujets) });
-    return boardView(model, { timeOf: dayTime, readAt: dayTime(new Date().toISOString()) });
+    return boardView(pinLine(model, pin), { timeOf: dayTime, readAt: dayTime(new Date().toISOString()) });
   }
   /** Board messages being delivered, "key\0text": a duplicate during delivery is refused. */
   const inFlight = new Set<string>();
@@ -764,7 +764,7 @@ export async function serve(args: string[]) {
     const route = `${req.method} ${url.pathname}`;
     const shadow = shadowNow();
     if (route === "GET /board") return html(boardPage(await renderBoard(loadSujets()), versionControl(updates)));
-    if (route === "GET /board/fragment") return html(await renderBoard(loadSujets()));
+    if (route === "GET /board/fragment") return html(await renderBoard(loadSujets(), pinOf(url.searchParams)));
     if (route === "GET /" && url.searchParams.has("board")) return Response.redirect(`http://127.0.0.1:${port}/board`, 302);
     if (route === "GET /") return html(panelPage(await render(url), version()));
     if (route === "GET /fragment") return html(await render(url));

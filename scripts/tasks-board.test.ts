@@ -1,7 +1,7 @@
 /** The board renders tasks: one block per open task with its own age and box, closed tasks only in the details. */
 import { sendsUnseenMessage, taskReady } from "./core/tasks.ts";
 import { describe, expect, test } from "bun:test";
-import { type BoardInput, buildBoard, classify, isQuickGo, lineView } from "./board.ts";
+import { type BoardInput, blocOrder, boardView, buildBoard, classify, isQuickGo, lineView, pinLine } from "./board.ts";
 import type { Sujet, Task } from "./lib.ts";
 
 const base: Sujet = {
@@ -123,5 +123,31 @@ describe("a task that would post unseen messages", () => {
     expect(sendsUnseenMessage({ ...unseen, action: "merger api!1143 vers dev" })).toBe(false);
     expect(sendsUnseenMessage({ ...unseen, kind: "draft" as never, draft: "Hello" })).toBe(false);
     expect(taskReady(unseen)).toBe(false);
+  });
+});
+
+describe("pin in the go queue", () => {
+  const ready = (letter: string, at: string) => sujet({ key: `C${letter}:1`, threads: [`C${letter}:1`], letter, sessionId: `s-${letter}`, tasks: [task({ id: "t1", draft: "ok", createdAt: at })] });
+  const decision = sujet({ key: "CD:1", threads: ["CD:1"], letter: "D", sessionId: "s-D", tasks: [task({ id: "t1", kind: "decision", ask: "5 % ou 0 % ?", action: "", draft: "", draftTo: "", createdAt: "2026-09-21T08:00:00Z" })] });
+  const sujets = [ready("P", "2026-09-21T09:00:00Z"), ready("Q", "2026-09-21T10:00:00Z"), decision];
+  const rowsOf = (html: string) => [...html.matchAll(/<li[^>]*data-letter="(\w)"/g)].map((x) => x[1]);
+  const quickOf = (html: string) => rowsOf(html.slice(html.indexOf("data-quick"), html.indexOf("</ul>", html.indexOf("data-quick"))));
+
+  test("a draft sent from the queue stays in the queue, at its place, while its session works", () => {
+    const before = buildBoard(input({ sujets }));
+    expect(blocOrder("attend", before.attend).map((l) => l.sujet.letter)).toEqual(["P", "Q", "D"]);
+    // Q was second in "just a go"; its draft is sent and its session wakes up
+    const after = buildBoard(input({ sujets, running: new Map([["s-Q", "busy"]]) }));
+    expect(after.travail.map((l) => l.sujet.letter)).toEqual(["Q"]);
+    const html = boardView(pinLine(after, { key: "CQ:1", bloc: "attend", index: 1, quick: true }), ctx);
+    expect(rowsOf(html).slice(0, 3)).toEqual(["P", "Q", "D"]);
+    expect(quickOf(html)).toEqual(["P", "Q"]);
+    expect(html).toContain("data-held");
+  });
+  test("a decision acted on stays first of its sub-list", () => {
+    const after = buildBoard(input({ sujets, running: new Map([["s-D", "busy"]]) }));
+    const html = boardView(pinLine(after, { key: "CD:1", bloc: "attend", index: 2 }), ctx);
+    expect(rowsOf(html).slice(0, 3)).toEqual(["P", "Q", "D"]);
+    expect(quickOf(html)).toEqual(["P", "Q"]);
   });
 });

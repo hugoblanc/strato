@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { actionCard, ago, badge, type BoardEvent, masterCommand, type BoardInput, type BoardSession, boardPage, boardView, buildBoard, classify, gateLabel, isQuickGo, lastMessageOf, lineView, mrTitle, postedLine, sessionLine, span } from "./board.ts";
+import { actionCard, ago, badge, type BoardEvent, masterCommand, type BoardInput, type BoardSession, boardPage, boardView, buildBoard, classify, pinLine, pinOf, gateLabel, isQuickGo, lastMessageOf, lineView, mrTitle, postedLine, sessionLine, span } from "./board.ts";
 import { postOnlyAction, type Sujet , freshness, gateSince } from "./lib.ts";
 
 const base: Sujet = {
@@ -154,6 +154,66 @@ describe("buildBoard", () => {
     const m = buildBoard(input({ sessions: [s("a", false), s("m", true)], otherSessions: 2 }));
     expect(m.sessions.map((x) => x.sessionId)).toEqual(["m", "a"]);
     expect(m.otherSessions).toBe(2);
+  });
+});
+
+describe("pin", () => {
+  const A = sujet({ key: "CA:1", threads: ["CA:1"], letter: "A", sessionId: "sa", updatedAt: "2026-09-21T06:00:00Z" });
+  const B = sujet({ key: "CB:1", threads: ["CB:1"], letter: "B", sessionId: "sb", updatedAt: "2026-09-21T07:00:00Z" });
+  const C = sujet({ key: "CC:1", threads: ["CC:1"], letter: "C", sessionId: "sc", updatedAt: "2026-09-21T08:00:00Z" });
+  const W = sujet({ key: "CW:1", threads: ["CW:1"], letter: "W", sessionId: "sw", status: "working", gate: "none", updatedAt: "2026-09-21T09:00:00Z" });
+  const letters = (ls: { sujet: Sujet }[]) => ls.map((l) => l.sujet.letter);
+  // the person pressed Go on B, second in "waiting on you": its session wakes up and works
+  const after = buildBoard(input({ sujets: [A, B, C, W], running: new Map([["sb", "busy"], ["sw", "busy"]]) }));
+
+  test("a line acted on keeps its block and index while its state changes", () => {
+    expect(letters(after.attend)).toEqual(["A", "C"]);
+    expect(letters(after.travail)).toEqual(["W", "B"]);
+    const m = pinLine(after, { key: "CB:1", bloc: "attend", index: 1 });
+    expect(letters(m.attend)).toEqual(["A", "B", "C"]);
+    expect(letters(m.travail)).toEqual(["W"]);
+    const b = m.attend[1];
+    expect(b?.bloc).toBe("travail");
+    expect(b?.verdict).toBe("travaille en ce moment");
+    expect(b?.pin).toEqual({ shownIn: "attend", quick: false, held: true });
+  });
+  test("it moves where it belongs once unpinned", () => {
+    const m = pinLine(after, null);
+    expect(m).toBe(after);
+    expect(letters(m.attend)).toEqual(["A", "C"]);
+    expect(letters(m.travail)).toEqual(["W", "B"]);
+  });
+  test("the page shows it in place with its new state, and the tab counts only what really waits on you", () => {
+    const html = boardView(pinLine(after, { key: "CB:1", bloc: "attend", index: 1 }), ctx);
+    const attend = html.slice(html.indexOf('id="bloc-attend"'), html.indexOf('id="bloc-revoir"'));
+    expect([...attend.matchAll(/<li[^>]*data-letter="(\w)"/g)].map((x) => x[1])).toEqual(["A", "B", "C"]);
+    expect(attend).toContain("data-held");
+    expect(attend).toContain("data-held-note");
+    expect(attend).toContain("Au travail");
+    expect(html).toContain('data-attend="2"');
+    expect(boardView(after, ctx)).not.toContain("data-held");
+  });
+  test("the index is clamped to the block's length", () => {
+    const m = pinLine(after, { key: "CB:1", bloc: "attend", index: 9 });
+    expect(letters(m.attend)).toEqual(["A", "C", "B"]);
+  });
+  test("a line still where it belongs is pinned without the cue", () => {
+    const m = pinLine(after, { key: "CA:1", bloc: "attend", index: 0 });
+    expect(letters(m.attend)).toEqual(["A", "C"]);
+    expect(m.attend[0]?.pin?.held).toBe(false);
+    expect(boardView(m, ctx)).not.toContain("data-held");
+  });
+  test("a line that left the blocks (closed, snoozed) or an unknown key changes nothing", () => {
+    expect(pinLine(after, { key: "CZ:9", bloc: "attend", index: 0 })).toBe(after);
+  });
+  test("pinOf reads the request and refuses what it cannot place", () => {
+    expect(pinOf(new URLSearchParams("pin=CB%3A1&pinBloc=attend&pinIndex=1"))).toEqual({ key: "CB:1", bloc: "attend", index: 1, quick: false });
+    expect(pinOf(new URLSearchParams("pin=CB:1&pinBloc=attend&pinIndex=0&pinQuick=1"))?.quick).toBe(true);
+    expect(pinOf(new URLSearchParams("pin=CB:1&pinBloc=travail&pinIndex=0&pinQuick=1"))?.quick).toBe(false);
+    expect(pinOf(new URLSearchParams(""))).toBeNull();
+    expect(pinOf(new URLSearchParams("pin=CB:1&pinBloc=sessions&pinIndex=1"))).toBeNull();
+    expect(pinOf(new URLSearchParams("pin=CB:1&pinBloc=attend&pinIndex=-1"))).toBeNull();
+    expect(pinOf(new URLSearchParams("pin=CB:1&pinBloc=attend"))).toBeNull();
   });
 });
 
