@@ -60,8 +60,13 @@ describe("tasks on the board", () => {
     expect(html).not.toContain('data-task="t3" class');
     expect(html).not.toContain(">rejouer le script SQL en prod<");
     // each task its own age: a day for t1, an hour for t2
-    expect(html).toContain("<span data-age> · 1 j</span>");
-    expect(html).toContain("<span data-age> · 1 h</span>");
+    expect(html).toContain("<span data-age>1 j</span>");
+    expect(html).toContain("<span data-age>1 h</span>");
+    // the ids stay in the attributes, never in the text
+    expect(html.replace(/<[^>]+>/g, "")).not.toMatch(/\bt[123]\b/);
+    // the first task is expanded, the second folded: its line only opens it
+    expect(html).toMatch(/id="tb-C0ACMECMP01:1788788755\.025729#t1" data-panel class=/);
+    expect(html).toMatch(/id="tb-C0ACMECMP01:1788788755\.025729#t2" data-panel hidden/);
     expect(html.match(/>g g<\/span>/g)?.length).toBe(1);
     expect(html.indexOf('data-task-item data-task="t1"')).toBeLessThan(html.indexOf(">g g</span>"));
     expect(html.indexOf(">g g</span>")).toBeLessThan(html.indexOf('data-task-item data-task="t2"'));
@@ -94,7 +99,7 @@ describe("tasks on the board", () => {
     const l = classify(mixed, [], null, "idle", timeOf);
     expect(isQuickGo(l)).toBe(false);
     // the decision has its Done and Drop buttons, without a box nor a Go
-    expect(lineView(l, ctx)).toContain('data-task-ops><span class="flex shrink-0');
+    expect(lineView(l, ctx)).toContain('data-task-ops><span class="ml-auto flex shrink-0');
   });
 
   test("a migrated card whose action comes from another request shows no Go", () => {

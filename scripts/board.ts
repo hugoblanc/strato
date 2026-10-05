@@ -7,12 +7,13 @@
  * Every visible word goes through core/i18n.ts: t() on the server, tr() in the page's script.
  */
 import { faviconHref, stratoMark } from "./core/brand.ts";
-import { isItemEvent, postOnlyAction, truncate, t, clientMessages, locale, type MessageKey, type ActivityStep, type AgentNode, agentCounts, type Due, type MasterRequest, type MrStage, MR_STAGE_ORDER, parseDue, REVUE_STALE_MS, REVUE_WINDOWS, draftText, isSnoozed, type Snooze, parseSteps, permalinkOfKey, providerKeyLabel, providerLabel, repoLabel, isResolved, maxTextOf, planOfTask, planSha, providerOfKey, unknownOf, renderHtml, resolveTarget, type ResolvedTarget, targetLink, threadInfoOfKey, type UnresolvedTarget, type SessionContext, settings, shellQuote, ticketIdOfKey, ticketUrl, type SocketHealth, socketDeaf, type Sujet, sujetKeys, takenBy, freshness, gateSince, checkable, descriptorOf, openTasks, tasksOf, taskDraftText, taskReady, sendsUnseenMessage, type Task, type TaskKind } from "./lib.ts";
+import { isItemEvent, postOnlyAction, truncate, t, clientMessages, locale, type MessageKey, type ActivityStep, type AgentNode, agentCounts, type Due, type MasterRequest, type MrStage, MR_STAGE_ORDER, parseDue, REVUE_STALE_MS, REVUE_WINDOWS, draftText, isSnoozed, type Snooze, parseSteps, permalinkOfKey, providerKeyLabel, providerLabel, repoLabel, isResolved, maxTextOf, planOfTask, planSha, providerOfKey, unknownOf, renderHtml, resolveTarget, type ResolvedTarget, targetLink, threadInfoOfKey, type UnresolvedTarget, type SessionContext, settings, shellQuote, ticketUrl, type SocketHealth, socketDeaf, type Sujet, sujetKeys, takenBy, freshness, gateSince, checkable, descriptorOf, openTasks, tasksOf, taskDraftText, taskReady, sendsUnseenMessage, type Task, type TaskKind } from "./lib.ts";
 import { type StaleSignal, staleSignals } from "./core/refresh.ts";
 import { roleT } from "./core/i18n.ts";
 import { speaksCode } from "./core/roles.ts";
 import { escapeHtml, textToHtml } from "./panel.ts";
 import { slackEventsPage } from "./providers/slack/model.ts";
+import { type CardContext, type CardTask, type CardView, cardOf, cardTasks, isQuickGo, span, type ThreadRef } from "./views/card.ts";
 import type { LocalVersion, UpdateCheck, UpdateResult } from "./app/update.ts";
 
 /** A line of events.ndjson: a routed Slack message, or a session transition. */
@@ -25,6 +26,8 @@ export interface BoardEvent {
   channel?: string;
   permalink?: string;
   attention?: string;
+  /** The message's text, cut at 200 characters (item and info events). */
+  text?: string;
 }
 
 /** What a topic session declared through its hooks, in live/<sessionId>.json. */
@@ -66,6 +69,8 @@ export interface LastMessage {
   at: string;
   channel?: string;
   permalink?: string;
+  /** An excerpt of the message, when the event carries it. */
+  text?: string;
 }
 
 /** A merge request of a topic, with its stage towards production, computed by the server from the forge. */
@@ -249,7 +254,7 @@ export function lastMessageOf(s: Sujet, events: BoardEvent[]): LastMessage | nul
     if (!isItemEvent(e) || !e.key || !keys.has(e.key) || !e.kind) continue;
     if (!last || e.at > last.at) last = e;
   }
-  return last ? { kind: last.kind ?? "", from: last.from ?? "?", at: last.at, channel: last.channel, permalink: last.permalink } : null;
+  return last ? { kind: last.kind ?? "", from: last.from ?? "?", at: last.at, channel: last.channel, permalink: last.permalink, ...(last.text ? { text: last.text } : {}) } : null;
 }
 
 /** What the gate asks of the person served, in two words, for the card's badge. */
@@ -464,14 +469,7 @@ const pad2 = (n: number) => String(n).padStart(2, "0");
 const hhmm = (d: Date) => `${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
 const ddmm = (d: Date) => `${pad2(d.getDate())}/${pad2(d.getMonth() + 1)}`;
 
-/** A short duration, rounded down: "< 1 min", "48 min", "3 h", "5 d". */
-export function span(ms: number): string {
-  const m = Math.floor(Math.max(0, ms) / 60_000);
-  if (m < 1) return t("board.span.underMinute");
-  if (m < 60) return t("board.span.minutes", { n: m });
-  const h = Math.floor(m / 60);
-  return h < 24 ? t("board.span.hours", { n: h }) : t("board.span.days", { n: Math.floor(h / 24) });
-}
+export { isQuickGo, span };
 
 /**
  * An instant told relative to now, local time: "12 min ago", "3 h ago", "in 40 min" for today; "yesterday 14:02",
@@ -525,57 +523,19 @@ export const draftHtml = (provider: string | null, text: string): string => rend
 /** A Slack draft as Slack will show it: `draftHtml` for Slack, kept for its callers. */
 export const slackToHtml = (text: string): string => draftHtml("slack", text);
 
-/**
- * A thread attached to the topic: the original thread keeps the channel's name; the others show channel and date of
- * the thread, so that three threads of the same DM do not all read "Slack D0123456789".
- */
-function keyLink(key: string, s: Sujet): string {
-  const ticket = ticketIdOfKey(key);
-  if (ticket) return ticketLink(ticket);
-  const url = permalinkOfKey(key);
-  const thread = threadInfoOfKey(key);
-  if (!thread) {
-    const label = key === s.key ? s.channel : providerKeyLabel(key);
-    return url ? link(url, label) : escapeHtml(label);
-  }
-  const id = thread.conversation;
-  const when = thread.at !== undefined ? new Date(thread.at) : null;
-  const date = when && !Number.isNaN(when.getTime()) ? ` ${String(when.getDate()).padStart(2, "0")}/${String(when.getMonth() + 1).padStart(2, "0")} ${String(when.getHours()).padStart(2, "0")}:${String(when.getMinutes()).padStart(2, "0")}` : "";
-  const twin =
-    when &&
-    sujetKeys(s).some((k) => {
-      const other = k !== key ? threadInfoOfKey(k) : null;
-      return other !== null && other.provider === thread.provider && other.account === thread.account && other.conversation === id && Math.floor((other.at ?? Number.NaN) / 60_000) === Math.floor(when.getTime() / 60_000);
-    });
-  const label = key === s.key ? s.channel : `${CHANNEL_NAMES.get(id) ?? `${thread.tool} ${id}`}${date}${twin && when ? `:${String(when.getSeconds()).padStart(2, "0")}` : ""}`;
-  return url ? link(url, label) : escapeHtml(label);
-}
+/** A thread or ticket of the topic, as a link when it has one (labels decided by views/card.ts threadRefs). */
+const refLink = (r: ThreadRef) => (r.url ? link(r.url, r.label) : escapeHtml(r.label));
 
-/** Threads shown on the meta line besides the original one; the older ones fold behind "+N", tickets always show. */
-const RECENT_THREADS = 2;
-
-/**
- * The topic's other threads and tickets for the meta line: tickets, then the most recent threads, the older threads
- * folded in a panel that survives the redraws (`data-panel`), so that a long topic keeps a short header.
- */
-function otherLinks(s: Sujet): string[] {
-  const keys = sujetKeys(s).filter((k) => k !== s.key);
-  const tickets = keys.filter((k) => ticketIdOfKey(k));
-  const threads = keys
-    .filter((k) => !ticketIdOfKey(k))
-    .map((k, i) => ({ k, i, at: threadInfoOfKey(k)?.at ?? -Infinity }))
-    .sort((a, b) => b.at - a.at || b.i - a.i)
-    .map((x) => x.k);
-  // folding a single thread would save nothing: it takes as much room as the "+1" that replaces it
-  if (threads.length <= RECENT_THREADS + 1) return keys.map((k) => keyLink(k, s));
-  const shown = [...tickets, ...threads.slice(0, RECENT_THREADS)].map((k) => keyLink(k, s));
-  const older = threads.slice(RECENT_THREADS);
-  const id = `threads-${s.key}`;
+/** The topic's threads besides the origin: tickets and the latest ones, the older ones folded in a panel that survives the redraws. */
+function threadLinks(key: string, c: CardContext): string {
+  const shown = c.threads.map((r) => `<span>${refLink(r)}</span>`);
+  if (!c.older.length) return shown.join("");
+  const id = `threads-${key}`;
   return [
     ...shown,
-    `<button type="button" data-toggle="${escapeHtml(id)}" class="rounded px-1 text-muted hover:bg-soft hover:text-ink aria-expanded:text-ink" aria-expanded="false" title="${escapeHtml(t("board.line.olderThreads.tip"))}">${escapeHtml(t("board.line.olderThreads", { n: older.length }))}</button>`,
-    `<span id="${escapeHtml(id)}" data-panel hidden class="inline-flex flex-wrap gap-x-4 gap-y-1">${older.map((k) => `<span>${keyLink(k, s)}</span>`).join("")}</span>`,
-  ];
+    `<button type="button" data-toggle="${escapeHtml(id)}" class="rounded px-1 text-muted hover:bg-soft hover:text-ink aria-expanded:text-ink" aria-expanded="false" title="${escapeHtml(t("board.line.olderThreads.tip"))}">${escapeHtml(t("board.line.olderThreads", { n: c.older.length }))}</button>`,
+    `<span id="${escapeHtml(id)}" data-panel hidden class="inline-flex flex-wrap gap-x-4 gap-y-1">${c.older.map((r) => `<span>${refLink(r)}</span>`).join("")}</span>`,
+  ].join("");
 }
 
 function clip(text: string, max: number): string {
@@ -593,11 +553,6 @@ const LABEL = "text-[12.5px] font-medium text-muted";
 /** A labelled line of the card: the content is already HTML. */
 const fieldRow = (label: string, html: string, attrs = "") => `<div class="${FIELD}"${attrs}><dt class="${LABEL}">${label}</dt><dd class="min-w-0">${html}</dd></div>`;
 
-/** A field of the Details panel. Sessions sometimes write a literal `\n` through `set`: rendered as a line break. */
-function cardField(label: string, value: string | undefined): string {
-  const text = value?.replace(/\\n/g, "\n").trim();
-  return fieldRow(escapeHtml(label), `<div class="whitespace-pre-wrap text-[13.5px] leading-relaxed">${text ? textToHtml(text) : `<span class="text-muted">${t("board.field.empty")}</span>`}</div>`);
-}
 
 /** Amber is reserved for what waits on the person served (block lamp, "On your go" box): the gate badge is neutral, with its shape. */
 const BADGE: Record<Tone, string> = {
@@ -636,14 +591,12 @@ const meta = (items: string[]) => `<div class="flex flex-wrap items-center gap-x
  */
 const BTN_PRIMARY = "inline-flex h-8 items-center rounded-md bg-accent px-3 text-[12.5px] font-semibold text-[#1b1406] hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40";
 const BTN = "inline-flex h-7 items-center rounded-md border border-line bg-surface px-2.5 text-[12.5px] font-medium text-ink hover:bg-soft disabled:cursor-not-allowed disabled:opacity-50";
+/** The secondary button in a dense line (a task's line, the stale line): same look, 24 px. */
+const BTN_SM = "inline-flex h-6 items-center rounded-md border border-line bg-surface px-2 text-[12.5px] font-medium text-ink hover:bg-soft disabled:cursor-not-allowed disabled:opacity-50";
 const BTN_TEXT = "inline-flex h-7 items-center whitespace-nowrap rounded-md px-2 text-[12.5px] font-medium text-muted hover:bg-soft hover:text-ink";
 
 /** The keyboard key that triggers the primary button, inside the button. */
 const KEY_HINT = `<span class="ml-2 text-[11.5px] font-medium opacity-60" aria-hidden="true">g g</span>`;
-
-/** A text button that unfolds a panel of the line (Details). */
-const toggle = (panelId: string, label: string) =>
-  `<button type="button" data-toggle="${escapeHtml(panelId)}" class="${BTN_TEXT} aria-expanded:bg-soft aria-expanded:text-ink" aria-expanded="false">${escapeHtml(label)}</button>`;
 
 /**
  * What the session is doing right now, while it works: the current step (pulsing dot) and the earlier ones of the turn.
@@ -726,69 +679,19 @@ function dueRow(d: DueView, ctx: BoardContext): string {
 }
 
 /**
- * The reason before the button: Request and Proposal on one line each, then what blocks (only when no action box
- * already says it), the state of the merge requests read from the forge and the due dates. One label column.
- * A card older than the ask and proposal fields falls back on its summary.
- */
-function factsBlock(l: BoardLine, ctx: BoardContext): string {
-  const s = l.sujet;
-  const mrs = l.deliveries ?? [];
-  const dues = l.dues ?? [];
-  const text = (t: string, max: number) => `<p class="text-[13.5px] leading-snug text-ink/90" title="${escapeHtml(t.replace(/\\n/g, " "))}">${escapeHtml(clip(t.replace(/\\n/g, " "), max))}</p>`;
-  const rows: string[] = [];
-  // a topic with open tasks shows each task's request and proposal in its own block, never the card's: the card's
-  // ask can belong to an earlier request
-  if (!openTasks(s).length) {
-    if (s.ask?.trim()) rows.push(fieldRow(t("board.card.ask"), text(s.ask, 140)));
-    if (s.proposal?.trim()) rows.push(fieldRow(t("board.card.proposal"), text(s.proposal, 200)));
-    if (!rows.length && s.summary?.trim()) rows.push(fieldRow(t("board.card.summary"), text(s.summary, 200)));
-  }
-  rows.push(blockerLine(l));
-  const list = (items: string) => `<ul class="flex min-w-0 flex-col gap-1 text-[12.5px]">${items}</ul>`;
-  if (mrs.length) rows.push(fieldRow(t("board.card.delivery"), list(deliveryRows(mrs, ctx)), " data-delivery"));
-  if (dues.length) rows.push(fieldRow(t("board.card.due"), list(dues.map((d) => dueRow(d, ctx)).join(""))));
-  const body = rows.filter(Boolean).join("");
-  return body ? `<dl class="flex max-w-[78ch] flex-col gap-1.5" data-facts>${body}</dl>` : "";
-}
-
-/**
  * The card may have aged: what the sweep saw, the last relaunch, and a button to have its session revalidate it.
  * Nothing when there is no signal and no recent relaunch, or when the session does not exist.
  */
 export function staleLine(l: BoardLine, ctx: BoardContext): string {
-  const s = l.sujet;
-  if (!s.sessionId || l.running === "busy") return "";
-  const signals = l.stale ?? [];
-  const r = s.refresh;
-  // a relaunch is "recent" as long as the card has not been rewritten since
-  const pending = r && Date.parse(r.at) >= Date.parse(s.updatedAt);
-  if (!signals.length && !pending) return "";
-  const button = `<button type="button" data-revalidate="${escapeHtml(s.key)}" title="${escapeHtml(t("board.card.revalidate.tip"))}" class="${BTN}">${t("board.card.revalidate")}</button>`;
-  const what = signals.length ? t("board.stale.line", { signals: escapeHtml(signals.map((x) => x.text).join(t("board.stale.separator"))) }) : "";
-  const since = pending ? ` <span class="text-muted">${t("board.stale.requested", { when: when(r.at, ctx) })}</span>` : "";
-  return `<p class="flex max-w-[78ch] flex-wrap items-center gap-x-2 gap-y-1 text-[12.5px] leading-relaxed text-muted" data-stale>${what ? `<span>${what}</span>` : ""}${since}${pending ? "" : button}</p>`;
+  return staleView(l.sujet.key, cardOf(l, { now: nowOf(ctx) }).stale, ctx);
 }
 
-/**
- * What blocks, on the line of a topic waiting on the person served: `blocker`, else `next` for older cards. Nothing for
- * a "just a go": its action box already says what goes out, one wording is enough.
- */
-function blockerLine(l: BoardLine): string {
-  const s = l.sujet;
-  const text = (s.blocker || s.next || "").trim();
-  if (l.bloc !== "attend" || !text || isQuickGo(l)) return "";
-  const now = parseSteps(s.steps).find((x) => x.state === "now");
-  return fieldRow(t("board.card.blocker"), `<p class="text-[13.5px] leading-snug text-ink" data-blocker>${escapeHtml(clip(text, 200))}${now && !text.toLowerCase().includes(now.text.slice(0, 20).toLowerCase()) ? ` <span class="text-muted">${t("board.card.blockerStep", { step: escapeHtml(clip(now.text, 80)) })}</span>` : ""}</p>`);
-}
-
-/** The topic's plan as a list: ✓ done, ◉ in progress (the one that blocks), ○ to do. Nothing if the session left `steps` empty. */
-function stepsList(s: Sujet): string {
-  const steps = parseSteps(s.steps);
-  if (!steps.length) return "";
-  const glyph = { done: "✓", now: "◉", todo: "○" } as const;
-  const cls = { done: "text-muted line-through decoration-line/60", now: "text-ink font-medium", todo: "text-ink/80" } as const;
-  const doneCount = steps.filter((x) => x.state === "done").length;
-  return fieldRow(`${t("board.card.plan")} <span class="tabular-nums">${doneCount}/${steps.length}</span>`, `<ol class="flex flex-col gap-1 text-[13.5px] leading-relaxed">${steps.map((x) => `<li class="flex gap-2 ${cls[x.state]}"><span class="w-4 shrink-0 text-center">${glyph[x.state]}</span><span>${escapeHtml(x.text)}</span></li>`).join("")}</ol>`);
+function staleView(key: string, st: CardView["stale"], ctx: BoardContext): string {
+  if (!st) return "";
+  const button = `<button type="button" data-revalidate="${escapeHtml(key)}" title="${escapeHtml(t("board.card.revalidate.tip"))}" class="${BTN_SM}">${t("board.card.revalidate")}</button>`;
+  const what = st.signals.length ? t("board.stale.line", { signals: escapeHtml(st.signals.join(t("board.stale.separator"))) }) : "";
+  const since = st.requestedAt ? ` <span class="text-muted">${t("board.stale.requested", { when: when(st.requestedAt, ctx) })}</span>` : "";
+  return `<p class="flex max-w-[78ch] flex-wrap items-center gap-x-2 gap-y-1 text-[12.5px] leading-relaxed text-muted" data-stale>${what ? `<span>${what}</span>` : ""}${since}${st.requestedAt ? "" : button}</p>`;
 }
 
 /**
@@ -808,7 +711,7 @@ export function postedLine(s: Sujet, ctx: BoardContext, now = Date.now(), undoUn
   const quiet = bloc === "attend";
   const tail = s.status === "gate" ? "" : `<span class="text-muted">${t("board.posted.tail")}</span>`;
   const at = `<time datetime="${escapeHtml(m[1])}" title="${escapeHtml(ctx.timeOf(m[1]))}" class="tabular-nums">${escapeHtml(ago(m[1], now))}</time>`;
-  return `<p class="flex items-center gap-2 text-[12.5px] ${quiet ? "text-muted" : "text-clear-ink"}" data-posted>${quiet ? "" : `<span class="lamp lamp-green" aria-hidden="true"></span>`}${t("board.posted.at", { at })} · <span><a href="${escapeHtml(m[2])}" target="_blank" rel="noopener" class="underline underline-offset-2">${t("board.posted.view")}</a>${tail}</span>${undo}</p>`;
+  return `<p class="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[12.5px] ${quiet ? "text-muted" : "text-clear-ink"}" data-posted>${quiet ? "" : `<span class="lamp lamp-green" aria-hidden="true"></span>`}<span>${t("board.posted.at", { at })}</span><span aria-hidden="true">·</span><span><a href="${escapeHtml(m[2])}" target="_blank" rel="noopener" class="underline underline-offset-2">${t("board.posted.view")}</a>${tail}</span>${undo}</p>`;
 }
 
 /** The card says a post is due, but there is no draft text: say it on the line, rather than leave the person served searching. */
@@ -954,51 +857,59 @@ ${viaSession ? `<div class="mt-2.5 flex flex-wrap items-center gap-2">${shadow ?
 </div>`;
   }
   const missing = x.kind === "draft" ? `<p class="mr-auto text-[12.5px] text-warn">${escapeHtml(t("board.task.draftMissing"))}</p>` : "";
-  // no box: the buttons sit under the request, aligned with the labels, not floating at the far right
-  return `<div class="flex max-w-[78ch] flex-wrap items-center gap-2" data-task-ops>${missing}${missing ? ops : ops.replace("ml-auto ", "")}</div>`;
+  // no box: Done and Drop on the right, where the draft and the action boxes put them
+  return `<div class="flex max-w-[78ch] flex-wrap items-center gap-2" data-task-ops>${missing}${ops}</div>`;
 }
 
+/** The kind of a task, in the colours of what it asks: a decision, an answer, a draft to read, a go on an action. */
+const KIND_CHIP: Record<CardTask["kind"], string> = {
+  decide: "bg-accent-soft text-accent-ink",
+  answer: "bg-wait-soft text-wait-ink",
+  draft: "bg-link/10 text-link",
+  go: "bg-warn-soft text-warn",
+};
+const kindChip = (k: CardTask["kind"]) => `<span class="inline-flex h-5 shrink-0 items-center rounded px-1.5 text-[11.5px] font-semibold ${KIND_CHIP[k]}">${escapeHtml(t(`board.card.kind.${k}` as MessageKey))}</span>`;
+
 /**
- * One open task: its id and badge (kind and real age, tinted by freshness), its request and proposal, its box, and
- * its Done and Drop buttons. `hint`: this task's primary button is the one g g sends.
+ * One open task: a line with its kind, its need and its age (tinted by its own freshness), and its body (proposal,
+ * then the draft, the action or the decision's buttons). The first open task is expanded; the others stay on one
+ * line, and their button only opens them in place: a folded draft or command is never sent from its line. The body is
+ * a panel (`data-panel`): what the person opened or folded survives the redraws. The id stays in data attributes.
  */
-export function taskBlock(s: Sujet, x: Task, ctx: BoardContext, hint = false): string {
-  const age = nowOf(ctx) - Date.parse(x.createdAt);
-  const fresh = freshness(age);
-  const text = (v: string, max: number) => `<p class="text-[13.5px] leading-snug text-ink/90" title="${escapeHtml(v.replace(/\\n/g, " "))}">${escapeHtml(clip(v.replace(/\\n/g, " "), max))}</p>`;
-  const rows = [fieldRow(t("board.card.ask"), text(x.ask, 160)), ...(x.proposal?.trim() ? [fieldRow(t("board.card.proposal"), text(x.proposal, 220))] : [])].join("");
-  const head = `<div class="flex items-center gap-2"><span class="font-mono text-[11.5px] font-medium text-muted" title="${escapeHtml(t("board.task.id.tip", { id: x.id }))}">${escapeHtml(x.id)}</span>${badge(taskKindLabel(x.kind), "accent", false, ` · ${span(age)}`)}</div>`;
-  return `<div class="flex flex-col gap-2 border-t border-dashed border-line pt-3 first:border-t-0 first:pt-0" id="task-${escapeHtml(s.key)}#${escapeHtml(x.id)}" data-task-item data-task="${escapeHtml(x.id)}" data-task-fresh style="--fh:${fresh.h};--fk:${fresh.k}">
-${head}
-<dl class="flex max-w-[78ch] flex-col gap-1.5">${rows}</dl>
-${taskBox(s, x, hint)}
+export function taskBlock(s: Sujet, x: CardTask, hint = false): string {
+  const fresh = freshness(x.ageMs);
+  const k = escapeHtml(s.key);
+  const id = escapeHtml(x.id);
+  const body = `tb-${k}#${id}`;
+  const expanded = x.open ? "true" : "false";
+  const proposal = x.task.proposal?.trim() ? `<p class="max-w-[78ch] text-[13.5px] leading-snug text-ink/85" title="${escapeHtml(x.task.proposal.replace(/\\n/g, " "))}">${escapeHtml(clip(x.task.proposal.replace(/\\n/g, " "), 320))}</p>` : "";
+  const open = `<button type="button" data-toggle="${body}" aria-expanded="${expanded}" class="${BTN_SM} shrink-0 group-aria-expanded:hidden" title="${escapeHtml(t("board.card.task.open.tip"))}">${escapeHtml(t(x.kind === "draft" ? "board.card.task.review" : "board.card.task.view"))}</button>`;
+  return `<div class="border-t border-line first:border-t-0" id="task-${k}#${id}" data-task-item data-task="${id}" data-task-fresh style="--fh:${fresh.h};--fk:${fresh.k}">
+<div role="button" tabindex="0" data-toggle="${body}" aria-expanded="${expanded}" class="group flex cursor-pointer items-center gap-2.5 px-3 py-2 hover:bg-soft/40" title="${escapeHtml(x.task.ask.replace(/\\n/g, " "))}">${kindChip(x.kind)}<span class="min-w-0 flex-1 truncate text-[13.5px] text-ink/85 group-aria-expanded:whitespace-normal group-aria-expanded:font-semibold group-aria-expanded:text-ink">${escapeHtml(x.need)}</span><span class="shrink-0 text-[12.5px] tabular-nums text-muted"><span data-age>${escapeHtml(x.age)}</span></span>${open}</div>
+<div id="${body}" data-panel${x.open ? "" : " hidden"} class="flex cursor-auto flex-col gap-2.5 px-3 pb-3">${proposal}${taskBox(s, x.task, hint)}</div>
 </div>`;
 }
 
-/**
- * The action zone of a card: the list of its open tasks, oldest first. g g sends the first ready one. Empty when no
- * task is open: a closed task never shows a Go nor an amber box.
- */
-export function actionCard(l: BoardLine, ctx?: BoardContext): string {
-  const s = l.sujet;
-  const open = openTasks(s);
-  if (!open.length) return "";
-  const first = open.find(taskReady)?.id;
-  const c: BoardContext = ctx ?? { timeOf: (i: string) => i };
-  return `<div class="flex flex-col gap-3" data-tasks>${open.map((x) => taskBlock(s, x, c, x.id === first)).join("")}</div>`;
+/** The tasks of a card, oldest first. g g sends the first one when it is ready: the only one expanded by default. */
+function tasksStack(s: Sujet, tasks: CardTask[]): string {
+  if (!tasks.length) return "";
+  const hint = taskReady(tasks[0].task) ? tasks[0].id : null;
+  return `<div class="flex max-w-[78ch] flex-col overflow-hidden rounded-lg border border-line bg-surface" data-tasks>${tasks.map((x) => taskBlock(s, x, x.id === hint)).join("")}</div>`;
 }
 
-/** The tasks closed in the last three days, newest first: what was done or dropped, when, and why. */
-function closedTasksField(s: Sujet, ctx: BoardContext): string {
-  const now = nowOf(ctx);
-  const recent = tasksOf(s)
-    .filter((x) => x.status !== "open" && now - Date.parse(x.closedAt ?? x.updatedAt) < 3 * 86_400_000)
-    .sort((a, b) => (b.closedAt ?? b.updatedAt).localeCompare(a.closedAt ?? a.updatedAt))
-    .slice(0, 8);
-  if (!recent.length) return "";
+/** The action zone of a card: its open tasks. Empty when none is open: a closed task never shows a Go nor an amber box. */
+export function actionCard(l: BoardLine, ctx?: BoardContext): string {
+  return tasksStack(l.sujet, cardTasks(l.sujet, ctx ? nowOf(ctx) : Date.now()));
+}
+
+/** The last finished tasks, newest first: what was done or dropped, when, and why; the rest is in the report. */
+function finishedField(s: Sujet, c: CardContext, ctx: BoardContext): string {
+  if (!c.finished.length) return "";
   const item = (x: Task) =>
-    `<li class="flex flex-wrap items-baseline gap-x-2 text-[12.5px]" data-closed-task="${escapeHtml(x.id)}"><span class="font-mono text-muted">${escapeHtml(x.id)}</span><span class="font-medium ${x.status === "done" ? "text-clear-ink" : "text-muted"}">${escapeHtml(t(x.status === "done" ? "board.task.status.done" : "board.task.status.dropped"))}</span>${when(x.closedAt ?? x.updatedAt, ctx)}<span class="min-w-0 text-ink/85">${escapeHtml(clip(x.ask, 120))}</span>${x.note ? `<span class="min-w-0 text-muted">${textToHtml(clip(x.note, 200))}</span>` : ""}</li>`;
-  return fieldRow(escapeHtml(t("board.card.closedTasks")), `<ul class="flex flex-col gap-1">${recent.map(item).join("")}</ul>`);
+    `<li class="flex flex-wrap items-baseline gap-x-2 text-[12.5px]" data-closed-task="${escapeHtml(x.id)}"><span class="font-medium ${x.status === "done" ? "text-clear-ink" : "text-muted"}">${escapeHtml(t(x.status === "done" ? "board.task.status.done" : "board.task.status.dropped"))}</span>${when(x.closedAt ?? x.updatedAt, ctx)}<span class="min-w-0 text-ink/85">${escapeHtml(clip(x.ask, 120))}</span>${x.note ? `<span class="min-w-0 text-muted">${textToHtml(clip(x.note, 200))}</span>` : ""}</li>`;
+  const more = c.finishedCount - c.finished.length;
+  const rest = more > 0 ? `<li><a href="/?sujet=${encodeURIComponent(s.key)}" class="text-[12.5px] text-link hover:underline underline-offset-2">${escapeHtml(t("board.card.ctx.finishedMore", { n: more }))}</a></li>` : "";
+  return fieldRow(escapeHtml(t("board.card.closedTasks")), `<ul class="flex flex-col gap-1">${c.finished.map(item).join("")}${rest}</ul>`);
 }
 
 /**
@@ -1017,6 +928,90 @@ export function draftConflict(s: Sujet, sent: { taskId?: unknown; text?: unknown
   return null;
 }
 
+
+/** The colour of the status line: the board's tones, amber for what waits on the person served. */
+const STATUS_INK: Record<Tone, string> = { accent: "text-accent-ink", warn: "text-warn", clear: "text-clear-ink", wait: "text-wait-ink", muted: "text-muted" };
+const PULSE = `<span class="relative inline-flex h-1.5 w-1.5"><span class="absolute inline-flex h-full w-full animate-ping rounded-full bg-current opacity-60 motion-reduce:hidden"></span><span class="relative inline-flex h-1.5 w-1.5 rounded-full bg-current"></span></span>`;
+
+/** The one line that says the session's state: a sentence, its age, and the time the card was written on hover. */
+function statusView(c: CardView, cardAt: string, ctx: BoardContext): string {
+  const st = c.status;
+  const shown = clip(st.text, 64);
+  const tip = [st.text, t("board.card.status.cardAt", { time: ctx.timeOf(cardAt) })].join("\n");
+  const age = st.age ? `<span class="text-muted" data-age>· ${escapeHtml(st.age)}</span>` : "";
+  return `<span class="inline-flex min-w-0 items-center gap-1.5 text-[12.5px] font-medium tabular-nums ${STATUS_INK[st.tone]}" data-status-kind="${st.kind}" title="${escapeHtml(tip)}">${st.pulse ? PULSE : shape(st.tone)}<span class="min-w-0 truncate">${escapeHtml(shown)}</span>${age}</span>`;
+}
+
+/** The last message of the thread, in its author's words. */
+function saidView(c: CardView, ctx: BoardContext): string {
+  const m = c.said;
+  if (!m) return "";
+  const age = m.age ? `<time datetime="${escapeHtml(m.at)}" title="${escapeHtml(ctx.timeOf(m.at))}" class="tabular-nums">${escapeHtml(m.age)}</time>` : "";
+  const tail = m.url ? `<a href="${escapeHtml(m.url)}" data-open class="shrink-0 whitespace-nowrap text-[12.5px] text-muted hover:text-link hover:underline underline-offset-2" title="${escapeHtml(t("board.card.said.open"))}">${age || "↗"}</a>` : age ? `<span class="shrink-0 whitespace-nowrap text-[12.5px] text-muted">${age}</span>` : "";
+  return `<p class="flex min-w-0 max-w-[78ch] items-baseline gap-x-2 text-[13.5px] leading-snug text-ink/85" data-said><span class="shrink-0 font-semibold text-ink">${escapeHtml(m.who)}</span>${m.where ? `<span class="shrink-0 text-muted">${escapeHtml(m.where)}</span>` : ""}${m.text ? `<q class="min-w-0 italic">${escapeHtml(m.text)}</q>` : ""}${tail}</p>`;
+}
+
+/** What the session said since the card was written. */
+function wordView(c: CardView, ctx: BoardContext): string {
+  const w = c.word;
+  if (!w) return "";
+  const age = w.age ? ` · <time datetime="${escapeHtml(w.at)}" title="${escapeHtml(ctx.timeOf(w.at))}" class="tabular-nums">${escapeHtml(w.age)}</time>` : "";
+  return `<p class="flex min-w-0 max-w-[78ch] items-baseline gap-x-2 gap-y-0.5 text-[12.5px] leading-snug text-muted max-sm:flex-col" data-word><span class="shrink-0">${t("board.card.word")}${age}</span><span class="min-w-0 text-ink/80">${escapeHtml(w.text)}</span></p>`;
+}
+
+/** The plan in one strip: ✓ done, ● now, ○ next. */
+function planView(c: CardView): string {
+  const p = c.plan;
+  if (!p) return "";
+  const glyph = { done: "✓", now: "●", todo: "○" } as const;
+  const cls = { done: "text-muted", now: "font-semibold text-ink", todo: "text-muted" } as const;
+  const mark = { done: "", now: "text-accent", todo: "" } as const;
+  const item = (state: keyof typeof glyph, text: string) => `<li class="inline-flex items-baseline gap-1.5 ${cls[state]}"><span class="${mark[state]}" aria-hidden="true">${glyph[state]}</span><span>${escapeHtml(text)}</span></li>`;
+  const items = [...(p.doneHidden ? [item("done", t(p.doneHidden > 1 ? "board.card.plan.doneHidden.other" : "board.card.plan.doneHidden.one", { n: p.doneHidden }))] : []), ...p.steps.map((x) => item(x.state, x.text)), ...(p.todoHidden ? [`<li class="text-muted">+${p.todoHidden}</li>`] : [])];
+  return `<ol class="flex max-w-[78ch] flex-wrap gap-x-4 gap-y-1 text-[12.5px] leading-snug" data-plan aria-label="${escapeHtml(t("board.card.plan"))}">${items.join("")}</ol>`;
+}
+
+/** A card without open task: its request and proposal, or where it stands. */
+function needView(c: CardView): string {
+  const n = c.need;
+  if (!n) return "";
+  return `<div class="flex max-w-[78ch] flex-col gap-1 text-[13.5px] leading-snug" data-need>${n.ask ? `<p class="text-ink">${escapeHtml(n.ask)}</p>` : ""}${n.proposal ? `<p class="text-ink/80">${escapeHtml(n.proposal)}</p>` : ""}${n.summary ? `<p class="text-ink/80">${escapeHtml(n.summary)}</p>` : ""}</div>`;
+}
+
+/** The context, folded behind one line of counts: origin, threads, merge requests, the next due date, finished tasks. */
+function contextView(l: BoardLine, c: CardView, ctx: BoardContext): string {
+  const s = l.sujet;
+  const x = c.context;
+  const k = escapeHtml(s.key);
+  const now = nowOf(ctx);
+  const bits = [escapeHtml(t("board.line.askerIn", { asker: x.asker, where: x.origin.label }))];
+  if (x.threadCount > 1) bits.push(escapeHtml(t("board.card.ctx.threads", { n: x.threadCount })));
+  if (x.mrs.length) {
+    const text = x.mrProd === x.mrs.length ? t("board.card.ctx.mrsProd", { n: x.mrProd }) : x.mrProd ? t("board.card.ctx.mrsSome", { n: x.mrs.length, p: x.mrProd }) : t("board.card.ctx.mrs", { n: x.mrs.length });
+    bits.push(`<span class="${x.mrHard ? "text-warn" : x.mrProd === x.mrs.length ? "text-clear-ink" : ""}">${escapeHtml(text)}</span>`);
+  }
+  if (x.dueSoon) bits.push(`<span class="${x.dueSoon.state === "past" ? "text-warn" : "font-medium text-ink"}">${escapeHtml(ago(x.dueSoon.at, now))}</span>`);
+  if (x.finishedCount) bits.push(escapeHtml(t(x.finishedCount > 1 ? "board.card.ctx.finished.other" : "board.card.ctx.finished.one", { n: x.finishedCount })));
+  const id = `card-${s.key}`;
+  const summary = `<button type="button" data-toggle="${escapeHtml(id)}" aria-expanded="false" class="group -ml-2 inline-flex w-fit max-w-full flex-wrap items-baseline gap-x-2 gap-y-0.5 rounded-md px-2 py-0.5 text-left text-[12.5px] text-muted hover:bg-soft hover:text-ink aria-expanded:text-ink" title="${escapeHtml(t(speaksCode() ? "board.card.ctx.tip" : "board.card.ctx.tip.noCode"))}" data-ctx><span class="inline-block transition-transform group-aria-expanded:rotate-90" aria-hidden="true">▸</span>${bits.join(`<span class="text-muted/60" aria-hidden="true">·</span>`)}</button>`;
+  const list = (items: string) => `<ul class="flex min-w-0 flex-col gap-1 text-[12.5px]">${items}</ul>`;
+  const prose = (v: string) => `<div class="whitespace-pre-wrap text-[13.5px] leading-relaxed text-ink/85">${textToHtml(v)}</div>`;
+  const live = l.running === "busy" || agentCounts(l.agents).running > 0 ? trailBlock(l, ctx) : "";
+  const rows = [
+    fieldRow(escapeHtml(t("board.card.ctx.origin")), `<span class="text-[13.5px] text-ink/85">${t("board.line.askerIn", { asker: escapeHtml(x.asker), where: refLink(x.origin) })}</span>`),
+    x.threads.length || x.older.length ? fieldRow(escapeHtml(t("board.card.ctx.threadsLabel")), `<div class="flex flex-wrap items-center gap-x-4 gap-y-1 text-[12.5px]">${threadLinks(s.key, x)}</div>`) : "",
+    x.mrs.length ? fieldRow(t("board.card.delivery"), list(deliveryRows(x.mrs, ctx)), " data-delivery") : "",
+    x.dues.length ? fieldRow(t("board.card.due"), list(x.dues.map((d) => dueRow(d, ctx)).join(""))) : "",
+    live ? fieldRow(escapeHtml(t("board.card.ctx.session")), live) : "",
+    x.why ? fieldRow(escapeHtml(t("board.card.why", { owner: settings().owner.name })), prose(x.why)) : "",
+    x.unverified ? fieldRow(t("board.card.unverified"), prose(x.unverified)) : "",
+    x.summary ? fieldRow(t("board.card.summary"), prose(x.summary)) : "",
+    finishedField(s, x, ctx),
+  ].filter(Boolean);
+  return `${summary}
+<div id="card-${k}" data-panel hidden class="cursor-auto"><dl class="flex max-w-[78ch] flex-col gap-2.5 rounded-lg bg-bg px-4 py-3">${rows.join("")}</dl></div>`;
+}
+
 /**
  * Ready-made answers, under the message: one click sends them to the session. "go" disappears when the card already has
  * its Go or Send button; "it's settled" closes the topic, so it asks for a second click ("Sure?").
@@ -1029,115 +1024,78 @@ const chips = (): { label: string; text: string; confirm?: boolean }[] => [
   { label: t("board.chip.settled"), text: t("board.chip.settled.text"), confirm: true },
 ];
 
-/** The session's state in a few words, read from Claude Code: "idle", "waiting for your go", "at work"… */
-function sessionState(l: BoardLine): { text: string; awaitingGo: boolean } {
-  const say = (key: MessageKey) => ({ text: t(key), awaitingGo: key === "board.session.state.awaitingGo" });
-  if (l.running === "busy") return say("board.session.state.busy");
-  if (l.running === "waiting") return say("board.session.state.waiting");
-  if (l.running === "idle" || l.attention === "tour terminé") return say(l.sujet.status === "gate" ? "board.session.state.awaitingGo" : "board.session.state.idle");
-  if (l.running === null) return l.attention && l.attention !== "arrêtée" ? { text: attentionLabel(l.attention), awaitingGo: false } : say("board.session.state.stopped");
-  return l.attention ? { text: attentionLabel(l.attention), awaitingGo: false } : say("board.session.state.unknown");
-}
-
-/** The right column of a line: the session, its state, and the message to write to it. */
-function sessionPane(l: BoardLine, ctx: BoardContext): string {
+/** The instruction to the session, folded under "Write to X": the most frequent action, one click away. */
+function writePanel(l: BoardLine, c: CardView): string {
   const s = l.sujet;
-  if (!s.sessionId) return `<div class="text-[12.5px] text-muted md:pl-5 md:border-l md:border-line">${t("board.session.none")}</div>`;
   const key = escapeHtml(s.key);
-  // the state comes from Claude Code, with its duration: what it rests on and since when (exact time on hover).
-  // A card waiting for your go already carries its age in the badge: a second duration, counted otherwise, would blur it
-  const state = sessionState(l);
-  const since = l.runningSince && !state.awaitingGo ? ` · <span class="tabular-nums" title="${escapeHtml(t("board.since", { time: ctx.timeOf(l.runningSince) }))}">${escapeHtml(span(nowOf(ctx) - Date.parse(l.runningSince)))}</span>` : "";
   // in shadow mode the go chip is hidden too: nothing goes out on a go
-  const shown = chips().filter((c) => !(c.text === "go" && (actionCard(l) || settings().workers.shadow)));
-  const quick = isQuickGo(l);
-  return `<div class="flex min-w-0 flex-col gap-2.5 md:pl-5 md:border-l md:border-line" data-pane>
-<div class="text-[12.5px] text-muted">${t("board.session.label")} <span class="text-ink/80">${escapeHtml(state.text)}</span>${since}</div>
-<div class="flex flex-wrap items-center gap-1.5">
-<button type="button" data-term="${key}" data-letter="${escapeHtml(s.letter)}" data-title="${escapeHtml(s.title)}" class="${BTN}"${s.shortId ? ` title="${escapeHtml(t("board.session.terminal.tip", { id: s.shortId }))}"` : ""}>${t("board.session.terminal")}</button>
-${settings().ui.iterm ? `<button type="button" data-dive="${key}" class="${BTN}">iTerm2</button>` : ""}
-${l.remoteUrl ? `<a href="${escapeHtml(l.remoteUrl)}" data-open class="${BTN}">claude.ai</a>` : ""}
-</div>
-<div class="-ml-2 -mt-1 flex flex-wrap items-center gap-0.5">
-<details class="relative" id="snooze-${key}" data-snooze-menu><summary class="${BTN_TEXT} cursor-pointer list-none" title="${escapeHtml(t("board.snooze.tip"))}">${t("board.snooze")}</summary><div class="absolute left-0 top-full z-10 mt-1 flex flex-col rounded-md border border-line bg-surface p-1 shadow-lg">${["1h", "pm", "eod", "tomorrow"].map((w) => `<button type="button" data-snooze="${w}" data-key="${key}" class="whitespace-nowrap rounded px-2.5 py-1 text-left text-[12.5px] text-ink hover:bg-soft"></button>`).join("")}<form data-snooze-date data-key="${key}" class="mt-1 flex w-60 flex-col gap-1.5 border-t border-line px-1.5 pb-1 pt-2"><span class="text-[11.5px] font-medium text-muted">${t("board.snooze.until")}</span><div class="flex gap-1.5"><input type="date" name="day" required class="min-w-0 flex-1 rounded border border-line bg-bg px-1.5 py-0.5 text-[12.5px] text-ink [color-scheme:dark]"><input type="time" name="hour" value="09:00" required class="w-[76px] rounded border border-line bg-bg px-1.5 py-0.5 text-[12.5px] text-ink [color-scheme:dark]"></div><input type="text" name="reason" maxlength="200" placeholder="${escapeHtml(t("board.snooze.reason"))}" class="rounded border border-line bg-bg px-1.5 py-0.5 text-[12.5px] text-ink placeholder:text-muted"><button type="submit" class="${BTN} self-start">${t("board.snooze.submit")}</button></form></div></details>
-<button type="button" data-confirm="stop" data-key="${key}" class="${BTN_TEXT}" title="${escapeHtml(t("board.session.stop.tip"))}">${t("board.session.stop")}</button>
-<button type="button" data-confirm="close" data-key="${key}" class="${BTN_TEXT} hover:bg-warn-soft hover:text-warn" title="${escapeHtml(t("board.session.close.tip"))}">${t("board.session.close")}</button>
-<span class="ml-auto min-w-0 truncate text-[12.5px] text-muted" data-session-status></span>
-</div>
-${l.lastAgent?.text && !quick ? `<details class="group min-w-0 text-[12.5px]" id="last-${key}"><summary class="flex min-w-0 cursor-pointer select-none list-none items-baseline gap-1.5 text-muted hover:text-ink"><span class="shrink-0 font-medium text-ink/80">${t("board.session.lastWord")}</span>${l.lastAgent.at ? `<span class="shrink-0">${when(l.lastAgent.at, ctx)}</span>` : ""}<span class="min-w-0 truncate group-open:hidden">${escapeHtml(clip(l.lastAgent.text, 160))}</span></summary><div class="mt-1.5 max-h-56 overflow-y-auto whitespace-pre-wrap rounded-md bg-bg px-3 py-2 leading-relaxed text-ink/85">${escapeHtml(l.lastAgent.text)}</div></details>` : ""}
+  const shown = chips().filter((x) => !(x.text === "go" && (c.tasks.length || settings().workers.shadow)));
+  return `<div id="write-${key}" data-panel hidden class="max-w-[78ch] cursor-auto">
 <form class="flex flex-col gap-2" id="send-${key}" data-send data-key="${key}">
 <textarea name="text" rows="2" required placeholder="${escapeHtml(t("board.send.placeholder"))}" title="${escapeHtml(t("board.send.tip"))}" class="w-full resize-y rounded-lg border border-line bg-bg px-3 py-2 text-[13.5px] leading-relaxed placeholder:text-muted focus:border-muted focus:outline-none focus:ring-2 focus:ring-ink/10"></textarea>
-<div class="flex flex-wrap gap-1">${shown.map((c) => `<button type="button" data-chip="${escapeHtml(c.text)}"${c.confirm ? ` data-chip-confirm` : ""} class="inline-flex h-6 items-center rounded-full border border-muted/50 px-2 text-[11.5px] text-ink/80 hover:border-ink/60 hover:text-ink disabled:cursor-not-allowed disabled:opacity-40">${escapeHtml(c.label)}</button>`).join("")}</div>
-<div class="flex items-center gap-3"><button type="submit" class="${BTN}">${t("board.send.button", { letter: escapeHtml(s.letter) })}<span class="ml-1.5 font-normal text-muted">⌘↩</span></button><span class="min-w-0 truncate text-[12.5px] text-muted" data-status></span></div>
+<div class="flex flex-wrap items-center gap-1">${shown.map((x) => `<button type="button" data-chip="${escapeHtml(x.text)}"${x.confirm ? ` data-chip-confirm` : ""} class="inline-flex h-6 items-center rounded-full border border-muted/50 px-2 text-[11.5px] text-ink/80 hover:border-ink/60 hover:text-ink disabled:cursor-not-allowed disabled:opacity-40">${escapeHtml(x.label)}</button>`).join("")}<span class="ml-auto flex items-center gap-3"><span class="min-w-0 truncate text-[12.5px] text-muted" data-status></span><button type="submit" class="${BTN}">${t("board.send.button", { letter: escapeHtml(s.letter) })}<span class="ml-1.5 font-normal text-muted">⌘↩</span></button></span></div>
 </form>
 </div>`;
 }
 
-/** A topic line, in two columns: the topic on the left, the session and its message on the right; the details folded below. */
+/** The tools of the card: write to the session, its terminal, the report, and the rare actions behind "…". */
+function toolsRow(l: BoardLine): string {
+  const s = l.sujet;
+  const key = escapeHtml(s.key);
+  const live = !!s.sessionId;
+  const item = "flex w-full items-center whitespace-nowrap rounded px-2.5 py-1 text-left text-[12.5px] text-ink hover:bg-soft";
+  const snooze = `<p class="px-2.5 pb-0.5 pt-1 text-[11.5px] font-medium text-muted" title="${escapeHtml(t("board.snooze.tip"))}">${t("board.snooze")}</p>${["1h", "pm", "eod", "tomorrow"].map((w) => `<button type="button" data-snooze="${w}" data-key="${key}" class="${item}"></button>`).join("")}<form data-snooze-date data-key="${key}" class="mt-1 flex flex-col gap-1.5 border-t border-line px-1.5 pb-1 pt-2"><span class="text-[11.5px] font-medium text-muted">${t("board.snooze.until")}</span><div class="flex gap-1.5"><input type="date" name="day" required class="min-w-0 flex-1 rounded border border-line bg-bg px-1.5 py-0.5 text-[12.5px] text-ink"><input type="time" name="hour" value="09:00" required class="w-[88px] rounded border border-line bg-bg px-1.5 py-0.5 text-[12.5px] text-ink"></div><input type="text" name="reason" maxlength="200" placeholder="${escapeHtml(t("board.snooze.reason"))}" class="rounded border border-line bg-bg px-1.5 py-0.5 text-[12.5px] text-ink placeholder:text-muted"><button type="submit" class="${BTN} self-start">${t("board.snooze.submit")}</button></form>`;
+  const session = live
+    ? `<div class="my-1 border-t border-line"></div><button type="button" data-confirm="stop" data-key="${key}" class="${item}" title="${escapeHtml(t("board.session.stop.tip"))}">${t("board.session.stop")}</button><button type="button" data-confirm="close" data-key="${key}" class="${item} hover:bg-warn-soft hover:text-warn" title="${escapeHtml(t("board.session.close.tip"))}">${t("board.session.close")}</button>${settings().ui.iterm ? `<button type="button" data-dive="${key}" class="${item}">iTerm2</button>` : ""}${l.remoteUrl ? `<a href="${escapeHtml(l.remoteUrl)}" data-open class="${item}">claude.ai</a>` : ""}`
+    : "";
+  const more = `<details class="relative" id="more-${key}" data-snooze-menu data-menu><summary class="inline-flex h-7 cursor-pointer list-none items-center rounded-md px-2.5 text-[15px] font-medium leading-none tracking-widest text-muted hover:bg-soft hover:text-ink [[open]>&]:bg-soft [[open]>&]:text-ink" title="${escapeHtml(t(live ? "board.card.more.tip" : "board.card.more.tipNoSession"))}" aria-label="${escapeHtml(t("board.card.more"))}">…</summary><div class="absolute right-0 top-full z-20 mt-1 flex w-60 flex-col rounded-md border border-line bg-surface p-1 shadow-lg">${snooze}${session}</div></details>`;
+  const write = live ? `<button type="button" data-toggle="write-${key}" aria-expanded="false" class="${BTN_TEXT} aria-expanded:bg-soft aria-expanded:text-ink" title="${escapeHtml(t("board.send.tip"))}">${t("board.send.button", { letter: escapeHtml(s.letter) })}</button>` : `<span class="px-2 text-[12.5px] text-muted">${t("board.session.none")}</span>`;
+  const term = live ? `<button type="button" data-term="${key}" data-letter="${escapeHtml(s.letter)}" data-title="${escapeHtml(s.title)}" class="${BTN_TEXT}"${s.shortId ? ` title="${escapeHtml(t("board.session.terminal.tip", { id: s.shortId }))}"` : ""}>${t("board.session.terminal")}</button>` : "";
+  return `<div class="-ml-2 flex flex-wrap items-center gap-x-1 gap-y-1" data-tools>${write}${term}<span class="min-w-0 flex-1 truncate px-2 text-[12.5px] text-muted empty:hidden" data-session-status></span><a href="/?sujet=${encodeURIComponent(s.key)}" class="${BTN_TEXT} ml-auto">${t("board.card.report")}</a>${more}</div>`;
+}
+
 /** On a line kept in place by the pin: one line saying it stays put, and where it belongs now when that is another block. */
 function heldNote(l: BoardLine): string {
   if (!l.pin?.held) return "";
   const text = l.pin.shownIn === l.bloc ? t("board.line.held") : t("board.line.heldMoved", { bloc: escapeHtml(blocTitle(l.bloc)) });
-  return `<p data-held-note class="text-[12px] text-accent-ink">${text}</p>`;
+  return `<p data-held-note class="text-[12.5px] text-accent-ink">${text}</p>`;
 }
 
+/**
+ * A topic's card, rendered from its CardView in the reading order: title and status, the thread's last message, the
+ * session's last word, the stale line, the plan, the tasks, the folded context, the tools.
+ */
 export function lineView(l: BoardLine, ctx: BoardContext): string {
   const s = l.sujet;
   const now = nowOf(ctx);
-  const sujetUrl = `/?sujet=${encodeURIComponent(s.key)}`;
-  // the original thread is the link of the meta line ("Ann in #releases"), the other threads and tickets follow
-  const sub: string[] = [t("board.line.askerIn", { asker: escapeHtml(s.asker), where: keyLink(s.key, s) }), ...otherLinks(s), t("board.line.card", { when: when(s.updatedAt, ctx) })];
-  if (l.lastMessage) {
-    const who = l.lastMessage.kind === "moi" ? t("board.line.you") : l.lastMessage.from;
-    const label = `${who} ${ago(l.lastMessage.at, now)}`;
-    sub.push(t("board.line.lastMessage", { message: l.lastMessage.permalink ? link(l.lastMessage.permalink, label) : escapeHtml(label) }));
-  }
-  const age = l.waitingSince ? ` · ${span(now - Date.parse(l.waitingSince))}` : "";
+  const c = cardOf(l, { now, channelNames: CHANNEL_NAMES });
   const sig = `${s.updatedAt}|${l.lastMessage?.at ?? ""}|${l.bloc}`;
   const k = escapeHtml(s.key);
-  // what waits on you carries its freshness: a side border and the badge's age, from green (recent) to dark red (3 days and more)
+  // what waits on you carries its freshness: a side border and the status's age, from green (recent) to dark red (3 days and more)
   const fresh = l.bloc === "attend" && l.waitingSince ? freshness(now - Date.parse(l.waitingSince)) : null;
   const freshAttr = fresh ? ` data-fresh style="--fh:${fresh.h};--fk:${fresh.k}"` : "";
   const held = l.pin?.held ? " data-held" : "";
+  const blocker = c.blocker ? `<p class="max-w-[78ch] text-[12.5px] leading-snug text-muted" data-blocker-line><span class="font-medium">${t("board.card.blocker")}</span> <span class="text-ink/85" data-blocker>${escapeHtml(c.blocker)}</span></p>` : "";
   return `<li${freshAttr}${held} id="line-${k}" class="cursor-pointer scroll-mt-20 px-5 py-4 border-b border-line last:border-b-0 hover:bg-soft/40 data-[cursor]:bg-soft/60 data-[held]:bg-accent/5 data-[cursor]:shadow-[inset_3px_0_0_var(--color-ink)]" data-row="card-${k}" data-key="${k}" data-letter="${escapeHtml(s.letter)}" data-sig="${escapeHtml(sig)}">
-<div class="grid gap-x-6 gap-y-4 md:grid-cols-[minmax(0,1fr)_330px]">
 <div class="flex min-w-0 items-start gap-4">
-<span class="mt-px inline-flex h-7 min-w-7 shrink-0 items-center justify-center rounded-md bg-soft px-1.5 text-[13.5px] font-semibold text-ink">${escapeHtml(s.letter)}</span>
+<span class="inline-flex h-7 min-w-7 shrink-0 items-center justify-center rounded-md bg-soft px-1.5 text-[13.5px] font-semibold text-ink">${escapeHtml(s.letter)}</span>
 <div class="flex min-w-0 flex-1 flex-col gap-2.5">
-<div class="flex flex-col gap-1">
-<div class="flex items-start gap-3"><a href="${sujetUrl}" class="min-w-0 text-[15px] font-semibold leading-snug text-ink hover:underline underline-offset-2">${escapeHtml(s.title)}</a><span data-new hidden class="mt-0.5 shrink-0 rounded-full bg-soft px-2 py-0.5 text-[11.5px] font-medium leading-4 text-ink">${t("board.line.new")}</span><span class="ml-auto">${badge(l.verdict, l.tone, l.running === "busy" || agentCounts(l.agents).running > 0, age)}</span></div>
-${meta(sub)}
-</div>
-${trailBlock(l, ctx)}
-${factsBlock(l, ctx)}
-${staleLine(l, ctx)}
+<div class="flex flex-wrap items-baseline gap-x-3 gap-y-1"><a href="/?sujet=${encodeURIComponent(s.key)}" class="min-w-0 text-[15px] font-semibold leading-snug text-ink hover:underline underline-offset-2">${escapeHtml(s.title)}</a><span data-new hidden class="shrink-0 rounded-full bg-soft px-2 py-0.5 text-[11.5px] font-medium leading-4 text-ink">${t("board.line.new")}</span><span class="ml-auto flex min-w-0 max-w-full">${statusView(c, s.updatedAt, ctx)}</span></div>
+${saidView(c, ctx)}
+${wordView(c, ctx)}
+${blocker}
+${staleView(s.key, c.stale, ctx)}
+${planView(c)}
+${needView(c)}
+${tasksStack(s, c.tasks)}
 ${postedLine(s, ctx, Date.now(), l.undoUntil ?? null, l.bloc, l.undoTask ?? null)}
-${draftMissing(s)}
-${actionCard(l, ctx)}${heldNote(l)}
-<div class="-ml-2 flex flex-wrap items-center gap-x-1 gap-y-1.5">${toggle(`card-${s.key}`, t("board.card.details"))}<a href="${sujetUrl}" class="inline-flex h-7 items-center rounded-md px-2 text-[12.5px] font-medium text-link hover:bg-soft hover:underline underline-offset-2">${t("board.card.report")}</a></div>
+${draftMissing(s)}${heldNote(l)}
+${contextView(l, c, ctx)}
+${toolsRow(l)}
+${s.sessionId ? writePanel(l, c) : ""}
 </div>
-</div>
-${sessionPane(l, ctx)}
-</div>
-<div id="card-${k}" data-panel hidden class="ml-11 mt-3 cursor-auto">
-<dl class="-ml-4 flex flex-col gap-3 rounded-lg bg-bg px-4 py-3.5">
-${cardField(t("board.card.summary"), s.summary)}
-${tasksOf(s).length ? "" : cardField(t("board.card.ask"), s.ask || s.title)}
-${cardField(t("board.card.why", { owner: settings().owner.name }), s.why)}
-${tasksOf(s).length ? "" : cardField(t("board.card.proposal"), s.proposal || s.next)}
-${stepsList(s)}
-${cardField(t("board.card.blocker"), s.blocker || s.next)}
-${cardField(t("board.card.unverified"), s.unverified)}
-${closedTasksField(s, ctx)}
-</dl>
 </div>
 </li>`;
-}
-
-/** A gate whose action is ready (draft or written action): one click is enough, no thinking. */
-export function isQuickGo(l: BoardLine): boolean {
-  const open = openTasks(l.sujet);
-  return l.bloc === "attend" && l.sujet.status === "gate" && l.tone === "accent" && open.length > 0 && open.every((x) => (x.kind === "draft" || x.kind === "action") && taskReady(x));
 }
 
 /** A block's count, discreet: a number in a pill, not a big counter. */
@@ -1239,7 +1197,7 @@ function refreshControl(m: BoardModel): string {
   const late = openLines(m).filter((l) => l.stale?.length).length;
   const vars = { n, parallel: settings().refresh.maxParallel, late };
   const title = t(!late ? "board.header.revalidateAll.tip" : late > 1 ? "board.header.revalidateAll.tipLate.other" : "board.header.revalidateAll.tipLate.one", vars);
-  return `<button type="button" data-revalidate-all title="${escapeHtml(title)}" class="${BTN}">${t("board.header.revalidateAll")}${late ? ` <span class="text-muted">· ${escapeHtml(t("board.header.revalidateAll.late", vars))}</span>` : ""}</button>`;
+  return `<button type="button" data-revalidate-all title="${escapeHtml(title)}" class="${BTN}">${t("board.header.revalidateAll")}${late ? `<span class="ml-1 text-muted">· ${escapeHtml(t("board.header.revalidateAll.late", vars))}</span>` : ""}</button>`;
 }
 
 /** The review menu entry for a window of REVUE_WINDOWS: its own key when the dictionary has one. */
@@ -1315,7 +1273,7 @@ export function versionControl(v: VersionState): string {
   const list = (title: string, items: { sha: string; text: string }[]) =>
     items.length
       ? `<section class="flex flex-col gap-1"><h3 class="text-[11.5px] font-semibold uppercase tracking-wide text-muted">${escapeHtml(title)}</h3><ul class="flex flex-col gap-1">${items
-          .map((c) => `<li class="flex gap-2 text-[13px] leading-snug text-ink" title="${escapeHtml(c.sha)}"><span class="text-muted" aria-hidden="true">·</span><span class="min-w-0">${escapeHtml(c.text)}</span></li>`)
+          .map((c) => `<li class="flex gap-2 text-[13.5px] leading-snug text-ink" title="${escapeHtml(c.sha)}"><span class="text-muted" aria-hidden="true">·</span><span class="min-w-0">${escapeHtml(c.text)}</span></li>`)
           .join("")}</ul></section>`
       : "";
   const others = check.changes.other.length;
@@ -1661,11 +1619,14 @@ const JS = `
   }
   // Morphing instead of replacing keeps the DOM identity of what did not change: the focused field, its caret, what the
   // person typed, the open details and panels survive the redraw by construction. The attributes the page owns stay.
+  // A panel the person opened or folded is theirs; an untouched one follows the server, which opens a card's first
+  // task: when that task closes, the next one opens by itself.
+  var touched = {};
   function owned(attr, el) {
     if (attr === "value") return (el.tagName === "TEXTAREA" || el.tagName === "INPUT") && el.value !== el.defaultValue;
     if (attr === "open") return el.tagName === "DETAILS";
-    if (attr === "hidden") return el.hasAttribute("data-panel");
-    if (attr === "aria-expanded") return el.hasAttribute("data-toggle");
+    if (attr === "hidden") return el.hasAttribute("data-panel") && el.id in touched;
+    if (attr === "aria-expanded") return el.hasAttribute("data-toggle") && el.getAttribute("data-toggle") in touched;
     if (attr === "class") return el.hasAttribute("data-expand");
     return false;
   }
@@ -1706,6 +1667,7 @@ const JS = `
   function setPanel(id, open) {
     var p = document.getElementById(id);
     if (!p) return;
+    touched[id] = true;
     p.hidden = !open;
     app.querySelectorAll('[data-toggle="' + id + '"]').forEach(function (b) { b.setAttribute("aria-expanded", open ? "true" : "false"); });
   }
@@ -1970,6 +1932,22 @@ const JS = `
       })
       .catch(function () { return { ok: false, status: 0, d: {}, error: tr("board.js.serverDown") }; });
   }
+  // the feedback of a session action (terminal, stop, close, iTerm2) goes on its card's tools row
+  function sessionStatusOf(b) { var r = b.closest("[data-row]"); return r && r.querySelector("[data-session-status]"); }
+  // A button inside a folded panel (a task's body not opened) never acts: one click acts only on what is on screen.
+  function folded(b) { return !!(b && b.closest("[data-panel][hidden]")); }
+  // the "…" menus close when the click lands elsewhere
+  document.addEventListener("click", function (ev) {
+    var el = ev.target instanceof Element ? ev.target : null;
+    app.querySelectorAll("details[data-menu][open]").forEach(function (d) { if (!el || !d.contains(el)) d.open = false; });
+  }, true);
+  // a toggle drawn as a line (a task's head) opens with Enter or Space, like a button
+  document.addEventListener("keydown", function (ev) {
+    var t = ev.target;
+    if ((ev.key !== "Enter" && ev.key !== " ") || !(t instanceof HTMLElement) || t.getAttribute("role") !== "button" || !t.hasAttribute("data-toggle")) return;
+    ev.preventDefault();
+    t.click();
+  });
   document.addEventListener("click", function (ev) {
     var el = ev.target instanceof Element ? ev.target : null;
     if (!el) return;
@@ -1978,8 +1956,7 @@ const JS = `
       ev.preventDefault();
       var key = term.getAttribute("data-term");
       if (terms[key]) { showTerm(key); return; }
-      var pane = term.closest("[data-pane]");
-      var st = pane && pane.querySelector("[data-session-status]");
+      var st = sessionStatusOf(term);
       runBusy(term, tr("board.js.opening"), function () {
         return post("/api/terminal", { key: key })
           .then(function (x) {
@@ -1996,7 +1973,7 @@ const JS = `
       ev.preventDefault();
       var action = confirm.getAttribute("data-confirm");
       var ckey = confirm.getAttribute("data-key");
-      var st3 = confirm.parentElement.querySelector("[data-session-status]");
+      var st3 = sessionStatusOf(confirm);
       var cid2 = busyIdOf(confirm);
       if (!(cid2 in armed)) { arm(cid2, tr(action === "close" ? "board.js.close.confirm" : "board.js.stop.confirm"), 4000); return; }
       disarm(cid2);
@@ -2014,7 +1991,7 @@ const JS = `
     var dive = el.closest("[data-dive]");
     if (dive) {
       ev.preventDefault();
-      var st2 = dive.parentElement.querySelector("[data-session-status]");
+      var st2 = sessionStatusOf(dive);
       runBusy(dive, tr("board.js.opening"), function () {
         return post("/api/dive", { key: dive.getAttribute("data-dive") })
           .then(function (x) {
@@ -2333,7 +2310,7 @@ const JS = `
     var el = ev.target instanceof Element ? ev.target : null;
     if (!el) return;
     var pb = el.closest("[data-post]");
-    if (pb) { ev.preventDefault(); ev.stopPropagation(); if (!unfoldFirst(pb)) postDraft(pb.closest("form[data-draft]")); return; }
+    if (pb) { ev.preventDefault(); ev.stopPropagation(); if (!folded(pb) && !unfoldFirst(pb)) postDraft(pb.closest("form[data-draft]")); return; }
     var eb = el.closest("[data-edit]");
     if (eb) {
       ev.preventDefault(); ev.stopPropagation();
@@ -2366,6 +2343,7 @@ const JS = `
       ev.preventDefault(); ev.stopPropagation();
       // a status or an assignee on a ticket: the server acts through the gate, on the plan whose hash the page shows
       var box = ag.closest("[data-actbox]");
+      if (folded(ag)) return;
       runBusy(ag, tr("board.js.act.busy"), function () {
         return post("/api/act-task", { key: box.getAttribute("data-key"), taskId: box.getAttribute("data-task"), sha: box.getAttribute("data-sha") || "", retry: box.hasAttribute("data-retry") }).then(function (x) {
           flash(x.ok ? tr("board.js.act.done") : tr("board.js.act.failed", { error: x.error }));
@@ -2378,7 +2356,7 @@ const JS = `
     if (go) {
       ev.preventDefault(); ev.stopPropagation();
       var gkey = go.getAttribute("data-go"), gtask = go.getAttribute("data-task"), gid = goIdOf(go);
-      if (gid in goLock || unfoldFirst(go)) return;
+      if (gid in goLock || folded(go) || unfoldFirst(go)) return;
       lockGo(gid);
       runBusy(go, tr("board.js.go.busy"), function () {
         return sendText(gkey, "go", go.parentElement.querySelector("[data-go-status]"), gtask).then(function (ok) {
@@ -2511,7 +2489,7 @@ const JS = `
   function rowOf(key) { var r = null; app.querySelectorAll("[data-row]").forEach(function (x) { if (x.getAttribute("data-key") === key) r = x; }); return r; }
   function rows() { return Array.prototype.slice.call(app.querySelectorAll("[data-row]")); }
   // what g g sends on a card: the primary button of its first ready task, in the order of the page (oldest first)
-  function gTarget(row) { return row.querySelector("[data-post]:not([disabled]),[data-go]:not([disabled]),[data-act-go]:not([disabled])"); }
+  function gTarget(row) { var b = row.querySelector("[data-post]:not([disabled]),[data-go]:not([disabled]),[data-act-go]:not([disabled])"); return b && !folded(b) ? b : null; }
   function setCursor(key, scroll) {
     rows().forEach(function (r) { r.removeAttribute("data-cursor"); });
     cursorKey = key;
@@ -2527,6 +2505,8 @@ const JS = `
     var t = ev.target;
     if (ev.key === "Escape" && t instanceof HTMLElement && (t.tagName === "TEXTAREA" || t.tagName === "INPUT")) { t.blur(); return; }
     if (ev.key === "Escape" && keysLocked) { keysLocked = false; flash(tr("board.js.keys.back")); return; }
+    var openMenu = app.querySelector("details[data-menu][open]");
+    if (ev.key === "Escape" && openMenu) { openMenu.open = false; return; }
     if (ev.key === "Escape" && !ev.defaultPrevented && (pinned || cursorKey)) { pinned = null; setCursor(null, false); redraw(true); return; }
     if (ev.metaKey || ev.ctrlKey || ev.altKey || (t instanceof HTMLElement && (t.tagName === "TEXTAREA" || t.tagName === "INPUT" || t.isContentEditable))) return;
     if (keysLocked) {
@@ -2554,8 +2534,8 @@ const JS = `
       flash(tr(target.hasAttribute("data-post") ? "board.js.gg.post" : "board.js.gg.go", { id: item ? item.getAttribute("data-task") : "", letter: row.getAttribute("data-letter") || "" }));
       return;
     }
-    if (k === "e") { ev.preventDefault(); var eb2 = row.querySelector("[data-edit]"); if (eb2) eb2.click(); return; }
-    if (k === "m") { ev.preventDefault(); var w2 = row.querySelector("details[data-write]"); if (w2) w2.open = true; var ta2 = row.querySelector("form[data-send] textarea"); if (ta2) ta2.focus({ preventScroll: false }); return; }
+    if (k === "e") { ev.preventDefault(); var eb2 = row.querySelector("[data-edit]"); if (eb2 && !folded(eb2)) eb2.click(); return; }
+    if (k === "m") { ev.preventDefault(); setPanel("write-" + key, true); var ta2 = row.querySelector("form[data-send] textarea"); if (ta2) ta2.focus({ preventScroll: false }); return; }
     if (k === "c") { ev.preventDefault(); var cid = row.getAttribute("data-row"), cp = document.getElementById(cid); setPanel(cid, !cp || cp.hidden); return; }
     if (k === "o") { ev.preventDefault(); var a2 = row.querySelector("a[data-open]"); if (a2) a2.click(); return; }
     if (k === "p") { ev.preventDefault(); var sb = row.querySelector('[data-snooze="1h"]'); if (sb) sb.click(); return; }
@@ -2710,7 +2690,7 @@ const JS = `
     if (!st) return;
     Object.keys(st.editing || {}).forEach(function (k) { editing[k] = st.editing[k]; });
     restoreDrafts();
-    Object.keys(st.send || {}).forEach(function (k) { var f = formFor(k); if (f) f.querySelector("textarea").value = st.send[k]; });
+    Object.keys(st.send || {}).forEach(function (k) { var f = formFor(k); if (f) { setPanel("write-" + k, true); f.querySelector("textarea").value = st.send[k]; } });
     if (st.cursor) setCursor(st.cursor, false);
     if (st.y) window.scrollTo(0, st.y);
   }
@@ -2793,10 +2773,10 @@ export function boardPage(view: string, version = ""): string {
 </head>
 <body class="font-sans antialiased text-[13.5px]">
 <nav class="sticky top-0 z-10 border-b border-line bg-bg/85 backdrop-blur">
-<div class="mx-auto flex max-w-[1080px] items-center justify-between gap-4 px-5 py-2.5">
+<div class="mx-auto flex max-w-[1080px] flex-wrap items-center justify-between gap-x-4 gap-y-1 px-5 py-2.5">
 <div class="flex items-center gap-2.5 text-ink"><span class="inline-flex text-ink">${stratoMark(22)}</span><span class="text-[15px] font-semibold tracking-tight">Strato</span><span class="text-[12.5px] text-muted">board</span><div id="version-slot" class="ml-1 flex items-center gap-2">${version}</div></div>
 <button type="button" data-palette-open title="${escapeHtml(t("board.header.search.tip"))}" class="mx-2 hidden h-8 min-w-0 max-w-[420px] flex-1 items-center gap-2 rounded-lg border border-line bg-surface px-3 text-left text-[12.5px] text-muted hover:border-muted/60 hover:text-ink sm:flex"><span aria-hidden="true">⌕</span><span class="min-w-0 flex-1 truncate">${escapeHtml(t("board.header.search"))}</span><kbd class="shrink-0">⌘K</kbd></button>
-<div class="flex items-center gap-1 text-[12.5px]"><span id="sync-pill" class="mr-2 inline-flex items-center gap-2 rounded-full border border-line px-2.5 py-0.5 text-[12.5px] text-muted"><span class="lamp" aria-hidden="true"></span><span data-sync-label>…</span></span><button type="button" id="drawer-show" hidden data-drawer-show class="${BTN} mr-1" title="${escapeHtml(t("board.drawer.show.tip"))}"></button><button type="button" data-theme-toggle class="${BTN_TEXT}" title="${escapeHtml(t("board.header.theme.tip"))}">${t("board.js.theme.auto")}</button><a href="/?liste" class="${BTN_TEXT}" title="${escapeHtml(t("board.header.list.tip"))}">${t("board.header.list")}</a><button type="button" data-refresh class="${BTN_TEXT}" title="${escapeHtml(t("board.header.refresh.tip"))}">${t("board.header.refresh")}</button></div>
+<div class="flex flex-wrap items-center justify-end gap-1 text-[12.5px]"><span id="sync-pill" class="mr-2 inline-flex items-center gap-2 rounded-full border border-line px-2.5 py-0.5 text-[12.5px] text-muted"><span class="lamp" aria-hidden="true"></span><span data-sync-label>…</span></span><button type="button" id="drawer-show" hidden data-drawer-show class="${BTN} mr-1" title="${escapeHtml(t("board.drawer.show.tip"))}"></button><button type="button" data-theme-toggle class="${BTN_TEXT}" title="${escapeHtml(t("board.header.theme.tip"))}">${t("board.js.theme.auto")}</button><a href="/?liste" class="${BTN_TEXT}" title="${escapeHtml(t("board.header.list.tip"))}">${t("board.header.list")}</a><button type="button" data-refresh class="${BTN_TEXT}" title="${escapeHtml(t("board.header.refresh.tip"))}">${t("board.header.refresh")}</button></div>
 </div>
 </nav>
 <main id="app" class="mx-auto max-w-[1080px] px-5 pb-24 pt-8">${view}</main>

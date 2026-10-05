@@ -98,7 +98,7 @@ describe("board", () => {
     expect(html).toContain("Carte peut-être en retard : aucune nouvelle dans le fil depuis 4 jours");
     expect(html).toContain(`data-revalidate="${KEY}"`);
     const page = boardView(m, ctx);
-    expect(page).toContain("Revalider les cartes <span class=\"text-muted\">· 1 en retard</span>");
+    expect(page).toContain("Revalider les cartes<span class=\"ml-1 text-muted\">· 1 en retard</span>");
     // le bouton de redessin porte data-refresh : la revalidation ne doit jamais le partager
     expect(page).not.toMatch(/data-refresh[=\s>]/);
   });

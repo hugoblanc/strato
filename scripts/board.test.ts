@@ -222,7 +222,7 @@ describe("rendering", () => {
     const s = sujet({ threads: [base.key, "linear:ENG-2545"], ask: "Grace <relance>" });
     const html = lineView(classify(s, [], null, null, timeOf), ctx);
     expect(html).toContain(">F</span>");
-    expect(html).toContain("relire le draft");
+    expect(html).toContain("Relire le draft");
     expect(html).toContain("https://linear.app/acme/issue/ENG-2545");
     expect(html).toContain("https://acme.slack.com/archives/C0ACMECMP01/p1788788755025729");
     expect(html).toContain("claude attach 053023ad");
@@ -241,10 +241,11 @@ describe("rendering", () => {
     expect(lineView(classify(base, [], null, "busy", timeOf), ctx)).toContain("animate-ping");
     expect(lineView(classify(base, [], null, "idle", timeOf), ctx)).not.toContain("animate-ping");
   });
-  test("the last message links to the message", () => {
-    const html = lineView(classify(base, [slack({ at: "2026-09-21T07:00:00Z" })], null, null, timeOf), ctx);
-    expect(html).toContain("dernier message <a href=");
-    expect(html).toContain("Heidi il y a 5 h");
+  test("the last message says who, where, in their words, and links to the message", () => {
+    const html = lineView(classify(base, [slack({ at: "2026-09-21T07:00:00Z", text: "any news on the bank change?" })], null, null, timeOf), ctx);
+    expect(html).toContain('<span class="shrink-0 font-semibold text-ink">Heidi</span>');
+    expect(html).toContain("<q class=\"min-w-0 italic\">any news on the bank change?</q>");
+    expect(html).toMatch(/<a href="https:\/\/acme\.slack\.com\/archives\/C0ACMECMP01\/p1788800000000000[^"]*" data-open[^>]*><time[^>]*>5 h<\/time><\/a>/);
   });
   test("the page has the three blocks with their counts, the sessions and today's closed topics, without big counters on top", () => {
     const m = buildBoard(input({ sujets: [base, sujet({ key: "CD:1", threads: ["CD:1"], letter: "D", status: "closed", gate: "none", updatedAt: "2026-09-21T10:00:00Z" })], otherSessions: 3 }));
@@ -335,9 +336,9 @@ describe("taken by a teammate", () => {
 });
 
 test("a topic waiting on you says what it waits for, without opening the card", () => {
-  const html = lineView(classify(base, [], null, "idle", timeOf), ctx);
+  const html = lineView(classify(sujet({ next: "Zoé choisit la date" }), [], null, "idle", timeOf), ctx);
   expect(html).toContain("Bloqué sur");
-  expect(html).toContain("Alice choisit la date");
+  expect(html).toContain("Zoé choisit la date");
   const enCours = lineView(classify(sujet({ status: "waiting", gate: "none", waiting: "Marvin" }), [], null, "idle", timeOf), ctx);
   expect(enCours).not.toContain("<span class=\"font-semibold\">Bloqué sur</span>");
 });
@@ -498,12 +499,13 @@ describe("step plan", () => {
   test("a 'Just a go' does not repeat the blocker on the row, the card lists the plan with the current step", () => {
     const html = lineView(classify(planned, [], null, "idle", timeOf), ctx);
     expect(html).not.toContain("data-blocker");
-    expect(html).toContain('Plan <span class="tabular-nums">1/3</span>');
-    expect(html).toContain("◉");
+    // the plan is read first: one strip on the card, the current step in bold
+    expect(html).toContain("data-plan");
+    expect(html).toMatch(/<li class="inline-flex items-baseline gap-1.5 font-semibold text-ink"><span class="text-accent" aria-hidden="true">●<\/span><span>poster le draft<\/span><\/li>/);
     expect(html).toContain("ouvrir le ticket extension");
   });
   test("without a plan or blocker, the row falls back to next", () => {
-    expect(lineView(classify(base, [], null, "idle", timeOf), ctx)).toContain("data-blocker>Alice choisit la date");
+    expect(lineView(classify(sujet({ next: "Zoé choisit la date" }), [], null, "idle", timeOf), ctx)).toContain("data-blocker>Zoé choisit la date");
   });
 });
 
@@ -641,7 +643,7 @@ describe("draft sent", () => {
 describe("menus that survive a redraw", () => {
   test("the snooze and review menus have a stable id, whose open state the script keeps", () => {
     const s = sujet({ draft: "Ok", action: "poster le draft" });
-    expect(lineView(buildBoard(input({ sujets: [s] })).attend[0], ctx)).toContain(`id="snooze-${s.key}" data-snooze-menu`);
+    expect(lineView(buildBoard(input({ sujets: [s] })).attend[0], ctx)).toContain(`id="more-${s.key}" data-snooze-menu data-menu`);
     const html = boardView(buildBoard(input({ sujets: [s], lastTick: "2026-09-21T11:58:00Z" })), ctx);
     expect(html).toContain('id="revue-menu" data-revue-menu');
   });
@@ -749,9 +751,10 @@ describe("relative ages", () => {
     expect(span(5 * 86_400_000 + 3600_000)).toBe("5 j");
     expect(span(-5)).toBe("< 1 min");
   });
-  test("the row gives the card's age in relative form, the absolute date on hover, no mono font", () => {
+  test("the card's own date is only on hover of the status: one age on the line", () => {
     const html = lineView(classify(sujet({ updatedAt: "2026-09-21T11:48:00Z" }), [], null, "idle", timeOf), ctx);
-    expect(html).toContain('carte <time datetime="2026-09-21T11:48:00Z" title="11:48" class="tabular-nums">il y a 12 min</time>');
+    expect(html).toContain("carte écrite à 11:48");
+    expect(html).not.toContain("il y a 12 min");
   });
 });
 
@@ -768,9 +771,9 @@ describe("badges", () => {
   test("the waiting age in the badge: gate and waiting on a third party", () => {
     const gate = lineView(classify(sujet({ gate: "release", updatedAt: "2026-09-21T11:12:00Z" }), [], null, "idle", timeOf), ctx);
     const text = (h: string) => h.replace(/<[^>]+>/g, "");
-    expect(text(gate)).toContain("go prod · 48 min");
+    expect(text(gate)).toContain("Go prod· 48 min");
     const wait = lineView(classify(sujet({ status: "waiting", gate: "none", waiting: "Grace", updatedAt: "2026-09-16T11:00:00Z" }), [], null, "idle", timeOf), ctx);
-    expect(text(wait)).toContain("attend Grace · 5 j");
+    expect(text(wait)).toContain("Attend Grace· 5 j");
   });
   test("cut at 32 characters, suffix included and never cut, full text in title", () => {
     const long = "session morte sans porte : un message la relance";
@@ -844,21 +847,20 @@ describe("a single wording of the action", () => {
 
 describe("the reason before the button", () => {
   const s = sujet({ gate: "merge", action: "merger", ask: "Ivan demande si le fix peut partir.", proposal: "Merger vers dev maintenant.", summary: "Le gel venait d'un statut mal lu." });
-  test("Request and Proposal before the action box; the summary in the Details panel, a single folding level", () => {
+  test("the need and the proposal before the action box; the summary folded in the context, a single folding level", () => {
     const html = lineView(classify(s, [], null, "idle", timeOf), ctx);
     const panel = html.indexOf(`id="card-${base.key}"`);
-    expect(html.indexOf(">Demande</dt>")).toBeLessThan(html.indexOf("data-gocard"));
-    expect(html.indexOf(">Proposition</dt>")).toBeLessThan(html.indexOf("data-gocard"));
+    expect(html.indexOf("Ivan demande si le fix peut partir.")).toBeLessThan(html.indexOf("data-gocard"));
+    expect(html.indexOf("Merger vers dev maintenant.")).toBeLessThan(html.indexOf("data-gocard"));
     expect(html.indexOf("Le gel venait d")).toBeGreaterThan(panel);
-    expect(html).toContain(">Détails</button>");
-    expect(html).not.toContain("Plus de contexte");
-    expect(html).not.toContain('id="ctx-');
+    expect(html).toContain(`data-toggle="card-${base.key}"`);
+    expect(html).not.toContain(">Détails</button>");
   });
-  test("a single label column for the row and the panel", () => {
-    const html = lineView(classify(sujet({ ...s, due: "2026-09-21 18:00 release" }), [], null, "idle", timeOf), ctx);
+  test("a single label column in the context", () => {
+    const html = lineView(classify(sujet({ ...s, due: "2026-09-21 18:00 release", why: "Ivan te tague", unverified: "rien" }), [], null, "idle", timeOf), ctx);
     // toutes les lignes à étiquette (dt) partagent la même grille
     const grids = [...html.matchAll(/<div class="(grid [^"]*)"[^>]*><dt/g)].map((m) => m[1]);
-    expect(grids.length).toBeGreaterThan(5);
+    expect(grids.length).toBeGreaterThan(3);
     expect(new Set(grids).size).toBe(1);
   });
   test("the origin thread is the link of the meta line, not repeated in the footer", () => {
@@ -866,23 +868,23 @@ describe("the reason before the button", () => {
     expect(html).toMatch(/Grace dans <a href="https:\/\/acme\.slack\.com\/archives\/C0ACMECMP01\/p1788788755025729"[^>]*>#acme-compliance<\/a>/);
     expect(html.match(/>#acme-compliance<\/a>/g)?.length).toBe(1);
   });
-  test("'Last word' absent from a 'Just a go', present elsewhere", () => {
-    const lastAgent = { text: "Je merge sur ton go.", at: "2026-09-21T11:00:00Z" };
-    const quick = lineView(classify(sujet({ gate: "merge", action: "merger" }), [], null, "idle", timeOf, null, null, lastAgent), ctx);
-    expect(quick).not.toContain("Dernier mot");
-    const other = lineView(classify(sujet({ gate: "decision", action: "" }), [], null, "idle", timeOf, null, null, lastAgent), ctx);
-    expect(other).toContain(">Dernier mot</span>");
+  test("the session's last word only when it is newer than the card", () => {
+    const newer = { text: "Je merge sur ton go.", at: "2026-09-21T11:00:00Z" };
+    const html = lineView(classify(sujet({ gate: "decision", action: "" }), [], null, "idle", timeOf, null, null, newer), ctx);
+    expect(html).toContain("data-word");
+    expect(html).toContain("Je merge sur ton go.");
+    const older = { ...newer, at: "2026-09-21T06:00:00Z" };
+    expect(lineView(classify(sujet({ gate: "decision", action: "" }), [], null, "idle", timeOf, null, null, older), ctx)).not.toContain("data-word");
   });
-  test("the session state without a repeated letter: idle, or waiting for your go at a gate", () => {
+  test("the session's state is said once, in the status line", () => {
     const since = "2026-09-21T11:21:00Z";
     const gate = lineView(classify(sujet({ gate: "merge", action: "merger" }), [], null, "idle", timeOf, null, since), ctx);
-    expect(gate).toContain('Session <span class="text-ink/80">attend ton go</span>');
-    // en porte, l'âge est dans le badge : la ligne de session n'en donne pas un second, compté autrement
-    expect(gate).not.toContain('title="depuis');
+    expect(gate.match(/data-status-kind=/g)?.length).toBe(1);
+    expect(gate).not.toContain("attend ton go");
+    expect(gate).not.toMatch(/data-pane[^l]/);
     const idle = lineView(classify(sujet({ status: "waiting", gate: "none", waiting: "X" }), [], null, "idle", timeOf, null, since), ctx);
-    expect(idle).toContain('Session <span class="text-ink/80">au repos</span>');
-    expect(idle).toContain(">39 min</span>");
-    expect(idle).not.toContain("inactive depuis");
+    expect(idle).toContain('data-status-kind="wait"');
+    expect(idle).not.toContain("au repos");
   });
 });
 
