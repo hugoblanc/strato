@@ -309,6 +309,7 @@ The example's Slack ids (`U_EXAMPLE_ALICE`, `C_EXAMPLE_REQUESTS`…) are placeho
 | `slack.me`, `slack.subteams` | What counts as "for you": a mention of you or of one of these groups |
 | `slack.teamAlias`, `slack.teammates` | A mention of the group means "someone from the team"; if a teammate answers in a thread, the topic leaves your queue |
 | `slack.watchChannels` | Channels where every message is a request for you |
+| `slack.watchOnly` | `true`: only the watched channels raise topics, never your DMs, mentions or threads you wrote in elsewhere; follow-ups of the topics already open still come in. Off by default. For a second installation dedicated to one channel (below) |
 | `slack.ignoreChannels`, `slack.ignoreAuthors` | Channels never raised, bots whose messages go to the digest instead |
 | `tracker`, `forge` | Ticket links and merge requests followed to production; `null` turns each off |
 | `workers.allow` | Extra permissions given to work sessions (read-only MCP tools, for instance) |
@@ -316,6 +317,13 @@ The example's Slack ids (`U_EXAMPLE_ALICE`, `C_EXAMPLE_REQUESTS`…) are placeho
 | `workers.shadow` | Shadow mode: nothing is posted (below) |
 | `workers.mod` | On by default: new topic sessions load Strato's mod, declare their own state to the board and take its messages from an acknowledged inbox (`docs/design/declared-state.md`). `false` starts them without it |
 | `ui.locale` | `en` or `fr`: the board and the master's messages to you |
+
+**A second installation for one channel** (alerts, a customer channel): its own folder with its own `.strato/`, next to the main one.
+- `slack.watchOnly: true` and the channel in `slack.watchChannels`: otherwise both installations raise every DM and mention, twice. `doctor` asks for a channel while the list is empty.
+- No app-level token (`slack.appTokenFile` empty, no `SLACK_APP_TOKEN`), so its master runs `watch`, by polling: Slack delivers each Socket Mode event to one open connection only, and a second socket on the same app would take events away from the main installation.
+- An alert bot is a request there: leave it out of `slack.ignoreAuthors`.
+- Its own `ui.port`, and `STRATO_STATE` set to its state folder for every command you run for it (master, board), so that no command falls back on the main installation's state.
+- `workspace` may stay the main project's folder: sessions then start there, with its `.mcp.json`, its `.claude/settings.local.json` and its local MCP servers, which Claude Code does not read from a subfolder; Strato hands them `STRATO_STATE` and `STRATO_WORKSPACE`, so their commands and hooks still write to the second installation's state.
 
 **The state folder ignores itself in git.** A new `.strato/` holds a `.gitignore` with `*`: Slack messages, reports and ids never land in your repository by a `git add .`.
 To version your profile, copy `config.json` and `local.md` somewhere else.

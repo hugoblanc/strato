@@ -17,7 +17,7 @@ export const ACTION_KINDS: readonly ActionKind[] = ["post", "reply", "comment", 
 export const AUTH_KINDS = ["user-token", "api-key", "app-password", "oauth2"] as const;
 const SETTING_TYPES = ["string", "string[]", "number", "boolean", "map"] as const;
 /** The triage roles an external provider may give a setting; `groupAlias` (Slack's team alias) is read by Slack only. */
-const TRIAGE_ROLES = ["me", "groups", "watch", "ignore", "ignoreAuthors", "teammates"] as const;
+const TRIAGE_ROLES = ["me", "groups", "watch", "watchOnly", "ignore", "ignoreAuthors", "teammates"] as const;
 /** A secret's name, and an environment variable's: written as `NAME=value` and found again by name. */
 const SECRET_NAME = /^[A-Z][A-Z0-9_]{0,63}$/;
 /** The prefix of the environment variables an external provider may read a default account's secret from. */

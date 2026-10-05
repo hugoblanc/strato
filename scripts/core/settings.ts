@@ -23,6 +23,12 @@ export interface SlackSettings {
   teamAlias: string;
   /** Channels where every message is a request (`C…`). */
   watchChannels: string[];
+  /**
+   * Raise only the watched channels: DMs, mentions and threads the person took part in elsewhere are not raised.
+   * Follow-ups in the threads of topics this installation already tracks still come in. For a second installation
+   * dedicated to one channel (alerts) next to the main one, which would otherwise raise every DM and mention twice.
+   */
+  watchOnly: boolean;
   ignoreChannels: string[];
   /** Display names (bots) whose messages outside a tracked topic go to the digest instead of being raised. */
   ignoreAuthors: string[];
@@ -165,6 +171,7 @@ export const DEFAULT_SETTINGS: Settings = {
     subteams: [],
     teamAlias: "",
     watchChannels: [],
+    watchOnly: false,
     ignoreChannels: [],
     ignoreAuthors: [],
     teammates: [],
@@ -350,6 +357,7 @@ export function missingSettings(s: Settings): string[] {
   if (!s.slack.workspace) out.push("slack.workspace (subdomain <workspace>.slack.com)");
   if (!s.slack.me) out.push("slack.me (your Slack id U…)");
   if (s.owner.name === DEFAULT_SETTINGS.owner.name) out.push("owner.name (your first name, read in the prompts and on the board)");
+  if (s.slack.watchOnly && !s.slack.watchChannels.length) out.push("slack.watchChannels (slack.watchOnly is on: without a watched channel, nothing is ever raised)");
   if (s.tracker && (!s.tracker.workspace || !s.tracker.prefixes.length)) out.push("tracker.workspace and tracker.prefixes");
   if (s.forge && !Object.keys(s.forge.repos).length) out.push("forge.repos");
   return out;

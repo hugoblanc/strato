@@ -134,6 +134,7 @@ export const SLACK_DESCRIPTOR: ProviderDescriptor = {
     { key: "subteams", type: "string[]", label: key("setting.subteams"), default: [], ask: key("ask.subteams"), candidatesFrom: "slack.subteams", triage: "groups" },
     { key: "teamAlias", type: "string", label: key("setting.teamAlias"), default: "", ask: key("ask.teamAlias"), triage: "groupAlias" },
     { key: "watchChannels", type: "string[]", label: key("setting.watchChannels"), default: [], ask: key("ask.watchChannels"), candidatesFrom: "slack.watchChannels", triage: "watch" },
+    { key: "watchOnly", type: "boolean", label: key("setting.watchOnly"), default: false, ask: key("ask.watchOnly"), triage: "watchOnly" },
     { key: "ignoreChannels", type: "string[]", label: key("setting.ignoreChannels"), default: [], ask: key("ask.ignoreChannels"), triage: "ignore" },
     { key: "ignoreAuthors", type: "string[]", label: key("setting.ignoreAuthors"), default: [], ask: key("ask.ignoreAuthors"), triage: "ignoreAuthors" },
     { key: "teammates", type: "string[]", label: key("setting.teammates"), default: [], ask: key("ask.teammates"), triage: "teammates" },

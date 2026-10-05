@@ -513,7 +513,7 @@ describe("descriptor checks", () => {
       'auth[0].steps[0].redirectHost: "evil.example" is not one of "127.0.0.1", "localhost"',
       "auth[0].steps[0].pkce: an OAuth step uses PKCE (pkce: true), unless the service requires a client secret (clientSecret)",
       'settings[3].key: "label" is a field of every account in config.json, so the provider would never receive it; reserved: auth, secretsFile, ingest, enabled, label, pollInterval, mcpServer',
-      'settings[4].triage: "groupAlias" is not one of "me", "groups", "watch", "ignore", "ignoreAuthors", "teammates"',
+      'settings[4].triage: "groupAlias" is not one of "me", "groups", "watch", "watchOnly", "ignore", "ignoreAuthors", "teammates"',
     ]);
   }, 30_000);
 

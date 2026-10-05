@@ -228,7 +228,7 @@ export interface SettingSpec {
   /** A field returned by `setup.detect` whose candidates the interview offers. */
   candidatesFrom?: string;
   /** The setting feeds a triage rule or the identity (section 7.2). */
-  triage?: "me" | "groups" | "groupAlias" | "watch" | "ignore" | "ignoreAuthors" | "teammates";
+  triage?: "me" | "groups" | "groupAlias" | "watch" | "watchOnly" | "ignore" | "ignoreAuthors" | "teammates";
 }
 
 /** Words of this tool, for prompts (English) and the board (through `Text`). */
@@ -898,6 +898,7 @@ An item with a `title` puts it at the start of the quoted text (`« PLAT-12 Chec
 | `groups` | string[] | `Identity.groups`, added to what `connect` returns | `slack.subteams` |
 | `groupAlias` | string | the `team_group` prompt variable, for the default account | `slack.teamAlias` |
 | `watch` | string[] | `TriageRules.watch` | `slack.watchChannels` |
+| `watchOnly` | boolean | `TriageRules.watchOnly`: outside a tracked thread, only the watched conversations raise anything | `slack.watchOnly` |
 | `ignore` | string[] | `TriageRules.ignore` | `slack.ignoreChannels` |
 | `ignoreAuthors` | string[] | `TriageRules.ignoreAuthors` | `slack.ignoreAuthors` |
 | `teammates` | string[] | `TriageRules.teammates` | `slack.teammates` |

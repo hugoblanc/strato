@@ -107,7 +107,7 @@ One codebase serves every installation; each installation is a profile.
 
 | File | Role |
 | --- | --- |
-| `config.json` | Written by `setup --write`. The profile: who is served (`owner.name`) and their job (`owner.role`), the workspace, Slack (`team`, `workspace`, `me`, `subteams`, `teamAlias`, `watchChannels`, `teammates`…), the tracker, the forge, other accounts (`providers`, written by `setup --connect`), the work sessions' permissions, the board's port and language (`ui.locale`: `en` or `fr`) |
+| `config.json` | Written by `setup --write`. The profile: who is served (`owner.name`) and their job (`owner.role`), the workspace, Slack (`team`, `workspace`, `me`, `subteams`, `teamAlias`, `watchChannels`, `watchOnly`, `teammates`…), the tracker, the forge, other accounts (`providers`, written by `setup --connect`), the work sessions' permissions, the board's port and language (`ui.locale`: `en` or `fr`) |
 | `policy/*.md` | Optional. Replaces a shipped template of `scripts/policy/defaults/` file by file: how sessions handle a message, write a card, what waits for a go. `policy/roles/<role>.md` replaces what a role adds |
 | `local.md` | Notes read by the master at startup: who you are, your team, the ownership map around you, what never goes out without your go |
 | `providers/` | One folder per connected account (its cursors and small state), the code of the providers you add (`providers/<name>/`), and `trusted.json`, the folders you trusted (`strato provider trust`) |

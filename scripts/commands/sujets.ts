@@ -57,7 +57,11 @@ export async function doctor() {
   const rows = agentsBySession();
   out(`claude   : ${rows ? `${rows.size} active session(s)` : "claude agents --json does not answer"}`);
   out(`state    : ${short(STATE)} · ${loadSujets().length} topic(s)`);
-  out(`triggers : mentions of ${cfg.me || "-"}, groups ${cfg.subteams.join(", ") || "-"}, DMs, channels ${cfg.watchChannels.join(", ") || "-"}, tracked threads`);
+  out(
+    cfg.watchOnly
+      ? `triggers : watched channels only (slack.watchOnly) ${cfg.watchChannels.join(", ") || "-"}, tracked threads · DMs and mentions are not raised`
+      : `triggers : mentions of ${cfg.me || "-"}, groups ${cfg.subteams.join(", ") || "-"}, DMs, channels ${cfg.watchChannels.join(", ") || "-"}, tracked threads`,
+  );
   out(`digest   : messages aimed at someone else, authors ${cfg.ignoreAuthors.join(", ") || "-"}`);
   // the accounts of a configured tracker tool (a connected Linear, an external tracker): topics come from them too
   const descriptors = Object.fromEntries(providerDescriptors().map((d) => [d.id, d]));

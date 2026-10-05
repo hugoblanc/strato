@@ -22,9 +22,15 @@ export interface TriageRules {
   ignoreAuthors: string[];
   /** Display names of the teammates: one of them answering takes the topic over. */
   teammates: string[];
+  /**
+   * Only the watched conversations raise a new topic (Slack `watchOnly`): DMs, mentions, group mentions and threads the
+   * person took part in elsewhere stay silent. Follow-ups of tracked topics still come in. For a second installation
+   * dedicated to one channel (alerts), which must not duplicate the person's DMs and mentions. Absent: false.
+   */
+  watchOnly?: boolean;
 }
 
-export const NO_RULES: TriageRules = { watch: [], ignore: [], ignoreAuthors: [], teammates: [] };
+export const NO_RULES: TriageRules = { watch: [], ignore: [], ignoreAuthors: [], teammates: [], watchOnly: false };
 
 /** Labels that do not go to stdout: logged as `info` for the digest. */
 export function isSilent(kind: Kind | null): boolean {
@@ -60,6 +66,8 @@ export function classifyItem(item: Item, key: string, rules: TriageRules, tracke
 }
 
 function untrackedKind(item: Item, key: string, rules: TriageRules, participated: Set<string>): Kind | null {
+  // watch-only: outside a tracked topic, a conversation that is not watched raises nothing, a DM or a mention included
+  if (rules.watchOnly && !rules.watch.includes(item.conversation.id)) return null;
   const elsewhere = item.targetsOther;
   if (item.conversation.kind === "dm") return "dm";
   if (item.conversation.kind === "group") return elsewhere ? "tiers" : "dm";
@@ -87,7 +95,8 @@ export function editAlreadyRaised(item: Item, key: string, rules: TriageRules, t
 
 /**
  * The rules of an account, from the settings its provider declares with a triage role (section 7.2): the same for
- * built-in and external providers. A setting that is not a list of strings counts as empty.
+ * built-in and external providers. A list setting that is not a list of strings counts as empty; `watchOnly` is on only
+ * when its setting is the boolean `true`.
  */
 export function triageRules(settings: Record<string, unknown>, specs: Pick<SettingSpec, "key" | "triage">[]): TriageRules {
   const list = (role: SettingSpec["triage"]) =>
@@ -97,7 +106,8 @@ export function triageRules(settings: Record<string, unknown>, specs: Pick<Setti
         const v = settings[s.key];
         return Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : [];
       });
-  return { watch: list("watch"), ignore: list("ignore"), ignoreAuthors: list("ignoreAuthors"), teammates: list("teammates") };
+  const watchOnly = specs.some((s) => s.triage === "watchOnly" && settings[s.key] === true);
+  return { watch: list("watch"), ignore: list("ignore"), ignoreAuthors: list("ignoreAuthors"), teammates: list("teammates"), watchOnly };
 }
 
 /**

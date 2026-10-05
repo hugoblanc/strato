@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { envValue, findStateRoot, resolveStateDir } from "./core/paths.ts";
@@ -60,5 +60,43 @@ describe("findStateRoot", () => {
   });
   test(".strato and the legacy .aiguilleur both mark a project", () => {
     expect(findStateRoot("/a/b/c", (p) => p === "/a/.strato")).toBe("/a");
+  });
+  test("a second installation in a subfolder: the nearest state wins, never the parent's", () => {
+    const dirs = new Set(["/work/acme/.aiguilleur", "/work/acme/alerts/.strato"]);
+    expect(findStateRoot("/work/acme/alerts", (p) => dirs.has(p))).toBe("/work/acme/alerts");
+    expect(findStateRoot("/work/acme/alerts/reports", (p) => dirs.has(p))).toBe("/work/acme/alerts");
+    expect(findStateRoot("/work/acme/api", (p) => dirs.has(p))).toBe("/work/acme");
+  });
+  test("a real process started in the subfolder: its own state, the parent as the sessions' workspace, both handed to sessions", async () => {
+    const r = rig();
+    const root = mkdtempSync(join(tmpdir(), "strato-nested-"));
+    try {
+      const alerts = join(root, "alerts");
+      mkdirSync(join(root, ".aiguilleur"), { recursive: true });
+      mkdirSync(join(alerts, ".strato"), { recursive: true });
+      writeFileSync(join(alerts, ".strato", "config.json"), JSON.stringify({ owner: { name: "Alice" }, workspace: root, ui: { port: 4345 } }));
+      const probe = join(r.dir, "probe.ts");
+      writeFileSync(
+        probe,
+        [
+          `import * as env from ${JSON.stringify(join(SCRIPTS, "app/env.ts"))};`,
+          `import * as claude from ${JSON.stringify(join(SCRIPTS, "app/claude.ts"))};`,
+          "process.stdout.write(JSON.stringify({ state: env.STATE, workspace: env.WORKSPACE, sessions: JSON.parse(claude.workerSettings()).env }));",
+        ].join("\n"),
+      );
+      const blank = { STRATO_STATE: "", STRATO_WORKSPACE: "", AIGUILLEUR_STATE: "", AIGUILLEUR_WORKSPACE: "" };
+      const p = Bun.spawn([process.execPath, probe], { cwd: alerts, env: { ...r.env, ...blank }, stdout: "pipe", stderr: "pipe" });
+      const [out, err] = await Promise.all([new Response(p.stdout).text(), new Response(p.stderr).text(), p.exited]);
+      expect(err).toBe("");
+      const got = JSON.parse(out);
+      const real = (x: string) => realpathSync(x);
+      expect(real(got.state)).toBe(real(join(alerts, ".strato")));
+      expect(real(got.workspace)).toBe(real(root));
+      expect(real(got.sessions.STRATO_STATE)).toBe(real(join(alerts, ".strato")));
+      expect(real(got.sessions.STRATO_WORKSPACE)).toBe(real(root));
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+      cleanupRigs();
+    }
   });
 });

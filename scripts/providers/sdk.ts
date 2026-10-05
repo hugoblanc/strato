@@ -101,8 +101,8 @@ export interface SettingSpec {
   ask?: Text;
   /** A field returned by `setup.detect` whose candidates the interview offers. */
   candidatesFrom?: string;
-  /** The setting feeds a triage rule or the identity. */
-  triage?: "me" | "groups" | "groupAlias" | "watch" | "ignore" | "ignoreAuthors" | "teammates";
+  /** The setting feeds a triage rule or the identity. `watchOnly` is a boolean setting: only watched conversations raise topics. */
+  triage?: "me" | "groups" | "groupAlias" | "watch" | "watchOnly" | "ignore" | "ignoreAuthors" | "teammates";
 }
 
 /** Words of this tool, for prompts (English) and the board (through `Text`). */

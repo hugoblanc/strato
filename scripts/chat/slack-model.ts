@@ -23,7 +23,10 @@ export interface SlackMatch {
   ts: string;
   text?: string;
   user?: string;
+  /** The name a bot or an incoming webhook posts under, when it has no `user`. */
   username?: string;
+  /** The app's bot profile, on a message an app posted: its name when there is neither `user` nor `username`. */
+  bot_profile?: { name?: string };
   permalink?: string;
   channel: SlackChannel;
   attachments?: { fallback?: string; title?: string; text?: string; pretext?: string; blocks?: unknown[] }[];
@@ -33,7 +36,7 @@ export interface SlackMatch {
 }
 
 /** What triage needs: who the person served is, their groups, what is listened to and what is set aside. */
-export type Config = Pick<SlackSettings, "me" | "subteams" | "watchChannels" | "ignoreChannels" | "ignoreAuthors">;
+export type Config = Pick<SlackSettings, "me" | "subteams" | "watchChannels" | "ignoreChannels" | "ignoreAuthors"> & Partial<Pick<SlackSettings, "watchOnly">>;
 
 /**
  * Health of the Slack socket, written by `listen` into tick.json and read by the board.
@@ -139,6 +142,7 @@ export function matchFromSocketEvent(e: Record<string, any>, channel: SlackChann
     text: e.text,
     user: e.user,
     username: e.username,
+    ...(e.bot_profile?.name ? { bot_profile: { name: String(e.bot_profile.name) } } : {}),
     permalink: permalinkFor(base, String(e.channel), String(e.ts), e.thread_ts),
     channel,
     attachments: e.attachments,
@@ -222,7 +226,7 @@ export function slackItem(m: SlackMatch, cfg: Pick<Config, "me" | "subteams">): 
     thread: threadKey(m),
     id: `${m.channel.id}:${m.ts}`,
     event: "message",
-    author: { id: m.user ?? "", name: m.user || m.username || "bot", isMe: m.user === cfg.me, isBot: !m.user },
+    author: { id: m.user ?? "", name: m.user || m.username || m.bot_profile?.name || "bot", isMe: m.user === cfg.me, isBot: !m.user },
     conversation: { id: m.channel.id, label: channelLabel(m.channel), kind: conversationKind(m.channel) },
     text: bestText(m),
     time: Math.round(Number(m.ts) * 1000),
@@ -247,7 +251,7 @@ export function classify(
   author?: string,
 ): Kind | null {
   const item = slackItem(m, cfg);
-  const rules = { ...NO_RULES, watch: cfg.watchChannels, ignore: cfg.ignoreChannels, ignoreAuthors: author === undefined ? [] : cfg.ignoreAuthors };
+  const rules = { ...NO_RULES, watch: cfg.watchChannels, ignore: cfg.ignoreChannels, ignoreAuthors: author === undefined ? [] : cfg.ignoreAuthors, watchOnly: cfg.watchOnly === true };
   return classifyItem({ ...item, author: { ...item.author, name: author ?? "" } }, threadKey(m), rules, tracked, participated);
 }
 
@@ -281,11 +285,17 @@ function collectText(node: unknown, parts: string[]): void {
   }
 }
 
-/** The text of a message, falling back on the attachments (bots) when .text is empty. */
+/**
+ * The text of a message, falling back on the attachments, then on the blocks (bots, alert notifiers), when .text is
+ * empty: a Block Kit message without a text would otherwise reach the master and the session as an empty quote.
+ */
 export function bestText(m: SlackMatch): string {
   if (m.text) return m.text;
   const att = (m.attachments ?? []).map((a) => a.fallback || a.title || a.text || "").filter(Boolean);
-  return att.join(" | ");
+  if (att.length) return att.join(" | ");
+  const parts: string[] = [];
+  collectText(m.blocks, parts);
+  return parts.filter(Boolean).join(" | ");
 }
 
 /**

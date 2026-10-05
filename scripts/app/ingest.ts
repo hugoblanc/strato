@@ -150,7 +150,7 @@ export function slackSource(cfg: Config & { teammates?: string[] }, seen: SeenSt
     account: entry.account,
     provider: entry.provider ?? slackProvider,
     ctx: accountContext(entry, { identity: who }),
-    rules: { watch: cfg.watchChannels, ignore: cfg.ignoreChannels, ignoreAuthors: cfg.ignoreAuthors, teammates: cfg.teammates ?? [] },
+    rules: { watch: cfg.watchChannels, ignore: cfg.ignoreChannels, ignoreAuthors: cfg.ignoreAuthors, teammates: cfg.teammates ?? [], watchOnly: cfg.watchOnly === true },
     seen,
     participated,
     label: "Slack",
