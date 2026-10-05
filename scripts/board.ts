@@ -13,12 +13,13 @@ import { roleT } from "./core/i18n.ts";
 import { speaksCode } from "./core/roles.ts";
 import { escapeHtml, textToHtml } from "./panel.ts";
 import { slackEventsPage } from "./providers/slack/model.ts";
-import { type CardContext, type CardTask, type CardView, cardOf, cardTasks, isQuickGo, span, type ThreadRef } from "./views/card.ts";
+import { type CardContext, type CardTask, type CardView, cardOf, cardTasks, isQuickGo, previewFits, span, type ThreadRef } from "./views/card.ts";
 import type { LocalVersion, UpdateCheck, UpdateResult } from "./app/update.ts";
 import clientActions from "./client/actions.js" with { type: "text" };
 import clientBoot from "./client/boot.js" with { type: "text" };
 import clientCore from "./client/core.js" with { type: "text" };
 import clientDrawer from "./client/drawer.js" with { type: "text" };
+import clientFocus from "./client/focus.js" with { type: "text" };
 import clientKeyboard from "./client/keyboard.js" with { type: "text" };
 import clientSync from "./client/sync.js" with { type: "text" };
 
@@ -1018,8 +1019,8 @@ function needView(c: CardView): string {
   return `<div class="flex max-w-[88ch] flex-col gap-1 text-[13.5px] leading-snug" data-need>${n.ask ? `<p class="text-ink">${escapeHtml(n.ask)}</p>` : ""}${n.proposal ? `<p class="text-ink/80">${escapeHtml(n.proposal)}</p>` : ""}${n.summary ? `<p class="text-ink/80">${escapeHtml(n.summary)}</p>` : ""}</div>`;
 }
 
-/** The context, folded behind one line of counts: origin, threads, merge requests, the next due date, finished tasks. */
-function contextView(l: BoardLine, c: CardView, ctx: BoardContext): string {
+/** The context, folded behind one line of counts: origin, threads, merge requests, the next due date, finished tasks. Open in the focus mode's detail. */
+function contextView(l: BoardLine, c: CardView, ctx: BoardContext, open = false): string {
   const s = l.sujet;
   const x = c.context;
   const k = escapeHtml(s.key);
@@ -1033,7 +1034,7 @@ function contextView(l: BoardLine, c: CardView, ctx: BoardContext): string {
   if (x.dueSoon) bits.push(`<span class="${x.dueSoon.state === "past" ? "text-warn" : "font-medium text-ink"}">${escapeHtml(ago(x.dueSoon.at, now))}</span>`);
   if (x.finishedCount) bits.push(escapeHtml(t(x.finishedCount > 1 ? "board.card.ctx.finished.other" : "board.card.ctx.finished.one", { n: x.finishedCount })));
   const id = `card-${s.key}`;
-  const summary = `<button type="button" data-toggle="${escapeHtml(id)}" aria-expanded="false" class="group -ml-2 inline-flex w-fit max-w-full flex-wrap items-baseline gap-x-2 gap-y-0.5 rounded-md px-2 py-0.5 text-left text-[12.5px] text-muted hover:bg-soft hover:text-ink aria-expanded:text-ink" title="${escapeHtml(t(speaksCode() ? "board.card.ctx.tip" : "board.card.ctx.tip.noCode"))}" data-ctx><span class="inline-block transition-transform group-aria-expanded:rotate-90" aria-hidden="true">▸</span>${bits.join(`<span class="text-muted/60" aria-hidden="true">·</span>`)}</button>`;
+  const summary = `<button type="button" data-toggle="${escapeHtml(id)}" aria-expanded="${open}" class="group -ml-2 inline-flex w-fit max-w-full flex-wrap items-baseline gap-x-2 gap-y-0.5 rounded-md px-2 py-0.5 text-left text-[12.5px] text-muted hover:bg-soft hover:text-ink aria-expanded:text-ink" title="${escapeHtml(t(speaksCode() ? "board.card.ctx.tip" : "board.card.ctx.tip.noCode"))}" data-ctx><span class="inline-block transition-transform group-aria-expanded:rotate-90" aria-hidden="true">▸</span>${bits.join(`<span class="text-muted/60" aria-hidden="true">·</span>`)}</button>`;
   const list = (items: string) => `<ul class="flex min-w-0 flex-col gap-1 text-[12.5px]">${items}</ul>`;
   const prose = (v: string) => `<div class="whitespace-pre-wrap text-[13.5px] leading-relaxed text-ink/85">${textToHtml(v)}</div>`;
   const live = l.running === "busy" || agentCounts(l.agents).running > 0 ? trailBlock(l, ctx) : "";
@@ -1049,7 +1050,7 @@ function contextView(l: BoardLine, c: CardView, ctx: BoardContext): string {
     finishedField(s, x, ctx),
   ].filter(Boolean);
   return `${summary}
-<div id="card-${k}" data-panel hidden class="cursor-auto"><dl class="flex flex-col gap-2.5 rounded-lg bg-bg px-4 py-3">${rows.join("")}</dl></div>`;
+<div id="card-${k}" data-panel${open ? "" : " hidden"} class="cursor-auto"><dl class="flex flex-col gap-2.5 rounded-lg bg-bg px-4 py-3">${rows.join("")}</dl></div>`;
 }
 
 /**
@@ -1064,13 +1065,13 @@ const chips = (): { label: string; text: string; confirm?: boolean }[] => [
   { label: t("board.chip.settled"), text: t("board.chip.settled.text"), confirm: true },
 ];
 
-/** The instruction to the session, folded under "Write to X": the most frequent action, one click away. */
-function writePanel(l: BoardLine, c: CardView): string {
+/** The instruction to the session, folded under "Write to X": the most frequent action, one click away. Always shown in the focus mode's detail. */
+function writePanel(l: BoardLine, c: CardView, open = false): string {
   const s = l.sujet;
   const key = escapeHtml(s.key);
   // in shadow mode the go chip is hidden too: nothing goes out on a go
   const shown = chips().filter((x) => !(x.text === "go" && (c.tasks.length || settings().workers.shadow)));
-  return `<div id="write-${key}" data-panel hidden class="cursor-auto">
+  return `<div id="write-${key}" data-panel${open ? "" : " hidden"} class="cursor-auto">
 <form class="flex flex-col gap-2" id="send-${key}" data-send data-key="${key}">
 <textarea name="text" rows="2" required placeholder="${escapeHtml(t("board.send.placeholder"))}" title="${escapeHtml(t("board.send.tip"))}" class="w-full resize-y rounded-lg border border-line bg-bg px-3 py-2 text-[13.5px] leading-relaxed placeholder:text-muted focus:border-muted focus:outline-none focus:ring-2 focus:ring-ink/10"></textarea>
 <div class="flex flex-wrap items-center gap-1">${shown.map((x) => `<button type="button" data-chip="${escapeHtml(x.text)}"${x.confirm ? ` data-chip-confirm` : ""} class="inline-flex h-6 items-center rounded-full border border-muted/50 px-2 text-[11.5px] text-ink/80 hover:border-ink/60 hover:text-ink disabled:cursor-not-allowed disabled:opacity-40">${escapeHtml(x.label)}</button>`).join("")}<span class="ml-auto flex items-center gap-3"><span class="min-w-0 truncate text-[12.5px] text-muted" data-status></span><button type="submit" class="${BTN}">${t("board.send.button", { letter: escapeHtml(s.letter) })}<span class="ml-1.5 font-normal text-muted">⌘↩</span></button></span></div>
@@ -1078,8 +1079,8 @@ function writePanel(l: BoardLine, c: CardView): string {
 </div>`;
 }
 
-/** The tools of the card: write to the session, its terminal, the report, and the rare actions behind "…". */
-function toolsRow(l: BoardLine): string {
+/** The tools of the card: write to the session (when its form is folded), its terminal, the report, and the rare actions behind "…". */
+function toolsRow(l: BoardLine, writeToggle = true): string {
   const s = l.sujet;
   const key = escapeHtml(s.key);
   const live = !!s.sessionId;
@@ -1089,7 +1090,7 @@ function toolsRow(l: BoardLine): string {
     ? `<div class="my-1 border-t border-line"></div><button type="button" data-confirm="stop" data-key="${key}" class="${item}" title="${escapeHtml(t("board.session.stop.tip"))}">${t("board.session.stop")}</button><button type="button" data-confirm="close" data-key="${key}" class="${item} hover:bg-warn-soft hover:text-warn" title="${escapeHtml(t("board.session.close.tip"))}">${t("board.session.close")}</button>${settings().ui.iterm ? `<button type="button" data-dive="${key}" class="${item}">iTerm2</button>` : ""}${l.remoteUrl ? `<a href="${escapeHtml(l.remoteUrl)}" data-open class="${item}">claude.ai</a>` : ""}`
     : "";
   const more = `<details class="relative" id="more-${key}" data-snooze-menu data-menu><summary class="inline-flex h-7 cursor-pointer list-none items-center rounded-md px-2.5 text-[15px] font-medium leading-none tracking-widest text-muted hover:bg-soft hover:text-ink [[open]>&]:bg-soft [[open]>&]:text-ink" title="${escapeHtml(t(live ? "board.card.more.tip" : "board.card.more.tipNoSession"))}" aria-label="${escapeHtml(t("board.card.more"))}">…</summary><div class="absolute right-0 top-full z-20 mt-1 flex w-60 flex-col rounded-md border border-line bg-surface p-1 shadow-lg">${snooze}${session}</div></details>`;
-  const write = live ? `<button type="button" data-toggle="write-${key}" aria-expanded="false" class="${BTN_TEXT} aria-expanded:bg-soft aria-expanded:text-ink" title="${escapeHtml(t("board.send.tip"))}">${t("board.send.button", { letter: escapeHtml(s.letter) })}</button>` : `<span class="px-2 text-[12.5px] text-muted">${t("board.session.none")}</span>`;
+  const write = live && !writeToggle ? "" : live ? `<button type="button" data-toggle="write-${key}" aria-expanded="false" class="${BTN_TEXT} aria-expanded:bg-soft aria-expanded:text-ink" title="${escapeHtml(t("board.send.tip"))}">${t("board.send.button", { letter: escapeHtml(s.letter) })}</button>` : `<span class="px-2 text-[12.5px] text-muted">${t("board.session.none")}</span>`;
   const term = live ? `<button type="button" data-term="${key}" data-letter="${escapeHtml(s.letter)}" data-title="${escapeHtml(s.title)}" class="${BTN_TEXT}"${s.shortId ? ` title="${escapeHtml(t("board.session.terminal.tip", { id: s.shortId }))}"` : ""}>${t("board.session.terminal")}</button>` : "";
   return `<div class="-ml-2 flex flex-wrap items-center gap-x-1 gap-y-1" data-tools>${write}${term}<span class="min-w-0 flex-1 truncate px-2 text-[12.5px] text-muted empty:hidden" data-session-status></span><a href="/?sujet=${encodeURIComponent(s.key)}" class="${BTN_TEXT} ml-auto">${t("board.card.report")}</a>${more}</div>`;
 }
@@ -1102,9 +1103,31 @@ function heldNote(l: BoardLine): string {
 }
 
 /**
- * A topic's card, rendered from its CardView in the reading order: title and status, the thread's last message, the
- * session's last word, the stale line, the plan, the tasks, the folded context, the tools.
+ * A topic's card body, rendered from its CardView in the reading order: title and status, the thread's last message,
+ * the session's last word, the stale line, the plan, the tasks, the folded context, the tools. The flow card and the
+ * focus mode's detail are this body; the detail opens the context and keeps the instruction form shown.
  */
+function cardBody(l: BoardLine, c: CardView, ctx: BoardContext, detail: boolean): string {
+  const s = l.sujet;
+  const blocker = c.blocker ? `<p class="max-w-[88ch] text-[12.5px] leading-snug text-muted" data-blocker-line><span class="font-medium">${t("board.card.blocker")}</span> <span class="text-ink/85" data-blocker>${escapeHtml(c.blocker)}</span></p>` : "";
+  const tail = detail ? `${s.sessionId ? writePanel(l, c, true) : ""}\n${toolsRow(l, false)}` : `${toolsRow(l)}\n${s.sessionId ? writePanel(l, c) : ""}`;
+  return `<div class="flex flex-wrap items-baseline gap-x-3 gap-y-1"><a href="/?sujet=${encodeURIComponent(s.key)}" class="min-w-0 text-[15px] font-semibold leading-snug text-ink hover:underline underline-offset-2">${escapeHtml(s.title)}</a><span data-new hidden class="shrink-0 rounded-full bg-soft px-2 py-0.5 text-[11.5px] font-medium leading-4 text-ink">${t("board.line.new")}</span><span class="ml-auto flex min-w-0 max-w-full sm:max-w-[26rem]">${statusView(c, s.updatedAt, ctx)}</span></div>
+${saidView(c, ctx)}
+${wordView(c, ctx)}
+${blocker}
+${staleView(s.key, c.stale, ctx)}
+${planView(c)}
+${needView(c)}
+${tasksStack(s, c.tasks)}
+${postedLine(s, ctx, Date.now(), l.undoUntil ?? null, l.bloc, l.undoTask ?? null)}
+${draftMissing(s)}${heldNote(l)}
+${contextView(l, c, ctx, detail)}
+${tail}`;
+}
+
+const letterChip = (letter: string) => `<span class="inline-flex h-7 min-w-7 shrink-0 items-center justify-center rounded-md bg-soft px-1.5 text-[13.5px] font-semibold text-ink">${escapeHtml(letter)}</span>`;
+
+/** A topic's card in the flow mode. */
 export function lineView(l: BoardLine, ctx: BoardContext): string {
   const s = l.sujet;
   const now = nowOf(ctx);
@@ -1115,24 +1138,11 @@ export function lineView(l: BoardLine, ctx: BoardContext): string {
   const fresh = l.bloc === "attend" && l.waitingSince ? freshness(now - Date.parse(l.waitingSince)) : null;
   const freshAttr = fresh ? ` data-fresh style="--fh:${fresh.h};--fk:${fresh.k}"` : "";
   const held = l.pin?.held ? " data-held" : "";
-  const blocker = c.blocker ? `<p class="max-w-[88ch] text-[12.5px] leading-snug text-muted" data-blocker-line><span class="font-medium">${t("board.card.blocker")}</span> <span class="text-ink/85" data-blocker>${escapeHtml(c.blocker)}</span></p>` : "";
   return `<li${freshAttr}${held} id="line-${k}" class="cursor-pointer scroll-mt-20 px-5 py-4 border-b border-line last:border-b-0 hover:bg-soft/40 data-[cursor]:bg-soft/60 data-[held]:bg-accent/5 data-[cursor]:shadow-[inset_3px_0_0_var(--color-ink)]" data-row="card-${k}" data-key="${k}" data-letter="${escapeHtml(s.letter)}" data-sig="${escapeHtml(sig)}">
 <div class="flex min-w-0 items-start gap-4">
-<span class="inline-flex h-7 min-w-7 shrink-0 items-center justify-center rounded-md bg-soft px-1.5 text-[13.5px] font-semibold text-ink">${escapeHtml(s.letter)}</span>
+${letterChip(s.letter)}
 <div class="flex min-w-0 flex-1 flex-col gap-2.5">
-<div class="flex flex-wrap items-baseline gap-x-3 gap-y-1"><a href="/?sujet=${encodeURIComponent(s.key)}" class="min-w-0 text-[15px] font-semibold leading-snug text-ink hover:underline underline-offset-2">${escapeHtml(s.title)}</a><span data-new hidden class="shrink-0 rounded-full bg-soft px-2 py-0.5 text-[11.5px] font-medium leading-4 text-ink">${t("board.line.new")}</span><span class="ml-auto flex min-w-0 max-w-full sm:max-w-[26rem]">${statusView(c, s.updatedAt, ctx)}</span></div>
-${saidView(c, ctx)}
-${wordView(c, ctx)}
-${blocker}
-${staleView(s.key, c.stale, ctx)}
-${planView(c)}
-${needView(c)}
-${tasksStack(s, c.tasks)}
-${postedLine(s, ctx, Date.now(), l.undoUntil ?? null, l.bloc, l.undoTask ?? null)}
-${draftMissing(s)}${heldNote(l)}
-${contextView(l, c, ctx)}
-${toolsRow(l)}
-${s.sessionId ? writePanel(l, c) : ""}
+${cardBody(l, c, ctx, false)}
 </div>
 </div>
 </li>`;
@@ -1411,24 +1421,29 @@ function revueStatus(m: BoardModel, ctx: BoardContext): string {
   return `<p class="group flex max-w-[110ch] items-start gap-2 text-[13.5px] ${state === "stale" ? "text-warn" : "text-muted"}" data-revue-status="${state}"><span class="mt-[5px]">${lamp}</span><span class="min-w-0 flex-1">${escapeHtml(text)}</span>${state === "done" || state === "stale" ? dismissButton(req.id) : ""}</p>`;
 }
 
-/**
- * The page's content: review and banners at the top, "waiting on you" and the folded radar below, then "to review",
- * "at work", "waiting on someone", the snoozed topics, the sessions outside Strato and today's closed topics, folded.
- */
-export function boardView(m: BoardModel, ctx: BoardContext): string {
-  const vctx = { ...ctx, now: ctx.now ?? m.now };
-  const hero = `<header class="flex flex-col gap-4">
+/** The board-wide actions and banners, the same in both modes: revalidate, recheck, the master's answers, the listener. */
+function heroView(m: BoardModel, ctx: BoardContext, vctx: BoardContext, lead = ""): string {
+  return `<header class="flex flex-col gap-4">
 <div class="flex flex-wrap items-center justify-end gap-x-2 gap-y-3">
-${refreshControl(m)}
+${lead}${refreshControl(m)}
 ${revueControl(m)}
 </div>
 ${revueStatus(m, vctx)}
 ${demandesStatus(m, vctx)}
 ${syncData(m)}
 ${process.env.STRATO_DEMO === "1" ? `<p data-demo class="rounded-lg border border-accent/40 bg-accent-soft/30 px-3.5 py-2 text-[13.5px] text-ink">${t("board.demo.banner", { command: `<code class="font-mono text-[12.5px]">${escapeHtml('claude -n strato "/strato setup"')}</code>` })}</p>` : ""}
-${m.listener.alive ? "" : `<p class="flex items-center gap-2 rounded-lg border border-warn/40 bg-warn-soft/40 px-3.5 py-2 text-[13.5px] text-warn"><span class="lamp lamp-red lit" aria-hidden="true"></span>${t(m.listener.lastTick ? "board.listener.downSince" : "board.listener.down", { time: m.listener.lastTick ? escapeHtml(ctx.timeOf(m.listener.lastTick)) : "", command: `<code class="font-mono text-[12.5px]">${escapeHtml(masterCommand())}</code>` })}</p>`}
+${m.listener.alive ? "" : `<p class="flex items-center gap-2 rounded-lg border border-warn/40 bg-warn-soft/40 px-3.5 py-2 text-[13.5px] text-warn"><span class="lamp lamp-red lit" aria-hidden="true"></span><span class="min-w-0 [overflow-wrap:anywhere]">${t(m.listener.lastTick ? "board.listener.downSince" : "board.listener.down", { time: m.listener.lastTick ? escapeHtml(ctx.timeOf(m.listener.lastTick)) : "", command: `<code class="font-mono text-[12.5px]">${escapeHtml(masterCommand())}</code>` })}</span></p>`}
 ${m.listener.deaf ? `<p class="flex items-center gap-2 rounded-lg border border-warn/40 bg-warn-soft/40 px-3.5 py-2 text-[13.5px] text-warn"><span class="lamp lamp-red lit" aria-hidden="true"></span><span>${t(m.listener.lastEventAt ? "board.listener.deafSince" : "board.listener.deaf", { time: m.listener.lastEventAt ? escapeHtml(ctx.timeOf(m.listener.lastEventAt)) : "" })} ${m.listener.appId ? `<a class="underline underline-offset-2" href="${escapeHtml(slackEventsPage(m.listener.appId))}" target="_blank" rel="noopener">${t("board.listener.reenable")}</a>` : t("board.listener.reenableHere")}.</span></p>` : ""}
 </header>`;
+}
+
+/**
+ * The page's content: review and banners at the top, "waiting on you" and the folded radar below, then "to review",
+ * "at work", "waiting on someone", the snoozed topics, the sessions outside Strato and today's closed topics, folded.
+ */
+export function boardView(m: BoardModel, ctx: BoardContext): string {
+  const vctx = { ...ctx, now: ctx.now ?? m.now };
+  const hero = heroView(m, ctx, vctx);
   const sessions =
     m.sessions.length || m.otherSessions
       ? `<section class="flex flex-col gap-2.5" id="bloc-sessions">
@@ -1462,6 +1477,209 @@ ${blocView("attente", m.attente, vctx)}
 ${paused}
 ${sessions}
 ${closed}
+</div>`;
+}
+
+// ------------------------------------------------------------------ focus mode
+
+/** The board's two layouts over the same cards (docs/design/board-modes.md, section 5): flow by default. */
+export type BoardMode = "flow" | "focus";
+
+/** The mode a request asks for (`mode`): anything but "focus" is the flow mode. */
+export const modeOf = (params: URLSearchParams): BoardMode => (params.get("mode") === "focus" ? "focus" : "flow");
+
+/**
+ * What the primary button of a task sends from a focus list row, when one click may send it from there: the button
+ * exists in the detail, enabled, with no warning to read first (a send that may have gone, an old-format draft, an
+ * audience, a session action), and its whole content fits the row's two-line preview. Null: the row only opens it.
+ * `sha` is the hash of the same plan the detail's button carries: the gate checks it either way.
+ */
+export interface RowAction {
+  kind: "post" | "go" | "act" | "validate";
+  /** Exactly what is shown and sent: the draft, the action, the change on the ticket, the proposal approved. */
+  text: string;
+  sha?: string;
+  /** The draft's destination, as the detail labels it, and the tool that renders it. */
+  dest?: string;
+  provider?: string;
+  /** What Approve writes to the session. */
+  msg?: string;
+}
+
+export function rowAction(s: Sujet, x: CardTask): RowAction | null {
+  const task = x.task;
+  if (settings().workers.shadow || unknownOf(task, Date.now())) return null;
+  const fits = (a: RowAction) => (previewFits(a.text) ? a : null);
+  if (task.kind === "action" && task.act) {
+    const plan = planOfTask(s, task);
+    if (!("plan" in plan)) return null;
+    const dest = resolveTarget(s, { to: task.to?.trim() || s.key });
+    const target = (isResolved(dest) ? dest.target.label : dest.label) || "?";
+    return fits({ kind: "act", text: t(task.act === "setStatus" ? "board.act.setStatus" : "board.act.assign", { target, value: task.value ?? "" }), sha: planSha(plan.plan) });
+  }
+  const draft = taskDraftText(task);
+  if (draft) {
+    if (!task.draft?.trim() || !postOnlyAction(task)) return null;
+    const dest = resolveTarget(s, task);
+    if (!isResolved(dest)) return null;
+    const max = maxTextOf(dest.provider);
+    if (max !== null && draft.length > max) return null;
+    const plan = planOfTask(s, task);
+    if (!("plan" in plan) || audienceLine(plan)) return null;
+    return fits({ kind: "post", text: draft, sha: planSha(plan.plan), dest: dest.target.label || "?", provider: dest.provider });
+  }
+  if (task.action?.trim()) return sendsUnseenMessage(task) ? null : fits({ kind: "go", text: task.action.replace(/\\n/g, " ").trim() });
+  const proposal = (task.proposal ?? "").replace(/\\n/g, "\n").trim();
+  if ((x.kind === "decide" || x.kind === "answer") && proposal && s.sessionId) {
+    const msg = t("board.card.task.approve.text", { proposal });
+    return msg.length > 4000 ? null : fits({ kind: "validate", text: proposal, msg });
+  }
+  return null;
+}
+
+const BTN_PRIMARY_SM = "inline-flex h-6 shrink-0 items-center rounded-md bg-accent px-2.5 text-[12.5px] font-semibold text-[#1b1406] hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40";
+const PREVIEW = "ml-1 max-w-[72ch] border-l-2 border-line pl-2.5 text-[12.5px] leading-snug text-muted [overflow-wrap:anywhere]";
+
+/** What a task would send, shown in full beside its one-click button; clipped to two lines when the row only opens it. */
+function rowPreview(s: Sujet, x: CardTask, a: RowAction | null): string {
+  if (a) {
+    const body = a.kind === "post" ? draftHtml(a.provider ?? providerOfKey(s.key), a.text) : a.kind === "validate" ? mdLite(a.text) : escapeHtml(a.text);
+    const dest = a.dest ? `<span class="mr-1.5 text-link">→ ${escapeHtml(clip(a.dest, 44))}</span>` : "";
+    return `<p class="${PREVIEW} whitespace-pre-wrap text-ink/80" data-row-preview>${dest}${body}</p>`;
+  }
+  const flat = (v: string) => v.replace(/\\n/g, " ").replace(/\s+/g, " ").trim();
+  const draft = taskDraftText(x.task);
+  const dest = draft ? resolveTarget(s, x.task) : null;
+  const html = draft ? draftHtml(dest?.provider ?? providerOfKey(s.key), flat(draft)) : escapeHtml(flat(x.task.action?.trim() || x.task.proposal?.trim() || ""));
+  return html ? `<p class="${PREVIEW} line-clamp-2" data-row-preview>${html}</p>` : "";
+}
+
+/** One open task on a list row: its kind, its need, and its button; the first one also shows what that button sends. */
+function rowTask(s: Sujet, x: CardTask, first: boolean): string {
+  const k = escapeHtml(s.key);
+  const id = escapeHtml(x.id);
+  const a = first ? rowAction(s, x) : null;
+  const open = `<button type="button" data-open-task="tb-${k}#${id}" data-key="${k}" class="${BTN_SM} shrink-0" title="${escapeHtml(t("board.focus.open.tip"))}">${escapeHtml(t("board.focus.open"))}</button>`;
+  const label = a?.kind === "post" ? t("board.draft.send") : a?.kind === "validate" ? t("board.card.task.approve") : t("board.task.go");
+  const tip = a?.kind === "post" ? t("board.draft.send.tip") : a?.kind === "validate" ? t("board.card.task.approve.tip") : a?.kind === "act" ? t("board.act.go.tip") : t("board.task.go.tip");
+  const button = !a
+    ? open
+    : a.kind === "post"
+      ? `<button type="button" data-post class="${BTN_PRIMARY_SM}" title="${escapeHtml(tip)}"><span data-label>${label}</span></button>`
+      : a.kind === "go"
+        ? `<button type="button" data-go="${k}" data-task="${id}" class="${BTN_PRIMARY_SM}" title="${escapeHtml(tip)}">${label}</button>`
+        : a.kind === "act"
+          ? `<button type="button" data-act-go class="${BTN_PRIMARY_SM}" title="${escapeHtml(tip)}">${label}</button>`
+          : `<button type="button" data-validate data-key="${k}" data-task="${id}" data-msg="${escapeHtml(a.msg ?? "")}" class="${BTN_PRIMARY_SM}" title="${escapeHtml(tip)}">${label}</button>`;
+  const line = `<div class="flex min-w-0 items-center gap-2">${kindChip(x.kind)}<span class="min-w-0 flex-1 truncate text-[12.5px] text-ink/85" title="${escapeHtml(x.need)}">${escapeHtml(x.need)}</span>${button}</div>`;
+  const preview = first ? rowPreview(s, x, a) : "";
+  // the same attributes as the detail's draft form and action box: the click posts the same plan, checked by the same hash
+  const sha = a?.sha ? ` data-sha="${a.sha}"` : "";
+  if (a?.kind === "post")
+    return `<form class="flex min-w-0 flex-col gap-1" data-draft data-preview data-key="${k}" data-task="${id}" data-draft-to="${escapeHtml(x.task.draftTo ?? "")}"${sha} data-postable="1">${line}${preview}<textarea hidden data-draft-edit>${escapeHtml(a.text)}</textarea><p class="text-[12.5px] leading-snug text-muted empty:hidden" data-draft-status></p></form>`;
+  if (a?.kind === "act") return `<div class="flex min-w-0 flex-col gap-1" data-actbox data-preview data-key="${k}" data-task="${id}"${sha}>${line}${preview}</div>`;
+  return `<div class="flex min-w-0 flex-col gap-1" data-task="${id}">${line}${preview}</div>`;
+}
+
+/** The compact status of a list row: the state's shape (or the working dot) and its age; the sentence on hover. */
+function rowStatus(c: CardView): string {
+  const st = c.status;
+  return `<span class="inline-flex shrink-0 items-center gap-1.5 text-[12.5px] font-medium tabular-nums ${STATUS_INK[st.tone]}" data-status-kind="${st.kind}" title="${escapeHtml(st.text)}">${st.pulse ? PULSE : shape(st.tone)}${st.age ? `<span class="text-muted" data-age>${escapeHtml(st.age)}</span>` : ""}</span>`;
+}
+
+/**
+ * A topic's row in the focus list, from its CardView: letter, title, compact status, the thread's last message, then
+ * its first two open tasks (the first with its preview and one-click button) and "+N other tasks"; a topic without
+ * task says the session's last word, or where the card stands.
+ */
+export function focusRow(l: BoardLine, ctx: BoardContext): string {
+  const s = l.sujet;
+  const now = nowOf(ctx);
+  const c = cardOf(l, { now, channelNames: CHANNEL_NAMES });
+  const k = escapeHtml(s.key);
+  const sig = `${s.updatedAt}|${l.lastMessage?.at ?? ""}|${l.bloc}`;
+  const fresh = l.bloc === "attend" && l.waitingSince ? freshness(now - Date.parse(l.waitingSince)) : null;
+  const freshAttr = fresh ? ` data-fresh style="--fh:${fresh.h};--fk:${fresh.k}"` : "";
+  const held = l.pin?.held ? " data-held" : "";
+  // in "waiting on you", the client tells the server whether the row sat among the quick gos (the pin keeps it there)
+  const quick = l.bloc === "attend" && (l.pin ? l.pin.quick : isQuickGo(l)) ? " data-quick" : "";
+  const m = c.said;
+  const said = m
+    ? `<p class="flex min-w-0 items-baseline gap-x-1.5 text-[12.5px] leading-snug text-ink/80" data-said><span class="shrink-0 font-semibold text-ink">${escapeHtml(m.who)}</span>${m.text ? `<q class="min-w-0 truncate italic">${escapeHtml(m.text)}</q>` : ""}${m.age ? `<span class="shrink-0 tabular-nums text-muted">${escapeHtml(m.age)}</span>` : ""}</p>`
+    : "";
+  const more = c.tasks.length - 2;
+  const tasks = c.tasks.length
+    ? `${c.tasks.slice(0, 2).map((x, i) => rowTask(s, x, i === 0)).join("")}${more > 0 ? `<p class="text-[12.5px] text-muted">${escapeHtml(t(more > 1 ? "board.focus.more.other" : "board.focus.more.one", { n: more }))}</p>` : ""}`
+    : "";
+  const last = c.word?.text ?? c.need?.summary ?? c.need?.proposal ?? c.need?.ask ?? "";
+  const word = !c.tasks.length && last ? `<p class="line-clamp-2 text-[12.5px] leading-snug text-muted [overflow-wrap:anywhere]" data-row-word>${mdLite(last.replace(/\\n/g, " ").replace(/\s+/g, " ").trim())}</p>` : "";
+  return `<li${freshAttr}${held}${quick} id="row-${k}" class="group cursor-pointer border-b border-line px-4 py-3 last:border-b-0 hover:bg-soft/40 data-[held]:bg-accent/5 data-[cursor]:bg-soft data-[cursor]:shadow-[inset_3px_0_0_var(--color-ink)]" data-row="" data-key="${k}" data-letter="${escapeHtml(s.letter)}" data-sig="${escapeHtml(sig)}" role="option" aria-selected="false">
+<div class="flex min-w-0 items-start gap-3">
+<span class="inline-flex h-6 min-w-6 shrink-0 items-center justify-center rounded-md bg-soft px-1.5 text-[12.5px] font-semibold text-ink group-data-[cursor]:bg-surface">${escapeHtml(s.letter)}</span>
+<div class="flex min-w-0 flex-1 flex-col gap-1.5">
+<div class="flex min-w-0 items-baseline gap-2"><span class="min-w-0 flex-1 truncate text-[13.5px] font-semibold text-ink" title="${escapeHtml(s.title)}">${escapeHtml(s.title)}</span><span data-new hidden class="shrink-0 rounded-full bg-soft px-1.5 text-[11.5px] font-medium leading-4 text-ink">${t("board.line.new")}</span>${rowStatus(c)}</div>
+${said}${tasks}${word}
+</div>
+</div>
+</li>`;
+}
+
+/** The detail of a topic in the focus mode: the flow card's body, context open, instruction form shown. */
+export function focusDetail(l: BoardLine, ctx: BoardContext, selected: boolean): string {
+  const s = l.sujet;
+  const c = cardOf(l, { now: nowOf(ctx), channelNames: CHANNEL_NAMES });
+  return `<article id="detail-${escapeHtml(s.key)}" data-detail data-key="${escapeHtml(s.key)}"${selected ? "" : " hidden"} class="max-w-[860px]">
+<div class="flex min-w-0 items-start gap-4">
+${letterChip(s.letter)}
+<div class="flex min-w-0 flex-1 flex-col gap-3">
+${cardBody(l, c, ctx, true)}
+</div>
+</div>
+</article>`;
+}
+
+/** A block's rows in the order shown: the pinned row where the server kept it, the quick gos first otherwise. */
+const focusOrder = (bloc: Bloc, lines: BoardLine[]) => (lines.some((l) => l.pin) ? lines : blocOrder(bloc, lines));
+
+/**
+ * The focus mode: the board-wide strip, then the list of open topics by block on the left and the detail of the
+ * selected one in the centre (`sel`, else the first row). Every open topic's detail is rendered, the others hidden:
+ * the selection moves without a round trip, and each detail keeps its own panels and typing.
+ */
+export function focusView(m: BoardModel, ctx: BoardContext, sel: string | null = null): string {
+  const vctx = { ...ctx, now: ctx.now ?? m.now };
+  const blocs = BLOCS.map((b) => ({ b, lines: focusOrder(b, m[b]) })).filter((x) => x.lines.length);
+  const shown = blocs.flatMap((x) => x.lines);
+  const selected = shown.find((l) => l.sujet.key === sel) ?? shown[0] ?? null;
+  const list = blocs
+    .map(
+      ({ b, lines }) => `<section id="bloc-${b}">
+<h2 class="flex items-center gap-2 px-4 pb-1.5 pt-3.5 text-[12.5px] font-semibold text-muted" title="${escapeHtml(blocHint(b))}"><span class="lamp lamp-${BLOC_LAMP[b]} lit" aria-hidden="true"></span><span class="text-ink">${blocTitle(b)}</span>${count(lines.length)}</h2>
+<ul role="listbox" aria-label="${escapeHtml(blocTitle(b))}">${lines.map((l) => focusRow(l, vctx)).join("\n")}</ul>
+</section>`,
+    )
+    .join("\n");
+  const empty = `<p class="px-4 py-6 text-[13.5px] text-muted">${escapeHtml(t("board.focus.empty"))}</p>`;
+  const folds = [
+    m.paused.length ? `<details class="group" id="paused"><summary class="flex cursor-pointer select-none list-none items-center gap-1.5 px-4 py-2.5 text-[12.5px] font-medium text-muted hover:text-ink"><span class="inline-block transition-transform group-open:rotate-90">▸</span>${t(m.paused.length > 1 ? "board.paused.count.other" : "board.paused.count.one", { n: m.paused.length })}</summary><ul class="border-t border-line">${m.paused.map((p) => pausedRow(p.line, p.until, vctx, p.reason)).join("")}</ul></details>` : "",
+    m.closedToday.length ? `<details class="group" id="closed-today"><summary class="flex cursor-pointer select-none list-none items-center gap-1.5 px-4 py-2.5 text-[12.5px] font-medium text-muted hover:text-ink"><span class="inline-block transition-transform group-open:rotate-90">▸</span>${t(m.closedToday.length > 1 ? "board.closedToday.other" : "board.closedToday.one", { n: m.closedToday.length })}</summary><ul class="border-t border-line">${m.closedToday.map((s) => closedRow(s, vctx)).join("")}</ul></details>` : "",
+  ].filter(Boolean);
+  const radarHtml = radar(m, vctx);
+  const lead = radarHtml ? `<div class="mr-auto min-w-0 max-sm:basis-full sm:flex-1">${radarHtml}</div>\n` : "";
+  return `<div class="flex flex-col" data-view="board" data-mode="focus" data-attend="${openLines(m).filter((l) => l.bloc === "attend").length}">
+<div class="border-b border-line px-5 py-3">${heroView(m, ctx, vctx, lead)}</div>
+<div class="grid md:grid-cols-[minmax(320px,400px)_minmax(0,1fr)]">
+<aside class="focus-list flex flex-col overflow-y-auto [scrollbar-width:thin] border-line bg-surface max-md:border-b md:border-r" data-focus-list aria-label="${escapeHtml(t("board.focus.list"))}">
+${shown.length ? list : empty}
+${folds.length ? `<div class="mt-auto border-t border-line">${folds.join("")}</div>` : ""}
+</aside>
+<div class="min-w-0 px-7 pb-24 pt-5 max-sm:px-4" data-focus-detail>
+${openLines(m)
+  .filter((l) => shown.includes(l))
+  .map((l) => focusDetail(l, vctx, l === selected))
+  .join("\n")}
+</div>
+</div>
 </div>`;
 }
 
@@ -1590,6 +1808,11 @@ body[data-split="bottom"] { padding-bottom: max(var(--dock-h, 46vh), 240px); }
 /* while dragging, the terminals must not swallow the pointer */
 body[data-resizing] iframe { pointer-events: none; }
 body[data-resizing] { user-select: none; }
+/* the focus list stays in view while the detail scrolls the page, and ends above a drawer docked at the bottom */
+@media (min-width: 768px) {
+  .focus-list { position: sticky; top: var(--nav-h, 53px); align-self: start; height: calc(100dvh - var(--nav-h, 53px)); }
+  body[data-split="bottom"] .focus-list { height: calc(100dvh - var(--nav-h, 53px) - max(var(--dock-h, 46vh), 240px)); }
+}
 @media (prefers-reduced-motion: reduce) { * { transition: none !important; animation: none !important; } }
 `;
 
@@ -1600,11 +1823,19 @@ export { faviconHref } from "./core/brand.ts";
  * The client script, in parts that share one scope (client/*.js), concatenated in this order inside one function.
  * Imported as text: `bun build --compile` embeds them, and the binary has no file next to its code.
  */
-const CLIENT = [clientCore, clientSync, clientActions, clientDrawer, clientKeyboard, clientBoot];
+const CLIENT = [clientCore, clientSync, clientActions, clientDrawer, clientKeyboard, clientFocus, clientBoot];
 const JS = `\n(function () {\n${CLIENT.join("")}})();\n`;
 
+/** The Flow / Focus switch of the top bar: links, so the URL carries the mode; the script remembers the choice. */
+function modeSwitch(mode: BoardMode): string {
+  const item = (m: BoardMode) =>
+    `<a href="/board?mode=${m}" data-mode-switch="${m}"${m === mode ? ' aria-current="page"' : ""} title="${escapeHtml(t(m === "flow" ? "board.header.mode.flow.tip" : "board.header.mode.focus.tip"))}" class="inline-flex h-6 items-center rounded-md px-2.5 text-[12.5px] font-medium ${m === mode ? "bg-soft text-ink" : "text-muted hover:text-ink"}">${escapeHtml(t(m === "flow" ? "board.header.mode.flow" : "board.header.mode.focus"))}</a>`;
+  return `<div role="group" aria-label="${escapeHtml(t("board.header.mode"))}" class="mr-2 inline-flex rounded-lg border border-line p-0.5">${item("flow")}${item("focus")}</div>`;
+}
+
 /** The board's whole page: Tailwind shell, sticky bar, content, toast, script. */
-export function boardPage(view: string, version = ""): string {
+export function boardPage(view: string, version = "", mode: BoardMode = "flow"): string {
+  const width = mode === "focus" ? "max-w-none" : "max-w-[1080px]";
   return `<!doctype html>
 <html lang="${locale()}">
 <head>
@@ -1616,19 +1847,20 @@ export function boardPage(view: string, version = ""): string {
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
 <script>try { var t = localStorage.getItem("aiguilleur-theme"); if (t === "light" || t === "dark") document.documentElement.setAttribute("data-theme", t); } catch (e) {}</script>
+<script>try { if (!/[?&]mode=/.test(location.search) && localStorage.getItem("strato-mode") === "focus" && "${mode}" !== "focus") location.replace("/board?mode=focus"); } catch (e) {}</script>
 <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4.3.3" integrity="sha384-aJ9rL4k6lF+91guGvUFVSkpIcge7Zd9EiI4TQDLoK9kFaFJgKHgjEXVvG/qA5COj" crossorigin="anonymous"></script>
 <script src="https://cdn.jsdelivr.net/npm/idiomorph@0.8.0/dist/idiomorph.min.js" integrity="sha384-e8O/d5cD6uoo78UI/d99hf1dEsbvkgBZNIetwKEi79V9qexl0Bdc2wxEqLEaj58U" crossorigin="anonymous"></script>
 <style type="text/tailwindcss">${THEME}</style>
 </head>
-<body class="font-sans antialiased text-[13.5px]">
+<body class="font-sans antialiased text-[13.5px]" data-mode="${mode}">
 <nav class="sticky top-0 z-10 border-b border-line bg-bg/85 backdrop-blur">
-<div class="mx-auto flex max-w-[1080px] flex-wrap items-center justify-between gap-x-4 gap-y-1 px-5 py-2.5">
+<div class="mx-auto flex ${width} flex-wrap items-center justify-between gap-x-4 gap-y-1 px-5 py-2.5">
 <div class="flex items-center gap-2.5 text-ink"><span class="inline-flex text-ink">${stratoMark(22)}</span><span class="text-[15px] font-semibold tracking-tight">Strato</span><span class="text-[12.5px] text-muted">board</span><div id="version-slot" class="ml-1 flex items-center gap-2">${version}</div></div>
 <button type="button" data-palette-open title="${escapeHtml(t("board.header.search.tip"))}" class="mx-2 hidden h-8 min-w-0 max-w-[420px] flex-1 items-center gap-2 rounded-lg border border-line bg-surface px-3 text-left text-[12.5px] text-muted hover:border-muted/60 hover:text-ink sm:flex"><span aria-hidden="true">⌕</span><span class="min-w-0 flex-1 truncate">${escapeHtml(t("board.header.search"))}</span><kbd class="shrink-0">⌘K</kbd></button>
-<div class="flex flex-wrap items-center justify-end gap-1 text-[12.5px]"><span id="sync-pill" class="mr-2 inline-flex items-center gap-2 rounded-full border border-line px-2.5 py-0.5 text-[12.5px] text-muted"><span class="lamp" aria-hidden="true"></span><span data-sync-label>…</span></span><button type="button" id="drawer-show" hidden data-drawer-show class="${BTN} mr-1" title="${escapeHtml(t("board.drawer.show.tip"))}"></button><button type="button" data-theme-toggle class="${BTN_TEXT}" title="${escapeHtml(t("board.header.theme.tip"))}">${t("board.js.theme.auto")}</button><a href="/?liste" class="${BTN_TEXT}" title="${escapeHtml(t("board.header.list.tip"))}">${t("board.header.list")}</a><button type="button" data-refresh class="${BTN_TEXT}" title="${escapeHtml(t("board.header.refresh.tip"))}">${t("board.header.refresh")}</button></div>
+<div class="flex flex-wrap items-center justify-end gap-1 text-[12.5px]">${modeSwitch(mode)}<span id="sync-pill" class="mr-2 inline-flex items-center gap-2 rounded-full border border-line px-2.5 py-0.5 text-[12.5px] text-muted"><span class="lamp" aria-hidden="true"></span><span data-sync-label>…</span></span><button type="button" id="drawer-show" hidden data-drawer-show class="${BTN} mr-1" title="${escapeHtml(t("board.drawer.show.tip"))}"></button><button type="button" data-theme-toggle class="${BTN_TEXT}" title="${escapeHtml(t("board.header.theme.tip"))}">${t("board.js.theme.auto")}</button><a href="/?liste" class="${BTN_TEXT}" title="${escapeHtml(t("board.header.list.tip"))}">${t("board.header.list")}</a><button type="button" data-refresh class="${BTN_TEXT}" title="${escapeHtml(t("board.header.refresh.tip"))}">${t("board.header.refresh")}</button></div>
 </div>
 </nav>
-<main id="app" class="mx-auto max-w-[1080px] px-5 pb-24 pt-8">${view}</main>
+<main id="app" class="${mode === "focus" ? "w-full" : "mx-auto max-w-[1080px] px-5 pb-24 pt-8"}">${view}</main>
 <aside id="drawer" aria-hidden="true" data-dock="bottom" class="drawer-closed fixed inset-x-0 bottom-0 z-20 flex min-h-[240px] flex-col border-t border-line bg-[#121417] shadow-[0_-8px_24px_rgb(0_0_0/0.25)]">
 <div id="drawer-grip" title="${escapeHtml(t("board.drawer.grip.tip"))}"></div>
 <div class="flex items-center gap-1 border-b border-line bg-bg px-3 py-1.5">

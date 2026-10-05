@@ -353,3 +353,15 @@ export function cardOf(l: BoardLine, opts: CardOptions): CardView {
 
 /** A task's freshness, for its age's tint. */
 export const taskFreshness = (x: CardTask) => freshness(x.ageMs);
+
+/** Beyond this, a task's content does not fit the two lines of a focus list row. */
+export const PREVIEW_MAX = 120;
+
+/**
+ * Does what a button sends fit the two-line preview of a focus list row? One click acts only on what is on screen: a
+ * longer content keeps its button in the detail, and the row only opens it.
+ */
+export function previewFits(text: string): boolean {
+  const x = text.trim();
+  return !!x && x.length <= PREVIEW_MAX && x.split("\n").length <= 2;
+}

@@ -26,7 +26,7 @@ document.addEventListener("click", function (ev) {
   }
   // a click on the line itself opens or closes its card; not on a link, a button, the form, a panel, or a text selection
   var row = el.closest("[data-row]");
-  if (row && !el.closest("a, button, textarea, input, form, details, [data-panel], [data-gocard], code") && !String(window.getSelection && window.getSelection()).length) {
+  if (row && row.getAttribute("data-row") && !el.closest("a, button, textarea, input, form, details, [data-panel], [data-gocard], code") && !String(window.getSelection && window.getSelection()).length) {
     var cid = row.getAttribute("data-row");
     var cp = document.getElementById(cid);
     setPanel(cid, !cp || cp.hidden);
@@ -125,6 +125,7 @@ document.addEventListener("submit", function (ev) {
   if (isGo && (key + "#") in goLock) { flash(tr("board.js.go.already")); return; }
   if (isGo) lockGo(key + "#");
   sending[key] = text;
+  noteActed(key);
   paintSending(form, text);
   post("/api/send", { key: key, text: text })
     .then(function (x) { return { ok: x.ok, text: x.ok ? (x.d.note || tr("board.js.delivered")) : tr("board.js.notDelivered", { error: x.error }) }; })
@@ -143,9 +144,9 @@ document.addEventListener("submit", function (ev) {
     });
 });
 // the feedback of a session action (terminal, stop, close, iTerm2) goes on its card's tools row
-function sessionStatusOf(b) { var r = b.closest("[data-row]"); return r && r.querySelector("[data-session-status]"); }
+function sessionStatusOf(b) { var r = b.closest("[data-row],[data-detail]"); return r && r.querySelector("[data-session-status]"); }
 // A button inside a folded panel (a task's body not opened) never acts: one click acts only on what is on screen.
-function folded(b) { return !!(b && b.closest("[data-panel][hidden]")); }
+function folded(b) { return !!(b && b.closest("[data-panel][hidden],[data-detail][hidden]")); }
 // the "…" menus close when the click lands elsewhere
 document.addEventListener("click", function (ev) {
   var el = ev.target instanceof Element ? ev.target : null;
@@ -203,6 +204,7 @@ document.addEventListener("click", function (ev) {
     var oid = busyIdOf(top);
     if (!(oid in armed)) { arm(oid, tr(op === "done" ? "board.js.task.done.confirm" : "board.js.task.drop.confirm", { id: tid }), 4000); return; }
     disarm(oid);
+    noteActed(tkey);
     runBusy(top, tr(op === "done" ? "board.js.task.done.busy" : "board.js.task.drop.busy"), function () {
       return post("/api/task", { key: tkey, taskId: tid, op: op === "done" ? "done" : "drop" }).then(function (x) {
         flash(x.ok ? x.d.note : tr("board.js.task.failed", { error: x.error }));
@@ -232,7 +234,9 @@ var retrying = {};  // fid -> true when the last send may have gone out: Send be
 var postNote = {};  // fid -> last feedback (text + permalink + undoable until)
 // the server renders data-retry when the task's last send may have gone out: a reloaded page still sends "again"
 function retryOf(f, fid) { return fid in retrying || f.hasAttribute("data-retry"); }
-function draftForm(fid) { var f = null; app.querySelectorAll("form[data-draft]").forEach(function (x) { if (fidOf(x) === fid) f = x; }); return f; }
+// the draft's form on the card (the one that edits); a focus list row has its own preview form of the same draft
+function draftForm(fid) { var f = null; app.querySelectorAll("form[data-draft]:not([data-preview])").forEach(function (x) { if (fidOf(x) === fid) f = x; }); return f; }
+function draftForms(fid) { return Array.prototype.filter.call(app.querySelectorAll("form[data-draft]"), function (x) { return fidOf(x) === fid; }); }
 function setEdit(f, on, value) {
   var ta = f.querySelector("[data-draft-edit]"), tx = f.querySelector("[data-draft-text]"), b = f.querySelector("[data-edit]"), p = f.querySelector("[data-post]");
   ta.hidden = !on; tx.hidden = on;
@@ -263,7 +267,7 @@ function paintUndo() {
 }
 function restoreDrafts() {
   Object.keys(editing).forEach(function (k) { var f = draftForm(k); if (f) setEdit(f, true, editing[k].text); });
-  Object.keys(posting).concat(Object.keys(postNote)).forEach(function (k) { var f = draftForm(k); if (f) paintPost(f, k); });
+  Object.keys(posting).concat(Object.keys(postNote)).forEach(function (k) { draftForms(k).forEach(function (f) { paintPost(f, k); }); });
 }
 document.addEventListener("input", function (ev) {
   var t = ev.target;
@@ -288,6 +292,9 @@ function unfoldFirst(btn) {
 function postDraft(f) {
   var key = fidOf(f), topic = f.getAttribute("data-key"), task = f.getAttribute("data-task");
   if (key in posting || f.getAttribute("data-postable") !== "1") return;
+  // a list row shows the draft as written: while the detail edits it, the row would post a text no longer on screen
+  if (f.hasAttribute("data-preview") && key in editing) { flash(tr("board.js.focus.editing")); return; }
+  noteActed(topic);
   // The server posts exactly the text sent here: the one shown, or its edited version. It also receives the raw draft
   // the person served decided on and its destination, and refuses (409, code draft-changed) if the card changed in
   // the meantime: posting the draft reread from disk could post a text a session rewrote after it was shown.
@@ -313,9 +320,9 @@ function postDraft(f) {
       postNote[key] = { text: tr("board.js.post.done", { at: x.d.at }), url: x.d.permalink, undoUntil: Date.now() + x.d.undoMs };
       markSeen(topic);
       flash(tr("board.js.post.flash"));
-      setTimeout(function () { var g = draftForm(key); if (g) paintPost(g, key); }, x.d.undoMs + 200);
+      setTimeout(function () { draftForms(key).forEach(function (g) { paintPost(g, key); }); }, x.d.undoMs + 200);
     })
-    .then(function () { var g = draftForm(key); if (g) { g.querySelector("[data-post]").disabled = g.getAttribute("data-postable") !== "1"; paintPost(g, key); } });
+    .then(function () { draftForms(key).forEach(function (g) { g.querySelector("[data-post]").disabled = g.getAttribute("data-postable") !== "1"; paintPost(g, key); }); });
 }
 // The actions in progress, per button: a click greys the button and shows a spinner until the answer, and that
 // survives the redraw. Otherwise the redraws during the 10 to 15 s of a delivery bring the Go button back active
@@ -425,8 +432,8 @@ function paintArmed() {
   });
   // g armed on the keyboard: the button the second g will press is ringed, and only it (the first ready task's)
   app.querySelectorAll("[data-row]").forEach(function (r) {
-    var on = ("g:" + r.getAttribute("data-key")) in armed, tgt = on ? gTarget(r) : null;
-    r.querySelectorAll("[data-post],[data-go]").forEach(function (b) { ["ring-2", "ring-accent", "ring-offset-2", "ring-offset-bg"].forEach(function (c) { b.classList.toggle(c, b === tgt); }); });
+    var card = cardEl(r), on = ("g:" + r.getAttribute("data-key")) in armed, tgt = on ? gTarget(card) : null;
+    card.querySelectorAll("[data-post],[data-go]").forEach(function (b) { ["ring-2", "ring-accent", "ring-offset-2", "ring-offset-bg"].forEach(function (c) { b.classList.toggle(c, b === tgt); }); });
   });
 }
 /** Runs the button's action once: while it runs, another click does nothing. */
@@ -512,6 +519,7 @@ document.addEventListener("click", function (ev) {
     var vid = va.getAttribute("data-key") + "#" + va.getAttribute("data-task");
     if (vid in goLock || folded(va)) return;
     lockGo(vid);
+    noteActed(va.getAttribute("data-key"));
     runBusy(va, tr("board.js.go.busy"), function () {
       return sendText(va.getAttribute("data-key"), va.getAttribute("data-msg"), va.parentElement.querySelector("[data-go-status]")).then(function (ok) { goDelivered(vid, ok); });
     });
@@ -534,8 +542,7 @@ document.addEventListener("click", function (ev) {
       return post("/api/unpost", { key: uk, taskId: ut }).then(function (x) {
         postNote[ufid] = { text: x.ok ? tr("board.js.unpost.done") : tr("board.js.unpost.failed", { error: x.error }) };
         flash(postNote[ufid].text);
-        var g = draftForm(ufid);
-        if (g) paintPost(g, ufid);
+        draftForms(ufid).forEach(function (g) { paintPost(g, ufid); });
         return redraw(true);
       });
     });
@@ -547,6 +554,7 @@ document.addEventListener("click", function (ev) {
     // a status or an assignee on a ticket: the server acts through the gate, on the plan whose hash the page shows
     var box = ag.closest("[data-actbox]");
     if (folded(ag)) return;
+    noteActed(box.getAttribute("data-key"));
     runBusy(ag, tr("board.js.act.busy"), function () {
       return post("/api/act-task", { key: box.getAttribute("data-key"), taskId: box.getAttribute("data-task"), sha: box.getAttribute("data-sha") || "", retry: box.hasAttribute("data-retry") }).then(function (x) {
         flash(x.ok ? tr("board.js.act.done") : tr("board.js.act.failed", { error: x.error }));
@@ -561,6 +569,7 @@ document.addEventListener("click", function (ev) {
     var gkey = go.getAttribute("data-go"), gtask = go.getAttribute("data-task"), gid = goIdOf(go);
     if (gid in goLock || folded(go) || unfoldFirst(go)) return;
     lockGo(gid);
+    noteActed(gkey);
     runBusy(go, tr("board.js.go.busy"), function () {
       return sendText(gkey, "go", go.parentElement.querySelector("[data-go-status]"), gtask).then(function (ok) {
         var b2 = null;

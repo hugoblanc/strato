@@ -33,12 +33,15 @@ var pinned = null, lastTouch = Date.now(), PIN_MS = 120000, PIN_BLOCS = ["attend
 ["pointerdown", "keydown", "input"].forEach(function (t) { document.addEventListener(t, function () { lastTouch = Date.now(); }, true); });
 function pinTo(key) {
   var r = key && rowOf(key), sec = r && r.closest("section[id^='bloc-']"), bloc = sec && sec.id.slice(5);
-  pinned = bloc && PIN_BLOCS.indexOf(bloc) >= 0 ? { key: key, bloc: bloc, index: Array.prototype.indexOf.call(sec.querySelectorAll("[data-row]"), r), quick: !!r.closest("ul[data-quick]") } : null;
+  pinned = bloc && PIN_BLOCS.indexOf(bloc) >= 0 ? { key: key, bloc: bloc, index: Array.prototype.indexOf.call(sec.querySelectorAll("[data-row]"), r), quick: !!r.closest("ul[data-quick]") || r.hasAttribute("data-quick") } : null;
 }
 function fragmentUrl() {
   if (pinned && Date.now() - lastTouch > PIN_MS) pinned = null;
-  if (!pinned) return "/board/fragment";
-  return "/board/fragment?pin=" + encodeURIComponent(pinned.key) + "&pinBloc=" + pinned.bloc + "&pinIndex=" + pinned.index + (pinned.quick ? "&pinQuick=1" : "");
+  var q = [];
+  if (pinned) q.push("pin=" + encodeURIComponent(pinned.key) + "&pinBloc=" + pinned.bloc + "&pinIndex=" + pinned.index + (pinned.quick ? "&pinQuick=1" : ""));
+  // the focus mode asks for its layout and the topic it shows in the detail
+  if (focusMode) q.push("mode=focus" + (cursorKey ? "&sel=" + encodeURIComponent(cursorKey) : ""));
+  return "/board/fragment" + (q.length ? "?" + q.join("&") : "");
 }
 // Morphing instead of replacing keeps the DOM identity of what did not change: the focused field, its caret, what the
 // person typed, the open details and panels survive the redraw by construction. The attributes the page owns stay.
@@ -126,9 +129,10 @@ function setCursor(key, scroll) {
   rows().forEach(function (r) { r.removeAttribute("data-cursor"); });
   cursorKey = key;
   var r = key && rowOf(key);
-  if (!r) { cursorKey = null; return; }
+  if (!r) { cursorKey = null; paintFocus(); return; }
   r.setAttribute("data-cursor", "");
   if (scroll) r.scrollIntoView({ block: "nearest", behavior: "smooth" });
+  paintFocus();
 }
 /** The person moves to a card: it becomes the cursor and the pin, which releases the previous one. */
 function select(key, scroll) { setCursor(key, scroll); pinTo(cursorKey); }
@@ -143,6 +147,7 @@ function afterRender() {
   paintNew();
   paintTitle();
   if (cursorKey) setCursor(cursorKey, false);
+  focusDefault();
   if (pinned && !rowOf(pinned.key)) pinned = null;
 }
 // The top bar's pill: the state of Strato and of the board, repainted every 5 s without waiting for a redraw.

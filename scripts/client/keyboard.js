@@ -10,7 +10,7 @@ document.addEventListener("keydown", function (ev) {
   if (ev.key === "Escape" && keysLocked) { keysLocked = false; flash(tr("board.js.keys.back")); return; }
   var openMenu = app.querySelector("details[data-menu][open]");
   if (ev.key === "Escape" && openMenu) { openMenu.open = false; return; }
-  if (ev.key === "Escape" && !ev.defaultPrevented && (pinned || cursorKey)) { pinned = null; setCursor(null, false); redraw(true); return; }
+  if (ev.key === "Escape" && !ev.defaultPrevented && (pinned || cursorKey)) { pinned = null; if (focusMode) acted = null; else setCursor(null, false); redraw(true); return; }
   if (ev.metaKey || ev.ctrlKey || ev.altKey || (t instanceof HTMLElement && (t.tagName === "TEXTAREA" || t.tagName === "INPUT" || t.isContentEditable))) return;
   if (keysLocked) {
     if (ev.key.length === 1) { ev.preventDefault(); flash(tr("board.js.keys.locked")); }
@@ -21,14 +21,17 @@ document.addEventListener("keydown", function (ev) {
   var i = list.findIndex(function (r) { return r.getAttribute("data-key") === cursorKey; });
   var row = i >= 0 ? list[i] : null;
   var k = ev.key;
-  if (k === "j" || k === "k") { ev.preventDefault(); var n = k === "j" ? Math.min(list.length - 1, i + 1) : Math.max(0, i < 0 ? 0 : i - 1); select(list[n].getAttribute("data-key"), true); markSeen(list[n].getAttribute("data-key")); return; }
-  if (k === "?") { ev.preventDefault(); flash(HELP); clearTimeout(timer); timer = setTimeout(function () { toast.hidden = true; }, 9000); return; }
+  if (k === "j" || k === "k") { ev.preventDefault(); var n = k === "j" ? Math.min(list.length - 1, i + 1) : Math.max(0, i < 0 ? 0 : i - 1); var w = nextWaiting(k === "j" ? 1 : -1); if (w) n = list.indexOf(w); select(list[n].getAttribute("data-key"), true); markSeen(list[n].getAttribute("data-key")); return; }
+  if (k === "?") { ev.preventDefault(); flash(focusMode ? tr("board.js.help.focus") : HELP); clearTimeout(timer); timer = setTimeout(function () { toast.hidden = true; }, 9000); return; }
   if (!row) return;
   var key = row.getAttribute("data-key");
+  // the focus mode acts on the selected topic's detail, the flow mode on the card itself
+  var card = cardEl(row);
+  if (k === "Enter" && focusMode && !(t instanceof Element && t.closest("a, button, summary, [role=button]"))) { ev.preventDefault(); var ta3 = card.querySelector("form[data-send] textarea"); if (ta3) ta3.focus({ preventScroll: false }); return; }
   // g arms, a second g within 2 s sends: a single stray key never posts anything to Slack
   if (k === "g") {
     ev.preventDefault();
-    var target = gTarget(row);
+    var target = gTarget(card);
     if (!target) { flash(tr("board.js.gg.none")); return; }
     var gid = "g:" + key;
     if (gid in armed) { disarm(gid); target.click(); return; }
@@ -37,11 +40,11 @@ document.addEventListener("keydown", function (ev) {
     flash(tr(target.hasAttribute("data-post") ? "board.js.gg.post" : "board.js.gg.go", { id: item ? item.getAttribute("data-task") : "", letter: row.getAttribute("data-letter") || "" }));
     return;
   }
-  if (k === "e") { ev.preventDefault(); var eb2 = row.querySelector("[data-edit]"); if (eb2 && !folded(eb2)) eb2.click(); return; }
-  if (k === "m") { ev.preventDefault(); setPanel("write-" + key, true); var ta2 = row.querySelector("form[data-send] textarea"); if (ta2) ta2.focus({ preventScroll: false }); return; }
-  if (k === "c") { ev.preventDefault(); var cid = row.getAttribute("data-row"), cp = document.getElementById(cid); setPanel(cid, !cp || cp.hidden); return; }
-  if (k === "o") { ev.preventDefault(); var a2 = row.querySelector("a[data-open]"); if (a2) a2.click(); return; }
-  if (k === "p") { ev.preventDefault(); var sb = row.querySelector('[data-snooze="1h"]'); if (sb) sb.click(); return; }
+  if (k === "e") { ev.preventDefault(); var eb2 = card.querySelector("[data-edit]"); if (eb2 && !folded(eb2)) eb2.click(); return; }
+  if (k === "m") { ev.preventDefault(); setPanel("write-" + key, true); var ta2 = card.querySelector("form[data-send] textarea"); if (ta2) ta2.focus({ preventScroll: false }); return; }
+  if (k === "c") { ev.preventDefault(); var cid = row.getAttribute("data-row") || "card-" + key, cp = document.getElementById(cid); setPanel(cid, !cp || cp.hidden); return; }
+  if (k === "o") { ev.preventDefault(); var a2 = card.querySelector("a[data-open]"); if (a2) a2.click(); return; }
+  if (k === "p") { ev.preventDefault(); var sb = card.querySelector('[data-snooze="1h"]'); if (sb) sb.click(); return; }
 });
 // The ⌘K bar: a single field to find a topic (word, letter, Slack or tracker link, closed ones included) or to write
 // to the master (question, link to sort, draft to write). The master's answer shows under the board's counter.

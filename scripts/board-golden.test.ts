@@ -8,7 +8,7 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { type BoardInput, boardView, buildBoard } from "./board.ts";
+import { type BoardInput, boardView, buildBoard, focusView } from "./board.ts";
 import type { Sujet } from "./lib.ts";
 import { sessionView, sujetView } from "./panel.ts";
 
@@ -128,6 +128,10 @@ const input = (): BoardInput => ({
 describe("golden render of a Slack-only board", () => {
   test("the board", () => {
     check("board", boardView(buildBoard(input()), { timeOf: (iso: string) => iso.slice(11, 16), now: Date.parse("2026-09-21T12:00:00Z"), readAt: "12:00" }));
+  });
+
+  test("the board, focus mode: the same cards as a list and the detail of the first one", () => {
+    check("board-focus", focusView(buildBoard(input()), { timeOf: (iso: string) => iso.slice(11, 16), now: Date.parse("2026-09-21T12:00:00Z"), readAt: "12:00" }));
   });
 
   test("the panel of a topic, with its threads", () => {
