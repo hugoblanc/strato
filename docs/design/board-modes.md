@@ -66,8 +66,8 @@ A mode decides which levels it shows where; it never decides the content.
 
 | Level | Contents | Where |
 |---|---|---|
-| L0 row | letter, title, the need (verb + object), its age, the proposal in one line, the primary button | list of the focus mode, folded card of the flow mode |
-| L1 card | L0 + the plan strip (done / now / next), the open tasks (first expanded, the others on one line), the draft block, the instruction field | card of the flow mode, detail of the focus mode |
+| L0 row | letter, title, status and age, the last message of the thread (who, an excerpt, when), the first two open tasks with their kind, the first one's preview and primary button | list of the focus mode |
+| L1 card | L0 + the session's last word when newer than the card, the plan strip (done / now / next), every open task (first expanded, the others on one line), the instruction field | card of the flow mode, detail of the focus mode |
 | L2 context | origin and threads, merge requests, due dates, why you, unverified, summary, finished tasks | folded under L1, one line of counts: "14 threads · 3 MR in prod · 2 due" |
 | L3 report | the session's report, the transcript, the terminal | report page, terminal |
 
@@ -90,7 +90,25 @@ A mode decides which levels it shows where; it never decides the content.
 | session state, last word | badge + pane + action box | one status line in the header; the last word only when newer than the card |
 | task ids (`t14`) | shown | hidden; kept in `data-` attributes and tooltips |
 
-### 4.2 The session status line
+### 4.2 Several open tasks
+
+A topic often carries two or three tasks of different kinds: a decision, a draft to read, a go on a production write.
+Each task is one row with its kind (Decide, Answer, Draft, Go), its need and its age.
+The first open task is expanded with its proposal, draft or command, and its primary action.
+The others stay on one line; their button opens them in place.
+
+**One click acts only on what is on screen.**
+The board's Go is given on exact content, so a folded draft or command can never be sent from its folded row.
+In the focus list, the first task shows a two-line preview of what its button sends; the other tasks open the detail.
+
+### 4.3 The thread and the session, in their own words
+
+Two short lines give the context a card needs to be read without opening anything:
+
+- **The last message of the thread:** who, where, an excerpt in quotes, how long ago. It is often the reason the card is waiting.
+- **The session's last word,** when it is newer than the card: what the session did or found since the card was written.
+
+### 4.4 The session status line
 
 One line replaces the badge, the pane title and the action-box status.
 It reads like a sentence: "Waits for your go · 3 d", "Working: reading the thread", "Waits for Zoé · 2 h", "Stopped".
