@@ -1473,6 +1473,19 @@ body {
 .go-queue:not(:has(> li[data-cursor])) > li:first-child [data-draft-text] { max-height: 20rem; overflow-y: auto; -webkit-mask-image: none; mask-image: none; }
 #drawer.drawer-closed { visibility: hidden; transform: translateY(100%); pointer-events: none; }
 #drawer.drawer-closed iframe { visibility: hidden !important; }
+/* the drawer docks at the bottom (over the board) or on the right (beside it: the board gives up the drawer's width) */
+#drawer[data-dock="bottom"] { height: var(--dock-h, 46vh); }
+#drawer[data-dock="right"] { top: 0; left: auto; width: var(--dock-w, 46vw); height: auto; min-width: 360px; border-top: 0; border-left: 1px solid var(--color-line); box-shadow: -8px 0 24px rgb(0 0 0 / 0.25); }
+#drawer[data-dock="right"].drawer-closed { transform: translateX(100%); }
+body[data-split="right"] { padding-right: max(var(--dock-w, 46vw), 360px); }
+body[data-split="bottom"] { padding-bottom: max(var(--dock-h, 46vh), 240px); }
+#drawer-grip { position: absolute; z-index: 1; touch-action: none; }
+#drawer[data-dock="bottom"] #drawer-grip { top: -3px; left: 0; right: 0; height: 6px; cursor: ns-resize; }
+#drawer[data-dock="right"] #drawer-grip { top: 0; bottom: 0; left: -3px; width: 6px; cursor: ew-resize; }
+#drawer-grip:hover, body[data-resizing] #drawer-grip { background: var(--color-muted); opacity: 0.5; }
+/* while dragging, the terminals must not swallow the pointer */
+body[data-resizing] iframe { pointer-events: none; }
+body[data-resizing] { user-select: none; }
 @media (prefers-reduced-motion: reduce) { * { transition: none !important; animation: none !important; } }
 `;
 
@@ -1726,7 +1739,56 @@ const JS = `
   // The drawer hides without display:none: a hidden terminal keeps its size. With display:none, xterm recomputed to zero
   // columns, claude redrew in narrow columns, and reopening showed a garbled screen until a second resize.
   function drawerOpen() { return !drawer.classList.contains("drawer-closed"); }
-  function setDrawer(open) { drawer.classList.toggle("drawer-closed", !open); drawer.setAttribute("aria-hidden", open ? "false" : "true"); }
+  function setDrawer(open) { drawer.classList.toggle("drawer-closed", !open); drawer.setAttribute("aria-hidden", open ? "false" : "true"); paintDock(); }
+  // ---- where the drawer sits: "bottom" or "right", and its size, remembered per browser (a convenience, never required)
+  function remembered(k) { try { return localStorage.getItem(k); } catch (e) { return null; } }
+  function remember(k, v) { try { localStorage.setItem(k, v); } catch (e) {} }
+  var dockPref = remembered("strato-dock") === "right" ? "right" : "bottom";
+  var dockBtn = drawer.querySelector("[data-drawer-dock]");
+  var root = document.documentElement;
+  ["--dock-w", "--dock-h"].forEach(function (v) { var x = remembered("strato" + v); if (x) root.style.setProperty(v, x); });
+  // too narrow for two columns: the drawer goes back to the bottom without forgetting the choice
+  function dock() { return dockPref === "right" && window.innerWidth >= 900 ? "right" : "bottom"; }
+  function paintDock() {
+    var d = dock();
+    drawer.setAttribute("data-dock", d);
+    if (drawerOpen()) document.body.setAttribute("data-split", d); else document.body.removeAttribute("data-split");
+    var next = dockPref === "right" ? "toBottom" : "toRight";
+    dockBtn.textContent = tr("board.js.dock." + next);
+    dockBtn.title = tr("board.js.dock." + next + ".tip");
+    dockBtn.hidden = window.innerWidth < 900;
+  }
+  window.addEventListener("resize", paintDock);
+  paintDock();
+  dockBtn.addEventListener("click", function () {
+    dockPref = dockPref === "right" ? "bottom" : "right";
+    remember("strato-dock", dockPref);
+    paintDock();
+  });
+  // the grip: a drag on the drawer's inner edge sets its width (right) or its height (bottom)
+  document.getElementById("drawer-grip").addEventListener("pointerdown", function (ev) {
+    ev.preventDefault();
+    var right = dock() === "right";
+    var v = right ? "--dock-w" : "--dock-h";
+    var grip = ev.currentTarget;
+    grip.setPointerCapture(ev.pointerId);
+    document.body.setAttribute("data-resizing", "");
+    function move(e) {
+      var px = right ? window.innerWidth - e.clientX : window.innerHeight - e.clientY;
+      var max = right ? window.innerWidth - 420 : window.innerHeight - 120;
+      root.style.setProperty(v, Math.round(Math.max(right ? 360 : 240, Math.min(max, px))) + "px");
+    }
+    function up() {
+      grip.removeEventListener("pointermove", move);
+      grip.removeEventListener("pointerup", up);
+      grip.removeEventListener("pointercancel", up);
+      document.body.removeAttribute("data-resizing");
+      remember("strato" + v, root.style.getPropertyValue(v));
+    }
+    grip.addEventListener("pointermove", move);
+    grip.addEventListener("pointerup", up);
+    grip.addEventListener("pointercancel", up);
+  });
   var terms = {};
   var current = null;
   function paintTabs() {
@@ -2612,9 +2674,11 @@ export function boardPage(view: string, version = ""): string {
 </div>
 </nav>
 <main id="app" class="mx-auto max-w-[1080px] px-5 pb-24 pt-8">${view}</main>
-<aside id="drawer" aria-hidden="true" class="drawer-closed fixed inset-x-0 bottom-0 z-20 flex h-[46vh] min-h-[240px] flex-col border-t border-line bg-[#121417] shadow-[0_-8px_24px_rgb(0_0_0/0.25)]">
+<aside id="drawer" aria-hidden="true" data-dock="bottom" class="drawer-closed fixed inset-x-0 bottom-0 z-20 flex min-h-[240px] flex-col border-t border-line bg-[#121417] shadow-[0_-8px_24px_rgb(0_0_0/0.25)]">
+<div id="drawer-grip" title="${escapeHtml(t("board.drawer.grip.tip"))}"></div>
 <div class="flex items-center gap-1 border-b border-line bg-bg px-3 py-1.5">
 <div id="drawer-tabs" class="flex min-w-0 flex-1 items-center gap-1 overflow-x-auto"></div>
+<button type="button" data-drawer-dock class="${BTN_TEXT}"></button>
 <button type="button" data-drawer-hide class="${BTN_TEXT}" title="${escapeHtml(t("board.drawer.hide.tip"))}">${t("board.drawer.hide")}</button>
 </div>
 <div id="drawer-body" class="relative min-h-0 flex-1"></div>
