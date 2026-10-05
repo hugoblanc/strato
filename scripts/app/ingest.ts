@@ -286,7 +286,7 @@ async function sortOne(src: Source, item: Item, key: string, id: string, tracked
   out(announcedLine(src, r, id, sujets));
   // the line is out: even if the log fails next, do not repeat it on the next pass
   done();
-  logEvent({ type: itemEventType(src.account.provider), kind, key: d.key, from: d.from, channel: d.channel, permalink: d.permalink, ...extra });
+  logEvent({ type: itemEventType(src.account.provider), kind, key: d.key, from: d.from, channel: d.channel, text: truncate(d.text, 200), permalink: d.permalink, ...extra });
 }
 
 /**
