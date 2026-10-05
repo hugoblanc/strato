@@ -120,6 +120,17 @@ Both modes live side by side.
 The header has a switch, the URL carries it (`/board?mode=focus`), and the browser remembers it.
 The flow mode stays the default until the focus mode has proven itself.
 
+### 5.0 The board-wide strip, shared by both modes
+
+One strip under the top bar holds what acts on the whole board, identical in both modes:
+
+- **Sync:** the listener's state ("up to date 15:43", or the reason it is not).
+- **Radar:** merge requests on their way to production and due dates within 36 hours, overdue ones first; it opens a list where each line jumps to its topic.
+- **Revalidate the cards:** relaunches the open sessions, three at a time, to re-read their thread and rewrite their card, with the count of cards probably late.
+- **Re-check everything:** asks the master to go over everything received (Slack, closed topics, tickets, merge requests) since 24 hours, 3 days or 7 days, and relaunch what was missed.
+
+A card probably late says so on one line, with its own Revalidate button: "Zoé answered in the thread after the card", "No news in the thread for 3 days".
+
 ### 5.1 Flow mode (today's board, rewritten on the card model)
 
 - Cards stacked by block, as today, at L1 with L2 folded.
