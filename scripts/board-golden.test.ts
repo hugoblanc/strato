@@ -27,7 +27,7 @@ afterAll(() => {
 const normalize = (html: string) => html.replace(/ data-sha="[0-9a-f]*"/g, "");
 
 function check(name: string, html: string): void {
-  if (RECORD) GOLDEN[name] = html;
+  if (RECORD) GOLDEN[name] = normalize(html);
   else expect(normalize(html)).toBe(GOLDEN[name]);
 }
 
