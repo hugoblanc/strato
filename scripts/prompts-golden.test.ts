@@ -58,6 +58,12 @@ const INTENDED: { why: string; names: RegExp; from: string; to: string }[] = [
     from: "- ask = the request of the task, proposal = what you propose for it: one sentence each. One task, one request.\n",
     to: "- ask = the request of the task, proposal = what you propose for it: one sentence each. One task, one request.\n- The first open task's ask starts with a verb and fits 80 characters: the board uses it as the card's headline. The details go in proposal.\n",
   },
+  {
+    why: "closing as settled puts the tool's marker itself (board \"Settled ✅\", master close --settled): a session no longer makes a task only to add ✅",
+    names: /^(?!overrides\/worker)/,
+    from: "only once in production, or when nothing is left to do. ",
+    to: 'only once in production, or when nothing is left to do. Closing the topic as settled belongs to the board ("Settled ✅") and the master (close --settled), and that close adds the marker itself: never create a task only to add it; end your card with the topic settled (next and summary say so) and let the close do it. ',
+  },
 ];
 
 function check(name: string, text: string): void {

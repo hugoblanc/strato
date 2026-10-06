@@ -55,7 +55,7 @@ Type the command in full every time (`$STRATO doctor` is `strato doctor`, or `bu
 | `$STRATO set <topic> status=… waiting=… steps="…" next="…" summary="…" …` | Writes the state of a topic (`-` empties a field). The legacy card fields (`gate`, `ask`, `action`, `draft`…) still become tasks |
 | `$STRATO task <topic> add kind=… ask="…" …`, `done <id>`, `drop <id>`, `edit <id> …` | What waits for the owner: one task per thing to decide or to send, closed explicitly |
 | `$STRATO revue-done <id> <summary…>` | Closes a request made from the board, with the answer the board shows |
-| `$STRATO close <topic>` | Closes the topic and stops its session (conversation kept) |
+| `$STRATO close <topic> [--settled]` | Closes the topic and stops its session (conversation kept). `--settled` also puts the tool's settled marker (Slack: ✅) on the topic's original message, and prints what became of it (posted, already there, shadow mode, no marker for this tool) |
 | `$STRATO gc [--dry]` | Stops the sessions of closed topics and those idle for `gc.idleHours` (conversation kept) |
 | `$STRATO refresh [<topic>…] [--stale] [--dry]` | Each session rereads its thread and revalidates its card: the named topics, every open card, or with `--stale` those the sweep flags |
 | `$STRATO list [--all]`, `$STRATO get <topic>` | Look things up |
@@ -292,10 +292,11 @@ A session's `busy` / `idle` / `waiting` status comes from `~/.claude/sessions/<p
   Every write of the board goes through one gate: it acts only on the exact content the owner was shown (a draft changed since then is refused), never in shadow mode, and logs each attempt in `events.ndjson` (`act`, `act-refused`, `act-undo`). When Slack does not answer, the message may have gone out: the board says so, and Send becomes "Send again" once the owner checked the thread.
 - **Go**: sends "go" to the session, which carries out the card's action itself.
 - **Write to the session**: `POST /api/send`. A stopped session is resumed with the message (`claude --bg --resume`); a live one receives it through a throwaway `claude -p` restricted to the `SendMessage` tool. A message from the owner on the board is an instruction or a go, like what they would type in the session.
-- **✅ on the thread**: adds the `white_check_mark` reaction to the original message, on behalf of the owner, for a closed and settled topic.
+- **Settled ✅** (the "…" menu, and the "it's settled ✅" chip under the message): closes the topic and adds the `white_check_mark` reaction to its original message, on behalf of the owner: the click is the Go on that reaction, which goes through the same gate (`act` in `events.ndjson`, then `board-close` with `react`). The topic closes whatever becomes of the reaction: in shadow mode nothing is posted and the board says so; on a ticket, or a tool without a settled marker, it only closes; a refusal from the tool is reported, and **✅ on the thread** in "Closed today" tries again. **Close without ✅** closes without posting anything.
+- **✅ on the thread**: adds the `white_check_mark` reaction to the original message, on behalf of the owner, for a closed and settled topic that does not have it yet.
 - **Paste an image**: kept in `<state>/uploads/<topic>/` (png, jpeg, gif, webp, 10 MB max, purged after 30 days), sent to the session as a file path to read.
 - **Terminal**: a real terminal in the page, through one `ttyd` per topic on 127.0.0.1 (ports 7700 to 7799), running `$STRATO term <topic>`. **iTerm2** runs `dive`. **claude.ai** opens the session in Remote Control.
-- **Stop** (`claude stop`, topic stays open) and **Close** (like `close`); both need a second click within 4 s.
+- **Stop** (`claude stop`, topic stays open), **Settled ✅** (like `close --settled`) and **Close without ✅** (like `close`); each needs a second click within 4 s.
 - **Later**: pauses the topic until a time, or until the next message from someone else in the thread. A pause "until…" takes a reason and guarantees a reminder.
 - **Revalidate** / **Revalidate cards**: the session(s) reread their thread and rewrite their card, without sending anything.
 - **Recheck everything**: a request to the master (below).
@@ -445,9 +446,11 @@ Never copy the text of a Slack message into a shell command (`--text "…"`, `se
 
 The master reads the line and decides first, within its three-read budget:
 
-1. **The topic is over**: the person says it is settled, thanks, or closes ("all good", "solved", "thanks"). `$STRATO close <letter>`, then `$STRATO set <letter> summary="closed: <why, one sentence>"`; no line to the owner.
-2. **A teammate took the topic**: a member of `slack.teammates` answers in the thread taking it over. `close`, `summary="taken by <first name>"`, no line to the owner.
-3. **The owner hands over** (`moi`: "X is looking", "not for me"): `close`, `summary="handed to <who>"`, without a word.
+1. **The topic is over**: the person says it is settled, thanks, or closes ("all good", "solved", "thanks"). Close it, then `$STRATO set <letter> summary="closed: <why, one sentence>"`; no line to the owner. Which close:
+   - **The requester (the topic's asker) thanks or says it is settled, after the owner or the session already answered in the thread**: `$STRATO close <letter> --settled`, one command that closes and puts ✅ on the topic's original message, so everyone in the thread sees it is done. Its output says what became of the ✅ (posted, already there, shadow mode, no marker for this tool): nothing to add.
+   - **Any other end** (someone else than the asker, no answer in the thread yet, "never mind", the question withdrawn): `$STRATO close <letter>`, silent, no ✅.
+2. **A teammate took the topic**: a member of `slack.teammates` answers in the thread taking it over. `$STRATO close <letter>` without `--settled`, `summary="taken by <first name>"`, no line to the owner. Never ✅: the topic is theirs, the thread is not settled by the owner.
+3. **The owner hands over** (`moi`: "X is looking", "not for me"): `$STRATO close <letter>` without `--settled`, `summary="handed to <who>"`, without a word. Never ✅: handed over is not settled.
 4. **The owner answered on the substance** (`moi`, an answer, not a handover): relay to the session, which closes the tasks that are now handled. If a task held a draft for that same answer, `task <letter> done <id> note="answered in the thread"` right away (`listen` does it by itself when the posted text matches the draft).
 5. **Otherwise**: relay without asking.
 
@@ -487,6 +490,7 @@ Gate or blocked session: nothing to say, the board shows it in "Waiting on you".
 | "A ?" | `$STRATO card A`, shown as is |
 | "A open", or a Slack link with "dive" | `$STRATO dive A` with iTerm2; without it, give `claude attach <id>` or the session's name in claude.ai/code |
 | "A close" | `$STRATO close A` |
+| "A settled", "A ✅" | `$STRATO close A --settled` |
 | "A attach <link>" | `$STRATO attach A <link>`, then `send A` to tell the session |
 | "tell A to …" | `$STRATO send A "[strato] …"` |
 | "this message belonged to A" | `attach` and `send` to A, then `close` the topic opened by mistake |
