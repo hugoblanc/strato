@@ -405,7 +405,7 @@ export async function serve(args: string[]) {
     const live = liveStates(sujets);
     for (const [sid, d] of declared) live.set(sid, d);
     const model = buildBoard({ sujets, events: boardEvents(), live, running, remote, since, lastAgent, trail, agents, sources, teammates: cfg.teammates, sessions, otherSessions: others, now: new Date(), timeOf: dayTime, lastTick: lastTickIso(), socket: readJson<{ socket?: Partial<SocketHealth> }>(F.tick, {}).socket, slackAppId: cfg.appId, snoozed: new Map(Object.entries(readJson<Record<string, Snooze>>(F.snooze, {}))), revue: readJson<MasterRequest[]>(F.master, []).filter((r) => r.kind === "revue").at(-1) ?? null, demandes: readJson<MasterRequest[]>(F.master, []).filter((r) => r.kind === "demande"), users: readJson<Record<string, string>>(F.users, {}), deliveries: deliveries.of(sujets), heartbeat: readJson<{ beat?: number }>(F.tick, {}).beat, undo: undoByTopic(sujets) });
-    const ctx = { timeOf: dayTime, readAt: dayTime(new Date().toISOString()) };
+    const ctx = { timeOf: dayTime, readAt: dayTime(new Date().toISOString()), stateDir: STATE };
     return mode === "focus" ? focusView(pinLine(model, pin), ctx, sel) : boardView(pinLine(model, pin), ctx, sel);
   }
   /** Board messages being delivered, "key\0text": a duplicate during delivery is refused. */

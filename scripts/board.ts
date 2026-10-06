@@ -11,6 +11,7 @@ import { isItemEvent, postOnlyAction, truncate, t, clientMessages, locale, type 
 import { type StaleSignal, staleSignals } from "./core/refresh.ts";
 import type { StateSource } from "./claude/mod-state.ts";
 import { roleT } from "./core/i18n.ts";
+import { masterCommandFor } from "./core/paths.ts";
 import { speaksCode } from "./core/roles.ts";
 import { escapeHtml, textToHtml } from "./panel.ts";
 import { slackEventsPage } from "./providers/slack/model.ts";
@@ -222,6 +223,8 @@ export interface BoardContext {
   readAt?: string;
   /** Reference time of relative ages ("12 min ago"), ms; Date.now() by default. */
   now?: number;
+  /** The installation's state folder, for the command that restarts its master. */
+  stateDir?: string;
 }
 
 const blocTitle = (b: Bloc) => t(`board.bloc.${b}.title` as MessageKey);
@@ -467,7 +470,7 @@ export function pinLine(m: BoardModel, pin: Pin | null): BoardModel {
 
 const link = (url: string, label: string, cls = "text-link hover:underline underline-offset-2") => `<a href="${escapeHtml(url)}" class="${cls}" data-open>${escapeHtml(label)}</a>`;
 /** The command that starts this installation's master: from its working folder, otherwise another master starts. */
-export const masterCommand = () => `${settings().workspace ? `cd ${shellQuote(settings().workspace)} && ` : ""}claude -n strato "/strato"`;
+export const masterCommand = (state: string | null = null) => masterCommandFor(settings().workspace, state, shellQuote);
 
 /** The short name of the sessions' working folder. */
 const workspaceLabel = () => (settings().workspace ? repoLabel(settings().workspace) : t("board.workspace.fallback"));
@@ -1452,7 +1455,7 @@ ${revueStatus(m, vctx)}
 ${demandesStatus(m, vctx)}
 ${syncData(m)}
 ${process.env.STRATO_DEMO === "1" ? `<p data-demo class="rounded-lg border border-accent/40 bg-accent-soft/30 px-3.5 py-2 text-[13.5px] text-ink">${t("board.demo.banner", { command: `<code class="font-mono text-[12.5px]">${escapeHtml('claude -n strato "/strato setup"')}</code>` })}</p>` : ""}
-${m.listener.alive ? "" : `<p class="flex items-center gap-2 rounded-lg border border-warn/40 bg-warn-soft/40 px-3.5 py-2 text-[13.5px] text-warn"><span class="lamp lamp-red lit" aria-hidden="true"></span><span class="min-w-0 [overflow-wrap:anywhere]">${t(m.listener.lastTick ? "board.listener.downSince" : "board.listener.down", { time: m.listener.lastTick ? escapeHtml(ctx.timeOf(m.listener.lastTick)) : "", command: `<code class="font-mono text-[12.5px]">${escapeHtml(masterCommand())}</code>` })}</span></p>`}
+${m.listener.alive ? "" : `<p class="flex items-center gap-2 rounded-lg border border-warn/40 bg-warn-soft/40 px-3.5 py-2 text-[13.5px] text-warn"><span class="lamp lamp-red lit" aria-hidden="true"></span><span class="min-w-0 [overflow-wrap:anywhere]">${t(m.listener.lastTick ? "board.listener.downSince" : "board.listener.down", { time: m.listener.lastTick ? escapeHtml(ctx.timeOf(m.listener.lastTick)) : "", command: `<code class="font-mono text-[12.5px]">${escapeHtml(masterCommand(ctx.stateDir ?? null))}</code>` })}</span></p>`}
 ${m.listener.deaf ? `<p class="flex items-center gap-2 rounded-lg border border-warn/40 bg-warn-soft/40 px-3.5 py-2 text-[13.5px] text-warn"><span class="lamp lamp-red lit" aria-hidden="true"></span><span>${t(m.listener.lastEventAt ? "board.listener.deafSince" : "board.listener.deaf", { time: m.listener.lastEventAt ? escapeHtml(ctx.timeOf(m.listener.lastEventAt)) : "" })} ${m.listener.appId ? `<a class="underline underline-offset-2" href="${escapeHtml(slackEventsPage(m.listener.appId))}" target="_blank" rel="noopener">${t("board.listener.reenable")}</a>` : t("board.listener.reenableHere")}.</span></p>` : ""}
 </header>`;
 }

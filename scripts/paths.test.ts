@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { envValue, findStateRoot, resolveStateDir } from "./core/paths.ts";
+import { envValue, findStateRoot, resolveStateDir, masterCommandFor } from "./core/paths.ts";
 import { cleanupRigs, rig, run, SCRIPTS } from "./test-rig.ts";
 
 const WS = "/w";
@@ -98,5 +98,17 @@ describe("findStateRoot", () => {
       rmSync(root, { recursive: true, force: true });
       cleanupRigs();
     }
+  });
+});
+
+describe("masterCommandFor", () => {
+  const q = (s: string) => `'${s}'`;
+  test("the workspace's own state starts the main master", () => {
+    expect(masterCommandFor("/w/acme", "/w/acme/.strato", q)).toBe(`cd '/w/acme' && claude -n strato "/strato"`);
+    expect(masterCommandFor("/w/acme", "/w/acme/.aiguilleur", q)).toBe(`cd '/w/acme' && claude -n strato "/strato"`);
+    expect(masterCommandFor("/w/acme", null, q)).toBe(`cd '/w/acme' && claude -n strato "/strato"`);
+  });
+  test("a second instance is started from its folder, with its state and its own name", () => {
+    expect(masterCommandFor("/w/acme", "/w/acme/alerts/.strato", q)).toBe(`cd '/w/acme/alerts' && STRATO_STATE='/w/acme/alerts/.strato' claude -n strato-alerts "/strato"`);
   });
 });

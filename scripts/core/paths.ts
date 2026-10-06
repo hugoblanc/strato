@@ -5,7 +5,7 @@
  * folder and their `AIGUILLEUR_*` variables. Both are still read, after the new names. Pure: tested without disk.
  */
 import { existsSync } from "node:fs";
-import { dirname, join, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 
 type Env = Record<string, string | undefined>;
 
@@ -40,4 +40,16 @@ export function findStateRoot(from: string, exists: (p: string) => boolean = exi
     if (up === dir) return null;
     dir = up;
   }
+}
+
+/**
+ * The command that starts this installation's master. An installation whose state folder is not the workspace's own
+ * (a second instance, `<folder>/.strato` with `STRATO_STATE`) is started from that folder, with its state named, under
+ * its own session name: the workspace's command would start the main instance instead.
+ */
+export function masterCommandFor(workspace: string, state: string | null, quote: (s: string) => string): string {
+  const own = [STATE_DIR_NAME, LEGACY_STATE_DIR_NAME].map((d) => resolve(workspace || ".", d));
+  if (!state || !workspace || own.includes(resolve(state))) return `${workspace ? `cd ${quote(workspace)} && ` : ""}claude -n strato "/strato"`;
+  const folder = dirname(resolve(state));
+  return `cd ${quote(folder)} && STRATO_STATE=${quote(resolve(state))} claude -n strato-${basename(folder)} "/strato"`;
 }
