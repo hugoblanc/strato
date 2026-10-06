@@ -7,6 +7,8 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { existsSync, readdirSync, readFileSync, utimesSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
+import { acksPath, inboxMessages, modStatePath } from "./app/mod.ts";
+import { mkdirSync } from "node:fs";
 import { cleanupRigs, CLI, cli, KEY, LINK, lines, readSujets, type Rig, rig, run, SCRIPTS, sujet, writeSujets } from "./test-rig.ts";
 
 afterEach(cleanupRigs);
@@ -68,6 +70,32 @@ describe("concurrent topic writes", () => {
     // le second relais trouve la session vivante et passe par SendMessage (code 3), comme pour toute session vivante
     expect([a.code, b.code].sort()).toEqual([0, 3]);
     expect(`${a.out}${b.out}`).toContain("SENDMESSAGE acme · Alice · A");
+    // the last line says it is not delivered yet: a caller keeping only the last line cannot mistake it for a delivery
+    const live = [a, b].find((x) => x.code === 3)!;
+    expect(live.out.trim().split("\n").at(-1)).toStartWith("NOT DELIVERED YET");
+  }, 30_000);
+
+  test("a session that declares itself through the mod takes a relayed message from its inbox", async () => {
+    const r = rig();
+    writeSujets(r, [sujet()]);
+    const sid = sujet().sessionId!;
+    mkdirSync(join(r.state, "live"), { recursive: true });
+    const now = Date.now();
+    writeFileSync(modStatePath(r.state, sid), JSON.stringify({ source: "mod", v: 1, sessionId: sid, status: "idle", since: now, step: null, stepAt: null, trail: [], lastText: "", lastTextAt: null, agents: [], waiting: null, beat: now, turnId: null, error: false }));
+    let stopped = false;
+    void (async () => {
+      while (!stopped) {
+        await Bun.sleep(50);
+        const messages = inboxMessages(r.state, sid);
+        if (messages.length) writeFileSync(acksPath(r.state, sid), messages.map((m) => `${JSON.stringify({ id: m.id, state: "submitted", at: Date.now() })}\n`).join(""));
+      }
+    })();
+    const res = await cli(r, ["relay", "A", "--kind", "suite", "--from", "Ann", "--text", "thanks"]);
+    stopped = true;
+    expect(res.code).toBe(0);
+    expect(res.out).toContain("delivered · A");
+    expect(inboxMessages(r.state, sid)[0]?.text).toContain("thanks");
+    expect(lines(join(r.dir, "kinds.log"))).not.toContain("--resume");
   }, 30_000);
 });
 

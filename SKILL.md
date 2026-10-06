@@ -454,7 +454,8 @@ The master reads the line and decides first, within its three-read budget:
 Relay: `$STRATO relay <key> --kind <suite|moi> --msg <id>`, where `<id>` is the line's `msg=`.
 
 - Exit code 0: the stopped session was resumed with the message.
-- Exit code 3: the session is alive. The output gives `SENDMESSAGE <name>` then the message: send it as is with the `SendMessage` tool to that name.
+- Exit code 0 with `delivered · …`: the session took the message from its inbox (sessions started with the mod), nothing else to do.
+- Exit code 3: the session is alive and has no inbox. The output gives `SENDMESSAGE <name>`, the message, then a `NOT DELIVERED YET` line: send the message as is with the `SendMessage` tool to that name. Never cut this output (`| tail -1` keeps only the last line and loses the message).
 
 If the topic is `closed` and the message clearly revives the request, reopen it with `open` on the same link.
 When in doubt between 1 to 3 and 5, relay: the session will read the thread and close it itself.

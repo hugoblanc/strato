@@ -8,7 +8,7 @@ import { CLAUDE_BIN, F, fail, flags, nowIso, out, SCRIPT, STATE, WORKSPACE } fro
 import { appToken, connectSlack, NO_TOKEN } from "../app/slack.ts";
 import { claimResume, createSujet, dropSujet, endResume, ensureState, loadSujets, logEvent, messageOf, mutateSujets, requireSujet, reserveLetter, updateSujet } from "../app/store.ts";
 import { attention, firstSpawnArgs, inboundNote, isStuck, resumeArgs, routeDecision } from "../claude/model.ts";
-import { ensureModFolder, modFolderState } from "../app/mod.ts";
+import { deliverThroughInbox, ensureModFolder, modFolderState } from "../app/mod.ts";
 import { gateLine } from "../core/cards.ts";
 import { locale, t } from "../core/i18n.ts";
 import { canonicalKey, conversationOfKey, parseKey, permalinkOfKey, sujetKey, threadOfKey, ticketUrl } from "../core/keys.ts";
@@ -261,13 +261,22 @@ export async function attach(args: string[]) {
 
 /** Gets a message into the topic's session, or tells the master to use SendMessage (exit code 3). */
 export async function route(s: Sujet, message: string) {
-  const rows = agentsBySession();
-  if (!rows) fail("claude agents --json does not answer, cannot tell whether the session runs");
   const sessionId = s.sessionId;
   if (!sessionId) fail(`topic ${s.key} has no sessionId`);
+  // a session that declares itself through the mod takes the message from its inbox and acknowledges it
+  const inbox = await deliverThroughInbox(STATE, sessionId, message);
+  if (inbox.via === "inbox") {
+    logEvent({ type: "relay", key: s.key, via: "inbox", ack: inbox.ack });
+    return out(`delivered · ${s.letter} · ${s.name} · ${inbox.ack === "submitted" ? "the session took it now" : "the session is busy, it runs after its turn"}`);
+  }
+  const rows = agentsBySession();
+  if (!rows) fail("claude agents --json does not answer, cannot tell whether the session runs");
+  // The last line says the message is not delivered yet: a caller that keeps only the last line (`| tail -1`) used
+  // to read the relay note at the end of the message and believe it was delivered.
   const toLive = () => {
     out(`SENDMESSAGE ${s.name}`);
     out(`${message}\n\n${inboundNote(settings().owner.name)}`);
+    out(`NOT DELIVERED YET: send the text above with the SendMessage tool to "${s.name}", then check it reached the session's transcript.`);
     process.exit(3);
   };
   if (routeDecision(rows.get(sessionId)) === "sendmessage") toLive();
