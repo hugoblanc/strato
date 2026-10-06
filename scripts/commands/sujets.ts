@@ -7,7 +7,8 @@ import { agentsBySession, sessionIdOf, spawnBackgroundOrThrow, workerSettings } 
 import { CLAUDE_BIN, F, fail, flags, nowIso, out, SCRIPT, STATE, WORKSPACE } from "../app/env.ts";
 import { appToken, connectSlack, NO_TOKEN } from "../app/slack.ts";
 import { claimResume, createSujet, dropSujet, endResume, ensureState, loadSujets, logEvent, messageOf, mutateSujets, requireSujet, reserveLetter, updateSujet } from "../app/store.ts";
-import { attention, inboundNote, isStuck, routeDecision } from "../claude/model.ts";
+import { attention, firstSpawnArgs, inboundNote, isStuck, resumeArgs, routeDecision } from "../claude/model.ts";
+import { ensureModFolder, modFolderState } from "../app/mod.ts";
 import { gateLine } from "../core/cards.ts";
 import { locale, t } from "../core/i18n.ts";
 import { canonicalKey, conversationOfKey, parseKey, permalinkOfKey, sujetKey, threadOfKey, ticketUrl } from "../core/keys.ts";
@@ -79,10 +80,38 @@ export async function doctor() {
   out(`policy   : ${overridden.length ? `${overridden.join(", ")} from ${F.policy}, the rest by default` : `skill defaults (${DEFAULT_POLICY_DIR})`}${policyNotes.map((n) => ` · ${n}`).join("")}`);
   out(`board    : http://127.0.0.1:${s.ui.port}/board${s.ui.iterm ? " · iTerm2 integration on" : ""}`);
   out(`locale   : ${locale()} (ui.locale: the language of the board and of the master's messages to ${s.owner.name})`);
+  out(`mod      : ${modLine(s.workers.mod)}`);
   out(`notes    : ${existsSync(join(STATE, "local.md")) ? `${join(STATE, "local.md")}, to read at startup` : "none (no local.md)"}`);
   out(`script   : ${short(SCRIPT)}`);
   out(nextLine({ blocked: [...(rows ? [] : ["claude"]), ...(slackOk ? [] : ["slack"])], profileIncomplete: missing.length > 0 }));
   if (!slackOk) process.exit(78);
+}
+
+/**
+ * Strato's mod (app/mod.ts): whether new topic sessions load it, whether its folder is in place (written now when it
+ * is not), and what `claude plugin validate` says of it. A failed validation is a warning: the board falls back to
+ * Claude Code's files for a session whose mod did not load.
+ */
+function modLine(on: boolean): string {
+  if (!on) return "off (workers.mod: false): sessions declare nothing, the board reads Claude Code's files";
+  const before = modFolderState(STATE);
+  let dir: string;
+  try {
+    dir = ensureModFolder(STATE);
+  } catch (e) {
+    return `warning: ${short(join(STATE, "mod"))} cannot be written (${(e as Error).message}): sessions start without it`;
+  }
+  const place = `${short(dir)}${before === "missing" ? " (written now)" : before === "stale" ? " (updated now)" : ""}`;
+  let r: ReturnType<typeof Bun.spawnSync>;
+  try {
+    r = Bun.spawnSync([CLAUDE_BIN, "plugin", "validate", dir], { stdout: "pipe", stderr: "pipe", timeout: 30_000 });
+  } catch {
+    return `${place} · not validated, the claude CLI was not found`;
+  }
+  const text = `${r.stdout?.toString() ?? ""}${r.stderr?.toString() ?? ""}`;
+  if (r.exitCode === 0 && /validation passed/i.test(text)) return `${place} · claude plugin validate: passed`;
+  const why = text.trim().split("\n").filter(Boolean).pop() ?? `exit code ${r.exitCode}`;
+  return `${place} · warning, claude plugin validate failed: ${why} (sessions fall back to Claude Code's files)`;
 }
 
 /** The message listen kept under this id, else stop: no relay with an empty text. */
@@ -181,12 +210,20 @@ export async function open(args: string[]) {
   // a ticket opened from a message (a mention, an assignment) is a request to answer; from its id alone, the implementation
   // for a role other than developer, a ticket is a request to handle, not code to write: the worker flow (core/roles.ts)
   const prompt = issueId && !kept && ticketTemplateOf(roleOf()) === "ticket" ? ticketPrompt(title, key, issueId, permalink, SCRIPT, report) : workerPrompt(title, key, trigger, SCRIPT, report, settings().slack.teammates);
-  // `workers.skipPermissions`: topic sessions run without permission prompts. The flag only applies at launch:
-  // added to `--resume`, it creates a copy of the session; a bare resume keeps the mode.
-  const permissionFlags = settings().workers.skipPermissions ? ["--dangerously-skip-permissions"] : [];
+  // `workers.skipPermissions` (no permission prompts) and `workers.mod` (the session declares its state, app/mod.ts)
+  // only apply at launch: added to `--resume`, a flag creates a copy of the session; a bare resume keeps them.
+  // a mod folder that cannot be written costs the session its declarations, never its launch: the board falls back
+  let pluginDir: string | null = null;
+  if (settings().workers.mod) {
+    try {
+      pluginDir = ensureModFolder(STATE);
+    } catch (e) {
+      logEvent({ type: "mod-unwritable", key, error: (e as Error).message });
+    }
+  }
   let shortId: string;
   try {
-    shortId = spawnBackgroundOrThrow([...permissionFlags, "-n", name, "--settings", workerSettings(), prompt]);
+    shortId = spawnBackgroundOrThrow(firstSpawnArgs({ name, settings: workerSettings(), prompt, skipPermissions: settings().workers.skipPermissions, modDir: pluginDir }));
   } catch (e) {
     // no session: the reservation goes, a later `open` can try again
     await dropSujet(key, (x) => x.createdAt === now && !x.shortId);
@@ -242,7 +279,7 @@ export async function route(s: Sujet, message: string) {
   // without any option: Claude Code continues the same session instead of creating a copy
   let shortId: string;
   try {
-    shortId = spawnBackgroundOrThrow(["--resume", sessionId, message]);
+    shortId = spawnBackgroundOrThrow(resumeArgs(sessionId, message));
   } catch (e) {
     await endResume(s.key);
     fail((e as Error).message);

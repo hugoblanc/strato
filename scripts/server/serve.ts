@@ -9,6 +9,8 @@ import { agentsBySessionAsync, CLAUDE_DIR, declaredAttention, findTranscript, ty
 import { CLAUDE_BIN, dayTime, F, fail, flags, mtimeOf, nowIso, out, readJson, run, STATE, WORKSPACE, writeJson } from "../app/env.ts";
 import { selfArgv, selfCommand } from "../app/self.ts";
 import { deliverToSujet } from "../app/deliver.ts";
+import { readModState } from "../app/mod.ts";
+import { declaredView, type StateSource } from "../claude/mod-state.ts";
 import { deliveryTracker } from "../app/gitlab.ts";
 import { pickCards, refreshCards } from "../commands/refresh.ts";
 import { SHADOW_REFUSAL, shadowNow } from "../commands/setup.ts";
@@ -211,7 +213,7 @@ export async function serve(args: string[]) {
    * sessionId, the cwd and the status; the transcript gives what they quote. Those quoting neither a Slack thread nor
    * a ticket are only counted. Topic sessions are already on the board through their topic.
    */
-  async function boardSessions(sujets: Sujet[]): Promise<{ sessions: BoardSession[]; others: number; running: Map<string, string>; remote: Map<string, string>; since: Map<string, string>; lastAgent: Map<string, { text: string; at: string | null }>; trail: Map<string, ActivityStep[]>; agents: Map<string, AgentNode[]> }> {
+  async function boardSessions(sujets: Sujet[]): Promise<{ sessions: BoardSession[]; others: number; running: Map<string, string>; remote: Map<string, string>; since: Map<string, string>; lastAgent: Map<string, { text: string; at: string | null }>; trail: Map<string, ActivityStep[]>; agents: Map<string, AgentNode[]>; sources: Map<string, StateSource>; declared: Map<string, LiveState> }> {
     const known = new Set(sujets.map((s) => s.sessionId).filter((x): x is string => !!x));
     const sessions: BoardSession[] = [];
     /** Claude Code status (busy, idle, waiting) of live topic sessions, by sessionId: what tells a session is working. */
@@ -263,7 +265,32 @@ export async function serve(args: string[]) {
         remote: r.bridgeSessionId ?? null,
       });
     }
-    return { sessions, others, running, remote, since, lastAgent, trail, agents };
+    // A topic session that declares its state through Strato's mod (app/mod.ts), with a fresh beat, is its own source:
+    // its declaration replaces what Claude Code's files say of it. Without one (no mod, an older session, a stale
+    // beat), the readers above stand as they are.
+    const sources = new Map<string, StateSource>();
+    const declared = new Map<string, LiveState>();
+    for (const s of sujets) {
+      if (!s.sessionId || s.status === "closed") continue;
+      const sid = s.sessionId;
+      const m = readModState(STATE, sid);
+      if (!m) {
+        if (running.has(sid)) sources.set(sid, "reconstructed");
+        continue;
+      }
+      const d = declaredView(m);
+      sources.set(sid, "mod");
+      declared.set(sid, { attention: d.attention, event: "mod", at: m.beat });
+      if (d.running) running.set(sid, d.running);
+      else running.delete(sid);
+      since.set(sid, d.since);
+      if (d.lastAgent) lastAgent.set(sid, d.lastAgent);
+      if (d.trail.length) trail.set(sid, d.trail);
+      else trail.delete(sid);
+      if (d.agents.length) agents.set(sid, d.agents);
+      else agents.delete(sid);
+    }
+    return { sessions, others, running, remote, since, lastAgent, trail, agents, sources, declared };
   }
   /**
    * The board's terminals: one ttyd per open topic, on the loopback interface, running `strato.ts term <topic>`.
@@ -374,8 +401,10 @@ export async function serve(args: string[]) {
   }
   /** The board's content in a mode; `sel` is the topic selected in the focus mode, or shown in the flow mode's sheet. */
   async function renderBoard(sujets: Sujet[], pin: Pin | null = null, mode: BoardMode = "flow", sel: string | null = null): Promise<string> {
-    const { sessions, others, running, remote, since, lastAgent, trail, agents } = await boardSessions(sujets);
-    const model = buildBoard({ sujets, events: boardEvents(), live: liveStates(sujets), running, remote, since, lastAgent, trail, agents, teammates: cfg.teammates, sessions, otherSessions: others, now: new Date(), timeOf: dayTime, lastTick: lastTickIso(), socket: readJson<{ socket?: Partial<SocketHealth> }>(F.tick, {}).socket, slackAppId: cfg.appId, snoozed: new Map(Object.entries(readJson<Record<string, Snooze>>(F.snooze, {}))), revue: readJson<MasterRequest[]>(F.master, []).filter((r) => r.kind === "revue").at(-1) ?? null, demandes: readJson<MasterRequest[]>(F.master, []).filter((r) => r.kind === "demande"), users: readJson<Record<string, string>>(F.users, {}), deliveries: deliveries.of(sujets), heartbeat: readJson<{ beat?: number }>(F.tick, {}).beat, undo: undoByTopic(sujets) });
+    const { sessions, others, running, remote, since, lastAgent, trail, agents, sources, declared } = await boardSessions(sujets);
+    const live = liveStates(sujets);
+    for (const [sid, d] of declared) live.set(sid, d);
+    const model = buildBoard({ sujets, events: boardEvents(), live, running, remote, since, lastAgent, trail, agents, sources, teammates: cfg.teammates, sessions, otherSessions: others, now: new Date(), timeOf: dayTime, lastTick: lastTickIso(), socket: readJson<{ socket?: Partial<SocketHealth> }>(F.tick, {}).socket, slackAppId: cfg.appId, snoozed: new Map(Object.entries(readJson<Record<string, Snooze>>(F.snooze, {}))), revue: readJson<MasterRequest[]>(F.master, []).filter((r) => r.kind === "revue").at(-1) ?? null, demandes: readJson<MasterRequest[]>(F.master, []).filter((r) => r.kind === "demande"), users: readJson<Record<string, string>>(F.users, {}), deliveries: deliveries.of(sujets), heartbeat: readJson<{ beat?: number }>(F.tick, {}).beat, undo: undoByTopic(sujets) });
     const ctx = { timeOf: dayTime, readAt: dayTime(new Date().toISOString()) };
     return mode === "focus" ? focusView(pinLine(model, pin), ctx, sel) : boardView(pinLine(model, pin), ctx, sel);
   }

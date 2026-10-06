@@ -309,14 +309,24 @@ export async function stopSession(id: string): Promise<boolean> {
   return r.code === 0;
 }
 
-/** Deletes the declarations of sessions whose topic is closed or gone. */
+/**
+ * Deletes the declarations of sessions whose topic is closed or gone: the hooks' `<id>.json` and the mod's
+ * `<id>.mod.json`, with their mailbox. A pending inbox message of a closed topic has no session left to take it.
+ */
 export function purgeLive(): void {
+  let alive: Set<string>;
   try {
-    const alive = new Set(loadSujets().filter((s) => s.status !== "closed" && s.sessionId).map((s) => s.sessionId as string));
-    for (const f of readdirSync(join(STATE, "live"))) {
-      if (!alive.has(f.replace(/\.json$/, ""))) unlinkSync(join(STATE, "live", f));
-    }
-  } catch {}
+    alive = new Set(loadSujets().filter((s) => s.status !== "closed" && s.sessionId).map((s) => s.sessionId as string));
+  } catch {
+    return;
+  }
+  for (const dir of ["live", "mailbox"]) {
+    try {
+      for (const f of readdirSync(join(STATE, dir))) {
+        if (!alive.has(f.replace(/(\.mod)?\.json$|\.ndjson$|\.acks$/, ""))) unlinkSync(join(STATE, dir, f));
+      }
+    } catch {}
+  }
 }
 
 /** The process PATH, plus claude's and bun's folders: ttyd and the panel server start with a minimal PATH. */

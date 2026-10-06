@@ -1,0 +1,6 @@
+{
+  "name": "strato-state",
+  "version": "1.0.0",
+  "description": "Declares a Strato topic session's live state to the board, and hands it the board's messages through an inbox with acknowledgement.",
+  "author": { "name": "Strato" }
+}

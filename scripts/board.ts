@@ -9,6 +9,7 @@
 import { faviconHref, stratoMark } from "./core/brand.ts";
 import { isItemEvent, postOnlyAction, truncate, t, clientMessages, locale, type MessageKey, type ActivityStep, type AgentNode, agentCounts, type Due, type MasterRequest, type MrStage, MR_STAGE_ORDER, parseDue, REVUE_STALE_MS, REVUE_WINDOWS, draftText, isSnoozed, type Snooze, parseSteps, permalinkOfKey, providerKeyLabel, providerLabel, repoLabel, isResolved, maxTextOf, planOfTask, planSha, providerOfKey, unknownOf, renderHtml, resolveTarget, type ResolvedTarget, targetLink, threadInfoOfKey, type UnresolvedTarget, type SessionContext, settings, shellQuote, ticketUrl, type SocketHealth, socketDeaf, type Sujet, sujetKeys, takenBy, freshness, gateSince, checkable, descriptorOf, openTasks, tasksOf, taskDraftText, taskReady, sendsUnseenMessage, type Task, type TaskKind } from "./lib.ts";
 import { type StaleSignal, staleSignals } from "./core/refresh.ts";
+import type { StateSource } from "./claude/mod-state.ts";
 import { roleT } from "./core/i18n.ts";
 import { speaksCode } from "./core/roles.ts";
 import { escapeHtml, textToHtml } from "./panel.ts";
@@ -124,6 +125,8 @@ export interface BoardLine {
   trail: ActivityStep[];
   /** The sub-agents of the current turn and those still working, as a tree. */
   agents: AgentNode[];
+  /** Where the session's state comes from: its own declaration (Strato's mod) or Claude Code's files; null without a live session. */
+  stateSource?: StateSource | null;
   /** The topic's merge requests and their stage towards production. */
   deliveries?: Delivery[];
   /** The card's due dates. */
@@ -157,6 +160,8 @@ export interface BoardInput {
   trail?: Map<string, ActivityStep[]>;
   /** Sub-agent tree of each topic session, by sessionId. */
   agents?: Map<string, AgentNode[]>;
+  /** Where each topic session's state was read from, by sessionId (server/serve.ts). */
+  sources?: Map<string, StateSource>;
   /** Topics snoozed by the person served ("later"), by topic key. */
   snoozed?: Map<string, Snooze>;
   /** Teammates behind the team alias: their answer in a thread takes the topic out of "waiting on you". */
@@ -357,6 +362,7 @@ export function buildBoard(input: BoardInput): BoardModel {
     l.undoUntil = u?.until ?? null;
     l.undoTask = u?.taskId ?? null;
     l.stale = staleSignals(l.sujet, input.events, now, settings().refresh);
+    l.stateSource = (l.sujet.sessionId && input.sources?.get(l.sujet.sessionId)) || null;
   }
   const paused: { line: BoardLine; until: string; reason?: string }[] = [];
   const active: BoardLine[] = [];
@@ -975,7 +981,7 @@ const PULSE = `<span class="relative inline-flex h-1.5 w-1.5"><span class="absol
 /** The one line that says the session's state: a sentence, its age, and the time the card was written on hover. */
 function statusView(c: CardView, cardAt: string, ctx: BoardContext): string {
   const st = c.status;
-  const tip = [st.text, t("board.card.status.cardAt", { time: ctx.timeOf(cardAt) })].join("\n");
+  const tip = [st.text, t("board.card.status.cardAt", { time: ctx.timeOf(cardAt) }), ...(st.source ? [t(`board.card.status.source.${st.source}`)] : [])].join("\n");
   const age = st.age ? `<span class="text-muted" data-age>· ${escapeHtml(st.age)}</span>` : "";
   return `<span class="inline-flex min-w-0 max-w-full items-center gap-1.5 text-[12.5px] font-medium tabular-nums ${STATUS_INK[st.tone]}" data-status-kind="${st.kind}" title="${escapeHtml(tip)}">${st.pulse ? PULSE : shape(st.tone)}<span class="min-w-0 truncate">${escapeHtml(st.text)}</span>${age ? `<span class="shrink-0">${age}</span>` : ""}</span>`;
 }
@@ -1618,7 +1624,7 @@ function rowTask(s: Sujet, x: CardTask, first: boolean): string {
 /** The compact status of a list row: the state's shape (or the working dot) and its age; the sentence on hover. */
 function rowStatus(c: CardView): string {
   const st = c.status;
-  return `<span class="inline-flex shrink-0 items-center gap-1.5 text-[12.5px] font-medium tabular-nums ${STATUS_INK[st.tone]}" data-status-kind="${st.kind}" title="${escapeHtml(st.text)}">${st.pulse ? PULSE : shape(st.tone)}${st.age ? `<span class="text-muted" data-age>${escapeHtml(st.age)}</span>` : ""}</span>`;
+  return `<span class="inline-flex shrink-0 items-center gap-1.5 text-[12.5px] font-medium tabular-nums ${STATUS_INK[st.tone]}" data-status-kind="${st.kind}" title="${escapeHtml(st.source ? `${st.text}\n${t(`board.card.status.source.${st.source}`)}` : st.text)}">${st.pulse ? PULSE : shape(st.tone)}${st.age ? `<span class="text-muted" data-age>${escapeHtml(st.age)}</span>` : ""}</span>`;
 }
 
 /**

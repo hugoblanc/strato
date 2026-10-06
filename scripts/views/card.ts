@@ -5,6 +5,7 @@
  * when it adds someone, the task ids and the seconds of thread times out of sight.
  */
 import type { Bloc, BoardLine, Delivery, DueView, Tone } from "../board.ts";
+import type { StateSource } from "../claude/mod-state.ts";
 import { agentCounts, freshness, openTasks, parseSteps, permalinkOfKey, providerKeyLabel, settings, type Sujet, sujetKeys, t, type Task, type TaskKind, taskReady, tasksOf, threadInfoOfKey, ticketIdOfKey, ticketUrl } from "../lib.ts";
 
 /** A short duration, rounded down: "< 1 min", "48 min", "3 h", "5 d". */
@@ -35,6 +36,8 @@ export interface CardStatus {
   age: string | null;
   /** A session at work: the dot pulses. */
   pulse: boolean;
+  /** Where the session's state was read from, said on hover; null without a live session. */
+  source: StateSource | null;
 }
 
 /** The last message of the topic's threads: who, where, an excerpt, how long ago. */
@@ -159,6 +162,7 @@ export function statusOf(l: BoardLine, now: number): CardStatus {
     since,
     age: Number.isFinite(at) ? span(now - at) : null,
     pulse: l.running === "busy" || agentCounts(l.agents).running > 0,
+    source: l.stateSource ?? null,
   };
 }
 

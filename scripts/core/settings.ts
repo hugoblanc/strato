@@ -128,6 +128,11 @@ export interface Settings {
      * and the server refuses them. `setup --live` turns it off.
      */
     shadow: boolean;
+    /**
+     * Load Strato's mod (scripts/mod/strato-state) in new topic sessions: they declare their own state to the board and
+     * take its messages from an inbox. On by default; off, the board reads Claude Code's files as before.
+     */
+    mod: boolean;
   };
   refresh: RefreshSettings;
   gc: GcSettings;
@@ -172,7 +177,7 @@ export const DEFAULT_SETTINGS: Settings = {
   tracker: null,
   forge: null,
   providers: {},
-  workers: { skipPermissions: false, allow: [], shadow: false },
+  workers: { skipPermissions: false, allow: [], shadow: false, mod: true },
   refresh: { auto: true, staleDays: 3, graceMinutes: 20, everyMinutes: 30, maxParallel: 3 },
   gc: { everyMinutes: 60, idleHours: 12 },
   policy: {},

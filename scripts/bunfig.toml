@@ -1,2 +1,4 @@
 [test]
 preload = ["./test-setup.ts"]
+# the mod's own tests run under `claude plugin test` (they import the engine's kit), never under bun
+pathIgnorePatterns = ["mod/**"]

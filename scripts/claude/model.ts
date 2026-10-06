@@ -125,6 +125,23 @@ export function sessionAttention(declared: { attention: string | null } | null, 
 export type RouteDecision = "resume" | "sendmessage";
 
 /**
+ * The arguments after `claude --bg` that resume a stopped topic session: its id and the message, and no option at
+ * all. Any option (`--plugin-dir`, `--settings`, a permission flag) makes Claude Code fork a copy under a new id; a
+ * bare resume keeps everything the session was started with, Strato's mod included.
+ */
+export function resumeArgs(sessionId: string, message: string): string[] {
+  return ["--resume", sessionId, message];
+}
+
+/**
+ * The arguments after `claude --bg` that start a topic session. Its settings, its name and the mod's folder are given
+ * here once: a resume keeps them (`resumeArgs`).
+ */
+export function firstSpawnArgs(o: { name: string; settings: string; prompt: string; skipPermissions: boolean; modDir: string | null }): string[] {
+  return [...(o.skipPermissions ? ["--dangerously-skip-permissions"] : []), ...(o.modDir ? ["--plugin-dir", o.modDir] : []), "-n", o.name, "--settings", o.settings, o.prompt];
+}
+
+/**
  * Suffix of the messages delivered through SendMessage (the board's throwaway relay, or the master). Without it, the
  * session answers the sender: the relay is already gone ("Failed to send to uds:/tmp/cc-socks/…sock: ENOENT"), and
  * the answer goes nowhere or into the master's chat.
