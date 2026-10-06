@@ -411,8 +411,16 @@ const NOT_SETTLED = /^\s*((clos|closed)\s*:\s*)?(pas pour|pris par|passé à|dou
  * applies (a ticket, a mail thread or a tool without one never shows the button).
  */
 export function checkable(s: Pick<Sujet, "status" | "key" | "summary" | "checked">): boolean {
-  if (s.status !== "closed" || s.checked || isTicketKey(s.key)) return false;
-  const p = parseKey(s.key);
-  if (!p || p.long || !descriptorOf(p.provider)?.done) return false;
+  if (s.status !== "closed" || s.checked || !hasDoneMarker(s.key)) return false;
   return !NOT_SETTLED.test(s.summary ?? "");
+}
+
+/**
+ * The topic's key names one item of a tool that declares a settled marker (Slack: a message, which takes ✅): closing
+ * it as settled can put the marker on it. A ticket, a mail thread or a tool without one only closes.
+ */
+export function hasDoneMarker(key: string): boolean {
+  if (isTicketKey(key)) return false;
+  const p = parseKey(key);
+  return !!p && !p.long && !!descriptorOf(p.provider)?.done;
 }

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { actionCard, ago, badge, type BoardEvent, masterCommand, type BoardInput, type BoardSession, boardPage, boardView, buildBoard, classify, pinLine, pinOf, gateLabel, isQuickGo, lastMessageOf, lineView, mrTitle, postedLine, sessionLine, span } from "./board.ts";
+import { actionCard, ago, badge, type BoardEvent, masterCommand, type BoardInput, type BoardSession, boardPage, boardView, buildBoard, classify, pinLine, pinOf, gateLabel, isQuickGo, lastMessageOf, lineView, mrTitle, postedLine, sessionLine, settledChip, span } from "./board.ts";
 import { postOnlyAction, type Sujet , freshness, gateSince } from "./lib.ts";
 
 const base: Sujet = {
@@ -811,13 +811,27 @@ describe("a single filled button per card", () => {
     expect(chips(draft)).not.toContain("go");
     expect(chips(decide)).toContain("go");
   });
-  test("'resolved' asks for an armed confirmation", () => {
+  test("'it's settled' is the board's own close with ✅, armed like the menu's 'Réglé ✅', not a message to the session", () => {
     const html = lineView(classify(decide, [], null, "idle", timeOf), ctx);
-    expect(html).toMatch(/data-chip="C(?:&#39;|')est réglé[^"]*" data-chip-confirm/);
-    expect(html).not.toMatch(/data-chip="Pas maintenant[^"]*" data-chip-confirm/);
+    expect(html).toMatch(/<button type="button" data-confirm="settle" data-key="[^"]+" title="[^"]*"[^>]*>c(?:&#39;|')est réglé ✅<\/button>/);
+    expect(html).not.toMatch(/data-chip="C(?:&#39;|')est réglé/);
     const page = boardPage("");
-    expect(page).toContain('arm(chid, tr("board.js.sure"), 4000)');
-    expect(page).toContain('"board.js.sure":"Sûr ?"');
+    expect(page).toContain('arm(cid2, tr(action === "settle" ? "board.js.settle.confirm"');
+    expect(page).toContain('"board.js.settle.confirm":"Fermer et poser ✅ ?"');
+  });
+  test("the '…' menu: 'Réglé ✅' then 'Fermer sans ✅' on a Slack topic, a single 'Fermer' on a ticket", () => {
+    const menu = (s: Sujet) => lineView(classify(s, [], null, "idle", timeOf), ctx).match(/<details[^>]*data-menu>[\s\S]*?<\/details>/)?.[0] ?? "";
+    const slack = menu(decide);
+    expect(slack).toMatch(/data-confirm="settle"[^>]*>Réglé ✅<\/button><button type="button" data-confirm="close"[^>]*>Fermer sans ✅<\/button>/);
+    const ticket = menu(sujet({ key: "linear:ENG-12", threads: ["linear:ENG-12"], gate: "decision", action: "", draft: "" }));
+    expect(ticket).toMatch(/data-confirm="close"[^>]*>Fermer<\/button>/);
+    expect(ticket).not.toContain('data-confirm="settle"');
+  });
+  test("on a ticket (no settled marker) the chip only closes, and says nothing of ✅", () => {
+    const html = settledChip({ key: "linear:ENG-12" });
+    expect(html).toContain('data-confirm="close"');
+    expect(html).not.toContain("✅");
+    expect(settledChip({ key: base.key })).toContain('data-confirm="settle"');
   });
 });
 

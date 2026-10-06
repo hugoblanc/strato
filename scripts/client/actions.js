@@ -162,7 +162,8 @@ document.addEventListener("keydown", function (ev) {
 document.addEventListener("click", function (ev) {
   var el = ev.target instanceof Element ? ev.target : null;
   if (!el) return;
-  // stop or close: a first click arms the button ("Sure?"), a second within 4 s runs it
+  // stop, close or settle (close and ✅ on the original message): a first click arms the button ("Sure?"), a second
+  // within 4 s runs it
   var confirm = el.closest("[data-confirm]");
   if (confirm) {
     ev.preventDefault();
@@ -170,13 +171,16 @@ document.addEventListener("click", function (ev) {
     var ckey = confirm.getAttribute("data-key");
     var st3 = sessionStatusOf(confirm);
     var cid2 = busyIdOf(confirm);
-    if (!(cid2 in armed)) { arm(cid2, tr(action === "close" ? "board.js.close.confirm" : "board.js.stop.confirm"), 4000); return; }
+    var closing = action === "close" || action === "settle";
+    if (!(cid2 in armed)) { arm(cid2, tr(action === "settle" ? "board.js.settle.confirm" : closing ? "board.js.close.confirm" : "board.js.stop.confirm"), 4000); return; }
     disarm(cid2);
-    runBusy(confirm, tr(action === "close" ? "board.js.close.busy" : "board.js.stop.busy"), function () {
-      return post("/api/" + action, { key: ckey })
+    runBusy(confirm, tr(closing ? "board.js.close.busy" : "board.js.stop.busy"), function () {
+      return post(closing ? "/api/close" : "/api/stop", closing ? { key: ckey, settled: action === "settle" } : { key: ckey })
         .then(function (x) {
           lastStatus[ckey] = x.ok ? x.d.note : x.error;
-          if (!x.ok) flash(tr(action === "close" ? "board.js.close.failed" : "board.js.stop.failed", { error: x.error }));
+          if (!x.ok) flash(tr(closing ? "board.js.close.failed" : "board.js.stop.failed", { error: x.error }));
+          // a closed topic leaves its card: the note (✅ added, shadow mode, ✅ not added) is shown where it stays seen
+          else if (closing) flash(x.d.note);
           if (st3) st3.textContent = lastStatus[ckey];
           if (x.ok) removeTerm(ckey);
         });
@@ -347,7 +351,6 @@ function busyIdOf(b) {
   if (b.hasAttribute("data-revalidate")) return "revalidate:" + b.getAttribute("data-revalidate");
   if (b.hasAttribute("data-revalidate-all")) return "revalidate-all";
   if (b.hasAttribute("data-unpost")) return "unpost:" + b.getAttribute("data-unpost") + "#" + (b.getAttribute("data-task") || "");
-  if (b.hasAttribute("data-chip-confirm")) { var cf = b.closest("form[data-send]"); return "chip:" + (cf && cf.getAttribute("data-key")) + ":" + b.getAttribute("data-chip"); }
   // the ready-made snoozes and the "until" form of the same topic share their lock
   if (b.hasAttribute("data-snooze")) return "snooze:" + b.getAttribute("data-key");
   var sf = b.closest("form[data-snooze-date]");
@@ -418,7 +421,7 @@ function arm(id, label, ms) {
 }
 function disarm(id) { delete armed[id]; paintArmed(); }
 function paintArmed() {
-  document.querySelectorAll("[data-confirm],[data-task-op],[data-chip-confirm],[data-update-apply]").forEach(function (b) {
+  document.querySelectorAll("[data-confirm],[data-task-op],[data-update-apply]").forEach(function (b) {
     var id = busyIdOf(b);
     if (id && id in armed && !(id in busy)) {
       if (!b.hasAttribute("data-unarmed")) b.setAttribute("data-unarmed", b.textContent);
@@ -636,12 +639,6 @@ document.addEventListener("click", function (ev) {
   var chip = el.closest("[data-chip]");
   if (chip) {
     ev.preventDefault(); ev.stopPropagation();
-    // "it's settled" closes the topic: a first click arms ("Sure?"), a second within 4 s sends
-    if (chip.hasAttribute("data-chip-confirm")) {
-      var chid = busyIdOf(chip);
-      if (!(chid in armed)) { arm(chid, tr("board.js.sure"), 4000); return; }
-      disarm(chid);
-    }
     var form = chip.closest("form[data-send]");
     form.querySelector("textarea").value = chip.getAttribute("data-chip");
     form.requestSubmit();

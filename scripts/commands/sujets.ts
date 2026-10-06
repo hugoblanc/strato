@@ -17,6 +17,7 @@ import { LEGACY_SLACK_READS, mcpReadRules } from "../core/mcp.ts";
 import { toolLabel } from "../core/targets.ts";
 import { missingSettings, resolveAccounts, settings } from "../core/settings.ts";
 import { accountLines } from "./connect.ts";
+import { closeTopic } from "../app/close.ts";
 import { cliCommand, nextLine, short } from "./setup.ts";
 import { applyAssignments, attachThread, findSujet, parseAssignments, type Sujet, sujetKeys, type Trigger } from "../core/sujet.ts";
 import { reportFile, sessionName, truncate } from "../core/text.ts";
@@ -331,12 +332,21 @@ export async function set(args: string[]) {
   out(`state written · ${next.letter} · ${next.name} · ${next.status}${next.gate !== "none" ? `/${next.gate}` : ""}${next.waiting ? ` · waiting for ${next.waiting}` : ""}`);
 }
 
-export async function close(ref: string | undefined) {
-  const s = requireSujet(ref);
+/**
+ * Closes the topic and stops its session. `--settled` (the master, rule 1 of `suite` messages: the requester thanks
+ * after an answer) also puts the tool's settled marker (Slack: ✅) on the topic's original message, through the act
+ * path; the topic closes whatever becomes of it, and the second line says what did.
+ */
+export async function close(args: string[]) {
+  // a flag without a value, wherever it is: `close --settled A` and `close A --settled` say the same
+  const settled = args.includes("--settled");
+  const s = requireSujet(args.find((a) => !a.startsWith("--")));
   const rows = agentsBySession();
   if (s.sessionId && rows?.has(s.sessionId) && s.shortId) Bun.spawnSync([CLAUDE_BIN, "stop", s.shortId], { stdout: "pipe", stderr: "pipe" });
-  await updateSujet(s.key, (x) => applyAssignments(x, { status: "closed", gate: "none", waiting: "-" }, nowIso()));
+  const r = await closeTopic({ key: s.key, settled, by: "master" });
+  if (!r) fail(`topic ${s.key} disappeared during the write`);
   out(`closed · ${s.letter} · ${s.name} (conversation kept: claude attach ${s.shortId})`);
+  if (settled) out(`${r.reaction === "posted" || r.reaction === "already" ? "✅" : "no ✅"} · ${r.note}`);
 }
 
 export function age(iso: string): string {

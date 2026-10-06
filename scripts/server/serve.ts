@@ -15,6 +15,7 @@ import { deliveryTracker } from "../app/gitlab.ts";
 import { pickCards, refreshCards } from "../commands/refresh.ts";
 import { SHADOW_REFUSAL, shadowNow } from "../commands/setup.ts";
 import { actDone, type ActOutcome, actOnTask, refuseAct, undoTask } from "../app/act.ts";
+import { closeTopic } from "../app/close.ts";
 import { connectSlack, hasSlackToken, NO_TOKEN, threadDump } from "../app/slack.ts";
 import { ensureState, loadSujets, logEvent, reportOf, saveUpload, updateSujet, withLock } from "../app/store.ts";
 import { type BoardEvent, type BoardMode, boardPage, type BoardSession, boardView, buildBoard, draftConflict, focusView, type LiveState, modeOf, type Pin, pinLine, pinOf, type VersionState, versionControl } from "../board.ts";
@@ -815,9 +816,9 @@ export async function serve(args: string[]) {
     }
     if (route === "POST /api/terminal" || route === "POST /api/terminal/close" || route === "POST /api/dive" || route === "POST /api/stop" || route === "POST /api/close") {
       if (!localOrigin(req)) return Response.json({ error: t("board.api.originRefused") }, { status: 403 });
-      let body: { key?: unknown };
+      let body: { key?: unknown; settled?: unknown };
       try {
-        body = (await req.json()) as { key?: unknown };
+        body = (await req.json()) as { key?: unknown; settled?: unknown };
       } catch {
         return Response.json({ error: t("board.api.jsonExpected") }, { status: 400 });
       }
@@ -835,9 +836,11 @@ export async function serve(args: string[]) {
         if (live?.id) await run([CLAUDE_BIN, "stop", live.id], 15_000);
         closeTerminal(s.key);
         if (route === "POST /api/close") {
-          await updateSujet(s.key, (x) => applyAssignments(x, { status: "closed", gate: "none", waiting: "-" }, nowIso()));
-          logEvent({ type: "board-close", key: s.key });
-          return Response.json({ ok: true, note: t("board.api.topicClosedNote", { letter: s.letter }) });
+          // "Settled ✅" (and the "it's settled" chip): the click is the Go on ✅ for the topic's original message;
+          // the topic closes whatever becomes of the reaction, which the note reports (shadow mode, no marker, failure)
+          const r = await closeTopic({ key: s.key, settled: body.settled === true, by: "board" });
+          if (!r) return Response.json({ error: t("board.api.topicMissing") }, { status: 404 });
+          return Response.json({ ok: true, note: r.note, reaction: r.reaction, ...(r.error ? { error: r.error } : {}) });
         }
         logEvent({ type: "board-stop", key: s.key, stopped: !!live });
         return Response.json({ ok: true, note: live ? t("board.api.sessionStopped", { letter: s.letter }) : t("board.api.sessionNotRunning", { letter: s.letter }) });

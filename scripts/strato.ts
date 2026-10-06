@@ -54,7 +54,7 @@ export const USAGE = `strato: routes the requests that reach you (Slack, Linear,
   strato task <topic> add kind=draft|action|decision|question ask="…" proposal="…" [action="…"] [draft="…" draftTo="…" | to=<key>] [act=setStatus|assign value="…"] [audience.to="…" audience.cc="…" subject="…" visibility=public|internal]
   strato task <topic> done|drop <id> [note="…"]   closes a task (carried out, or no longer applies)
   strato task <topic> edit <id> key=value…       fixes an open task (same request)
-  strato close <topic>                  closes the topic and stops its session
+  strato close <topic> [--settled]      closes the topic and stops its session; --settled also puts ✅ on its original message
   strato gc [--dry]                     stops the sessions of closed topics and those idle for gc.idleHours
   strato refresh [<topic>…] [--stale] [--dry]   each session revalidates its card (all, or the late ones)
   strato list [--all] | gates | card <topic> | get <topic>
@@ -181,7 +181,7 @@ switch (cmd) {
     break;
   }
   case "close":
-    await close(rest[0]);
+    await close(rest);
     break;
   case "list":
     list(flags(rest).opts.all === "true");

@@ -7,7 +7,7 @@
  * Every visible word goes through core/i18n.ts: t() on the server, tr() in the page's script.
  */
 import { faviconHref, stratoMark } from "./core/brand.ts";
-import { isItemEvent, postOnlyAction, truncate, t, clientMessages, locale, type MessageKey, type ActivityStep, type AgentNode, agentCounts, type Due, type MasterRequest, type MrStage, MR_STAGE_ORDER, parseDue, REVUE_STALE_MS, REVUE_WINDOWS, draftText, isSnoozed, type Snooze, parseSteps, permalinkOfKey, providerKeyLabel, providerLabel, repoLabel, isResolved, maxTextOf, planOfTask, planSha, providerOfKey, unknownOf, renderHtml, resolveTarget, type ResolvedTarget, targetLink, threadInfoOfKey, type UnresolvedTarget, type SessionContext, settings, shellQuote, ticketUrl, type SocketHealth, socketDeaf, type Sujet, sujetKeys, takenBy, freshness, gateSince, checkable, descriptorOf, openTasks, tasksOf, taskDraftText, taskReady, sendsUnseenMessage, type Task, type TaskKind } from "./lib.ts";
+import { isItemEvent, postOnlyAction, truncate, t, clientMessages, locale, type MessageKey, type ActivityStep, type AgentNode, agentCounts, type Due, type MasterRequest, type MrStage, MR_STAGE_ORDER, parseDue, REVUE_STALE_MS, REVUE_WINDOWS, draftText, isSnoozed, type Snooze, parseSteps, permalinkOfKey, providerKeyLabel, providerLabel, repoLabel, isResolved, maxTextOf, planOfTask, planSha, providerOfKey, unknownOf, renderHtml, resolveTarget, type ResolvedTarget, targetLink, threadInfoOfKey, type UnresolvedTarget, type SessionContext, settings, shellQuote, ticketUrl, type SocketHealth, socketDeaf, type Sujet, sujetKeys, takenBy, freshness, gateSince, checkable, hasDoneMarker, descriptorOf, openTasks, tasksOf, taskDraftText, taskReady, sendsUnseenMessage, type Task, type TaskKind } from "./lib.ts";
 import { type StaleSignal, staleSignals } from "./core/refresh.ts";
 import type { StateSource } from "./claude/mod-state.ts";
 import { roleT } from "./core/i18n.ts";
@@ -1065,15 +1065,28 @@ function contextView(l: BoardLine, c: CardView, ctx: BoardContext, open = false)
 
 /**
  * Ready-made answers, under the message: one click sends them to the session. "go" disappears when the card already has
- * its Go or Send button; "it's settled" closes the topic, so it asks for a second click ("Sure?").
- * The "go" text is a protocol value (the server and the go lock recognise it): it is never translated.
+ * its Go or Send button. The "go" text is a protocol value (the server and the go lock recognise it): it is never
+ * translated.
  */
-const chips = (): { label: string; text: string; confirm?: boolean }[] => [
+const chips = (): { label: string; text: string }[] => [
   { label: "go", text: "go" },
   { label: t("board.chip.later"), text: t("board.chip.later.text") },
   { label: t("board.chip.dig"), text: t("board.chip.dig.text") },
-  { label: t("board.chip.settled"), text: t("board.chip.settled.text"), confirm: true },
 ];
+
+const CHIP = "inline-flex h-6 items-center rounded-full border border-muted/50 px-2 text-[11.5px] text-ink/80 hover:border-ink/60 hover:text-ink disabled:cursor-not-allowed disabled:opacity-40";
+
+/**
+ * "it's settled": not a message to the session but the board's own close, the same as the "…" menu's "Settled ✅":
+ * the topic closes and, on a tool with a settled marker, ✅ goes on its original message (the click is the Go). It
+ * asks for a second click ("Close and add ✅?"); on a ticket it only closes.
+ */
+export function settledChip(s: Pick<Sujet, "key">): string {
+  const key = escapeHtml(s.key);
+  return hasDoneMarker(s.key)
+    ? `<button type="button" data-confirm="settle" data-key="${key}" title="${escapeHtml(t("board.chip.settled.tip"))}" class="${CHIP}">${escapeHtml(t("board.chip.settledCheck"))}</button>`
+    : `<button type="button" data-confirm="close" data-key="${key}" title="${escapeHtml(t("board.chip.settled.tipNoMarker"))}" class="${CHIP}">${escapeHtml(t("board.chip.settled"))}</button>`;
+}
 
 /** The instruction to the session, folded under "Write to X": the most frequent action, one click away. Always shown in the focus mode's detail. */
 function writePanel(l: BoardLine, c: CardView, open = false): string {
@@ -1084,9 +1097,20 @@ function writePanel(l: BoardLine, c: CardView, open = false): string {
   return `<div id="write-${key}" data-panel${open ? "" : " hidden"} class="cursor-auto">
 <form class="flex flex-col gap-2" id="send-${key}" data-send data-key="${key}">
 <textarea name="text" rows="2" required placeholder="${escapeHtml(t("board.send.placeholder"))}" title="${escapeHtml(t("board.send.tip"))}" class="w-full resize-y rounded-lg border border-line bg-bg px-3 py-2 text-[13.5px] leading-relaxed placeholder:text-muted focus:border-muted focus:outline-none focus:ring-2 focus:ring-ink/10"></textarea>
-<div class="flex flex-wrap items-center gap-1">${shown.map((x) => `<button type="button" data-chip="${escapeHtml(x.text)}"${x.confirm ? ` data-chip-confirm` : ""} class="inline-flex h-6 items-center rounded-full border border-muted/50 px-2 text-[11.5px] text-ink/80 hover:border-ink/60 hover:text-ink disabled:cursor-not-allowed disabled:opacity-40">${escapeHtml(x.label)}</button>`).join("")}<span class="ml-auto flex items-center gap-3"><span class="min-w-0 truncate text-[12.5px] text-muted" data-status></span><button type="submit" class="${BTN}">${t("board.send.button", { letter: escapeHtml(s.letter) })}<span class="ml-1.5 font-normal text-muted">⌘↩</span></button></span></div>
+<div class="flex flex-wrap items-center gap-1">${shown.map((x) => `<button type="button" data-chip="${escapeHtml(x.text)}" class="${CHIP}">${escapeHtml(x.label)}</button>`).join("")}${settledChip(s)}<span class="ml-auto flex items-center gap-3"><span class="min-w-0 truncate text-[12.5px] text-muted" data-status></span><button type="submit" class="${BTN}">${t("board.send.button", { letter: escapeHtml(s.letter) })}<span class="ml-1.5 font-normal text-muted">⌘↩</span></button></span></div>
 </form>
 </div>`;
+}
+
+/**
+ * The "…" menu's close: "Settled ✅" closes the topic and puts ✅ on its original message (the click is the Go on it),
+ * "Close without ✅" only closes. A topic whose tool has no settled marker (a ticket) keeps a single "Close".
+ */
+function closeItems(s: Pick<Sujet, "key">, item: string): string {
+  const key = escapeHtml(s.key);
+  const quiet = (label: string, tip: string) => `<button type="button" data-confirm="close" data-key="${key}" class="${item} hover:bg-warn-soft hover:text-warn" title="${escapeHtml(tip)}">${label}</button>`;
+  if (!hasDoneMarker(s.key)) return quiet(t("board.session.close"), t("board.session.close.tip"));
+  return `<button type="button" data-confirm="settle" data-key="${key}" class="${item} hover:bg-clear-soft hover:text-clear-ink" title="${escapeHtml(t("board.session.settle.tip"))}">${t("board.session.settle")}</button>${quiet(t("board.session.closeQuiet"), t("board.session.closeQuiet.tip"))}`;
 }
 
 /** The tools of the card: write to the session (when its form is folded), its terminal, the report, and the rare actions behind "…". */
@@ -1097,7 +1121,7 @@ function toolsRow(l: BoardLine, writeToggle = true): string {
   const item = "flex w-full items-center whitespace-nowrap rounded px-2.5 py-1 text-left text-[12.5px] text-ink hover:bg-soft";
   const snooze = `<p class="px-2.5 pb-0.5 pt-1 text-[11.5px] font-medium text-muted" title="${escapeHtml(t("board.snooze.tip"))}">${t("board.snooze")}</p>${["1h", "pm", "eod", "tomorrow"].map((w) => `<button type="button" data-snooze="${w}" data-key="${key}" class="${item}"></button>`).join("")}<form data-snooze-date data-key="${key}" class="mt-1 flex flex-col gap-1.5 border-t border-line px-1.5 pb-1 pt-2"><span class="text-[11.5px] font-medium text-muted">${t("board.snooze.until")}</span><div class="flex gap-1.5"><input type="date" name="day" required class="min-w-0 flex-1 rounded border border-line bg-bg px-1.5 py-0.5 text-[12.5px] text-ink"><input type="time" name="hour" value="09:00" required class="w-[88px] rounded border border-line bg-bg px-1.5 py-0.5 text-[12.5px] text-ink"></div><input type="text" name="reason" maxlength="200" placeholder="${escapeHtml(t("board.snooze.reason"))}" class="rounded border border-line bg-bg px-1.5 py-0.5 text-[12.5px] text-ink placeholder:text-muted"><button type="submit" class="${BTN} self-start">${t("board.snooze.submit")}</button></form>`;
   const session = live
-    ? `<div class="my-1 border-t border-line"></div><button type="button" data-confirm="stop" data-key="${key}" class="${item}" title="${escapeHtml(t("board.session.stop.tip"))}">${t("board.session.stop")}</button><button type="button" data-confirm="close" data-key="${key}" class="${item} hover:bg-warn-soft hover:text-warn" title="${escapeHtml(t("board.session.close.tip"))}">${t("board.session.close")}</button>${settings().ui.iterm ? `<button type="button" data-dive="${key}" class="${item}">iTerm2</button>` : ""}${l.remoteUrl ? `<a href="${escapeHtml(l.remoteUrl)}" data-open class="${item}">claude.ai</a>` : ""}`
+    ? `<div class="my-1 border-t border-line"></div><button type="button" data-confirm="stop" data-key="${key}" class="${item}" title="${escapeHtml(t("board.session.stop.tip"))}">${t("board.session.stop")}</button>${closeItems(s, item)}${settings().ui.iterm ? `<button type="button" data-dive="${key}" class="${item}">iTerm2</button>` : ""}${l.remoteUrl ? `<a href="${escapeHtml(l.remoteUrl)}" data-open class="${item}">claude.ai</a>` : ""}`
     : "";
   const more = `<details class="relative" id="more-${key}" data-snooze-menu data-menu><summary class="inline-flex h-7 cursor-pointer list-none items-center rounded-md px-2.5 text-[15px] font-medium leading-none tracking-widest text-muted hover:bg-soft hover:text-ink [[open]>&]:bg-soft [[open]>&]:text-ink" title="${escapeHtml(t(live ? "board.card.more.tip" : "board.card.more.tipNoSession"))}" aria-label="${escapeHtml(t("board.card.more"))}">…</summary><div class="absolute right-0 top-full z-20 mt-1 flex w-60 flex-col rounded-md border border-line bg-surface p-1 shadow-lg">${snooze}${session}</div></details>`;
   const write = live && !writeToggle ? "" : live ? `<button type="button" data-toggle="write-${key}" aria-expanded="false" class="${BTN_TEXT} aria-expanded:bg-soft aria-expanded:text-ink" title="${escapeHtml(t("board.send.tip"))}">${t("board.send.button", { letter: escapeHtml(s.letter) })}</button>` : `<span class="px-2 text-[12.5px] text-muted">${t("board.session.none")}</span>`;
