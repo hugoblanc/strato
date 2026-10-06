@@ -114,6 +114,7 @@ Two short lines give the context a card needs to be read without opening anythin
 One line replaces the badge, the pane title and the action-box status.
 It reads like a sentence: "Waits for your go · 3 d", "Working: reading the thread", "Waits for Zoé · 2 h", "Stopped".
 The pulsing dot of a working session stays on it.
+A session started with Strato's mod declares its current step itself, and the line's tooltip says whether the state was declared by the session or reconstructed from Claude Code's files (`docs/design/declared-state.md`).
 
 ## 5. Two modes
 

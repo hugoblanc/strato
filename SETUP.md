@@ -314,6 +314,7 @@ The example's Slack ids (`U_EXAMPLE_ALICE`, `C_EXAMPLE_REQUESTS`…) are placeho
 | `workers.allow` | Extra permissions given to work sessions (read-only MCP tools, for instance) |
 | `workers.skipPermissions` | Sessions run without permission prompts. Off by default; read "Security" below |
 | `workers.shadow` | Shadow mode: nothing is posted (below) |
+| `workers.mod` | On by default: new topic sessions load Strato's mod, declare their own state to the board and take its messages from an acknowledged inbox (`docs/design/declared-state.md`). `false` starts them without it |
 | `ui.locale` | `en` or `fr`: the board and the master's messages to you |
 
 **The state folder ignores itself in git.** A new `.strato/` holds a `.gitignore` with `*`: Slack messages, reports and ids never land in your repository by a `git add .`.
