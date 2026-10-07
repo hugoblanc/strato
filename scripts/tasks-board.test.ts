@@ -56,6 +56,8 @@ describe("tasks on the board", () => {
     expect(html.match(/data-task-item/g)?.length).toBe(2);
     expect(html).toContain('data-task-item data-task="t1"');
     expect(html).toContain('data-task-item data-task="t2"');
+    expect(html).toContain('data-task-id>t1</span>');
+    expect(html).toContain('data-task-id>t2</span>');
     expect(html).not.toContain('data-task-item data-task="t3"');
     expect(html).not.toContain('data-task="t3" class');
     expect(html).not.toContain(">rejouer le script SQL en prod<");

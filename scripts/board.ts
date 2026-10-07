@@ -901,7 +901,8 @@ const KIND_CHIP: Record<CardTask["kind"], string> = {
   draft: "bg-link/10 text-link",
   go: "bg-warn-soft text-warn",
 };
-const kindChip = (k: CardTask["kind"]) => `<span class="inline-flex h-5 shrink-0 items-center rounded px-1.5 text-[11.5px] font-semibold ${KIND_CHIP[k]}">${escapeHtml(t(`board.card.kind.${k}` as MessageKey))}</span>`;
+/** The task's id ("t2") before its kind: the name the person uses to point a session at it ("go on t2"). */
+const kindChip = (k: CardTask["kind"], id: string) => `<span class="shrink-0 font-mono text-[11.5px] tabular-nums text-muted" data-task-id>${escapeHtml(id)}</span><span class="inline-flex h-5 shrink-0 items-center rounded px-1.5 text-[11.5px] font-semibold ${KIND_CHIP[k]}">${escapeHtml(t(`board.card.kind.${k}` as MessageKey))}</span>`;
 
 /**
  * One open task: a line with its kind, its need and its age (tinted by its own freshness), and its body (proposal,
@@ -921,7 +922,7 @@ export function taskBlock(s: Sujet, x: CardTask, hint = false): string {
   const approvable = (x.kind === "decide" || x.kind === "answer") && proposalText && !taskDraftText(x.task) && !x.task.action?.trim() && s.sessionId;
   const open = `<button type="button" data-toggle="${body}" aria-expanded="${expanded}" class="${BTN_SM} shrink-0 group-aria-expanded:hidden" title="${escapeHtml(t("board.card.task.open.tip"))}">${escapeHtml(t(x.kind === "draft" ? "board.card.task.review" : "board.card.task.view"))}</button>`;
   return `<div class="border-t border-line first:border-t-0" id="task-${k}#${id}" data-task-item data-task="${id}" data-task-fresh style="--fh:${fresh.h};--fk:${fresh.k}">
-<div role="button" tabindex="0" data-toggle="${body}" aria-expanded="${expanded}" class="group flex cursor-pointer items-center gap-2.5 px-3 py-2 hover:bg-soft/40" title="${escapeHtml(x.task.ask.replace(/\\n/g, " "))}">${kindChip(x.kind)}<span class="min-w-0 flex-1 truncate text-[13.5px] text-ink/85 group-aria-expanded:whitespace-normal">${needHtml(x.need)}</span><span class="shrink-0 text-[12.5px] tabular-nums text-muted"><span data-age>${escapeHtml(x.age)}</span></span>${open}</div>
+<div role="button" tabindex="0" data-toggle="${body}" aria-expanded="${expanded}" class="group flex cursor-pointer items-center gap-2.5 px-3 py-2 hover:bg-soft/40" title="${escapeHtml(x.task.ask.replace(/\\n/g, " "))}">${kindChip(x.kind, x.id)}<span class="min-w-0 flex-1 truncate text-[13.5px] text-ink/85 group-aria-expanded:whitespace-normal">${needHtml(x.need)}</span><span class="shrink-0 text-[12.5px] tabular-nums text-muted"><span data-age>${escapeHtml(x.age)}</span></span>${open}</div>
 <div id="${body}" data-panel${x.open ? "" : " hidden"} class="flex cursor-auto flex-col gap-2.5 px-3 pb-3">${proposal}${approvable ? approveRow(s, x, proposalText) : taskBox(s, x.task, hint)}</div>
 </div>`;
 }
@@ -1638,7 +1639,7 @@ function rowTask(s: Sujet, x: CardTask, first: boolean): string {
         : a.kind === "act"
           ? `<button type="button" data-act-go class="${BTN_PRIMARY_SM}" title="${escapeHtml(tip)}">${label}</button>`
           : `<button type="button" data-validate data-key="${k}" data-task="${id}" data-msg="${escapeHtml(a.msg ?? "")}" class="${BTN_PRIMARY_SM}" title="${escapeHtml(tip)}">${label}</button>`;
-  const line = `<div class="flex min-w-0 items-center gap-2">${kindChip(x.kind)}<span class="min-w-0 flex-1 truncate text-[12.5px] text-ink/85" title="${escapeHtml(x.need)}">${escapeHtml(x.need)}</span>${button}</div>`;
+  const line = `<div class="flex min-w-0 items-center gap-2">${kindChip(x.kind, x.id)}<span class="min-w-0 flex-1 truncate text-[12.5px] text-ink/85" title="${escapeHtml(x.need)}">${escapeHtml(x.need)}</span>${button}</div>`;
   const preview = first ? rowPreview(s, x, a) : "";
   // the same attributes as the detail's draft form and action box: the click posts the same plan, checked by the same hash
   const sha = a?.sha ? ` data-sha="${a.sha}"` : "";
