@@ -8,7 +8,7 @@ import { join } from "node:path";
 import { agentsBySessionAsync, CLAUDE_DIR, declaredAttention, findTranscript, type PanelSession, pathWithClaude, pidAlive, sessionAgents, transcriptContext } from "../app/claude.ts";
 import { CLAUDE_BIN, dayTime, F, fail, flags, mtimeOf, nowIso, out, readJson, run, STATE, WORKSPACE, writeJson } from "../app/env.ts";
 import { selfArgv, selfCommand } from "../app/self.ts";
-import { deliverToSujet } from "../app/deliver.ts";
+import { deliverToSujet, isSlashCommand } from "../app/deliver.ts";
 import { readModState } from "../app/mod.ts";
 import { declaredView, type StateSource } from "../claude/mod-state.ts";
 import { deliveryTracker } from "../app/gitlab.ts";
@@ -414,6 +414,8 @@ export async function serve(args: string[]) {
   /** A message from the person served, from the board, to a topic's session (app/deliver.ts). */
   async function sendFromBoard(key: string, text: string): Promise<{ ok: true; note: string } | { ok: false; error: string; status: number }> {
     // a pasted image arrives as "[image : <path>]" (marker written by the board's script): the session reads it with the Read tool
+    // a slash command goes bare: the session only runs it when the slash opens the text
+    if (isSlashCommand(text)) return deliverToSujet(key, text.trim(), "board");
     const images = text.includes("[image : ") ? `\n\nThe [image : …] entries are screenshots pasted by ${settings().owner.name}: read each file with the Read tool before answering.` : "";
     return deliverToSujet(key, `[${settings().owner.name}, from the board] ${text}${images}`, "board");
   }

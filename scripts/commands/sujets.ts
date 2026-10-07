@@ -266,6 +266,7 @@ export async function route(s: Sujet, message: string) {
   if (!sessionId) fail(`topic ${s.key} has no sessionId`);
   // a session that declares itself through the mod takes the message from its inbox and acknowledges it
   const inbox = await deliverThroughInbox(STATE, sessionId, message);
+  if (inbox.via === "inbox" && inbox.ack === "refused") fail(`the session of ${s.letter} has no ${message.trim().split(/\s/)[0]} command: nothing was delivered`);
   if (inbox.via === "inbox") {
     logEvent({ type: "relay", key: s.key, via: "inbox", ack: inbox.ack });
     return out(`delivered · ${s.letter} · ${s.name} · ${inbox.ack === "submitted" ? "the session took it now" : "the session is busy, it runs after its turn"}`);

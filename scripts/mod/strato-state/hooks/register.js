@@ -59,6 +59,8 @@ let where = null
 let chain = Promise.resolve()
 let started = false
 let polling = false
+/** The acks after which a message is never taken again: run, or refused. */
+const DONE = new Set(['submitted', 'refused'])
 /** Messages this process submitted: never twice, even before their ack is on disk. */
 const submitted = new Set()
 
@@ -193,10 +195,24 @@ function acksOf(raw) {
     if (!line.trim()) continue
     try {
       const a = JSON.parse(line)
-      if (a && typeof a.id === 'string' && typeof a.state === 'string' && out.get(a.id)?.state !== 'submitted') out.set(a.id, { state: a.state, at: a.at })
+      if (a && typeof a.id === 'string' && typeof a.state === 'string' && !DONE.has(out.get(a.id)?.state ?? '')) out.set(a.id, { state: a.state, at: a.at })
     } catch {}
   }
   return out
+}
+
+/**
+ * The slash command a message is, when it is one the session can run now ("/compact", "/compact keep the plan"):
+ * a known name right after the slash at the very start, the rest as its arguments; 'unknown' for a slash and a name
+ * the session does not have; null for any other text.
+ * @param {import('claude-code').EngineInterface} $
+ * @param {string} text
+ */
+async function commandOf($, text) {
+  const m = text.trim().match(/^\/([A-Za-z0-9_:-]+)(?:\s+([\s\S]*))?$/)
+  if (!m) return null
+  const known = (await $.command.list()).some((c) => c.name === m[1])
+  return known ? { command: m[1], args: (m[2] ?? '').trim() } : 'unknown'
 }
 
 /**
@@ -216,7 +232,7 @@ async function pollInbox($) {
     if (!messages.length) return
     const ackPath = `${w.state}/mailbox/${w.sid}.acks`
     const acks = (await $.fs.exists(ackPath)) ? acksOf(String(await $.fs.read(ackPath))) : new Map()
-    const pending = messages.filter((m) => acks.get(m.id)?.state !== 'submitted' && !submitted.has(m.id))
+    const pending = messages.filter((m) => !DONE.has(acks.get(m.id)?.state ?? '') && !submitted.has(m.id))
     if (!pending.length) return
     /** @type {{ id: string, state: string }[]} */
     const fresh = []
@@ -225,10 +241,21 @@ async function pollInbox($) {
     } else {
       const m = pending[0]
       submitted.add(m.id)
-      // the session counts as working at once: the next pass must not submit a second message before turn.start
-      setStatus('working')
-      await $.prompt.submit({ text: m.text, asUser: true })
-      fresh.push({ id: m.id, state: 'submitted' })
+      const command = await commandOf($, m.text)
+      if (command === 'unknown') {
+        // the engine takes no prompt that opens with a slash: a name the session does not know is refused, and said
+        fresh.push({ id: m.id, state: 'refused' })
+      } else if (command) {
+        // a slash command the session knows runs as one (/compact): a prompt would hand its text to the model.
+        // No status change: a command may make no turn, and this pass holds the inbox until it has run.
+        await $.command.run(command)
+        fresh.push({ id: m.id, state: 'submitted' })
+      } else {
+        // the session counts as working at once: the next pass must not submit a second message before turn.start
+        setStatus('working')
+        await $.prompt.submit({ text: m.text, asUser: true })
+        fresh.push({ id: m.id, state: 'submitted' })
+      }
     }
     if (!fresh.length) return
     const now = Date.now()

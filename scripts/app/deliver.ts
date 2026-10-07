@@ -15,6 +15,9 @@ import { nowIso, STATE } from "./env.ts";
 import { deliverThroughInbox } from "./mod.ts";
 import { claimResume, endResume, loadSujets, logEvent, updateSujet } from "./store.ts";
 
+/** A message that is a slash command ("/compact", "/compact keep the plan"): only the mod or a resume can run it. */
+export const isSlashCommand = (text: string): boolean => /^\/[A-Za-z0-9_:-]+(?:\s|$)/.test(text.trim());
+
 export type Delivery = { ok: true; note: string; via: "inbox" | "sendmessage" | "resume" } | { ok: false; error: string; status: number };
 
 /**
@@ -28,6 +31,10 @@ export async function deliverToSujet(key: string, message: string, origin: strin
   if (!s.sessionId) return { ok: false, error: t("board.api.noSession", { letter: s.letter }), status: 409 };
   const sessionId = s.sessionId;
   const inbox = await deliverThroughInbox(STATE, sessionId, message, { timeoutMs: opts.ackTimeoutMs });
+  if (inbox.via === "inbox" && inbox.ack === "refused") {
+    logEvent({ type: `${origin}-send-failed`, key: s.key, error: "unknown command" });
+    return { ok: false, error: t("board.api.commandUnknown", { letter: s.letter, command: message.trim().split(/\s/)[0] }), status: 409 };
+  }
   if (inbox.via === "inbox") {
     logEvent({ type: `${origin}-send`, key: s.key, via: "inbox", ack: inbox.ack });
     return { ok: true, note: t(inbox.ack === "submitted" ? "board.api.inboxDelivered" : "board.api.inboxQueued", { letter: s.letter }), via: "inbox" };
@@ -45,13 +52,14 @@ export async function deliverToSujet(key: string, message: string, origin: strin
     logEvent({ type: `${origin}-send`, key: s.key, via: "sendmessage" });
     return { ok: true, note: noted(t("board.api.delivered", { letter: s.letter })), via: "sendmessage" };
   };
-  if (routeDecision(rows.get(sessionId)) === "sendmessage") return toLive();
+  // SendMessage hands the text to the model as a message from another agent: a slash command would only be read
+  if (routeDecision(rows.get(sessionId)) === "sendmessage") return isSlashCommand(message) ? { ok: false, error: t("board.api.commandNeedsMod", { letter: s.letter }), status: 409 } : toLive();
   const busyUntil = await claimResume(s.key);
   if (busyUntil !== null) {
     // another message is already resuming the session: wait until it runs, then hand this one over
     while (Date.now() < busyUntil) {
       await Bun.sleep(1_000);
-      if (routeDecision((await agentsBySessionAsync())?.get(sessionId)) === "sendmessage") return toLive();
+      if (routeDecision((await agentsBySessionAsync())?.get(sessionId)) === "sendmessage") return isSlashCommand(message) ? { ok: false, error: t("board.api.commandNeedsMod", { letter: s.letter }), status: 409 } : toLive();
     }
     return { ok: false, error: t("board.api.resumeBusy", { letter: s.letter }), status: 409 };
   }

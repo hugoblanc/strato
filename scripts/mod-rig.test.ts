@@ -87,6 +87,37 @@ describe("delivery through the inbox", () => {
     expect(spawns(r)[0].startsWith("--resume sess-acme-0 [Ann, from the board] go")).toBe(true);
   }, 30_000);
 
+  test("a slash command the session does not have: refused by the mod, and said; nothing else is sent", async () => {
+    const r = rig();
+    writeSujets(r, [sujet()]);
+    declare(r, "sess-acme-0");
+    let stop = false;
+    const mod = (async () => {
+      while (!stop) {
+        await Bun.sleep(50);
+        const pending = inboxMessages(r.state, "sess-acme-0");
+        if (pending.length) writeFileSync(acksPath(r.state, "sess-acme-0"), pending.map((m) => `${JSON.stringify({ id: m.id, state: "refused", at: Date.now() })}\n`).join(""));
+      }
+    })();
+    const res = await inProcess(r, { d: "app/deliver.ts" }, `return await d.deliverToSujet("A", "/nope now", "board", { ackTimeoutMs: 5000 });`);
+    stop = true;
+    await mod;
+    expect(res.ok).toBe(false);
+    expect(res.error).toContain("/nope");
+    expect(spawns(r)).toEqual([]);
+  }, 30_000);
+
+  test("a slash command to a live session without the mod: refused, never relayed as text", async () => {
+    const r = rig();
+    writeSujets(r, [sujet()]);
+    writeFileSync(join(r.dir, "agents.json"), JSON.stringify([{ id: "s1", sessionId: "sess-acme-0", status: "idle", name: "acme" }]));
+    const res = await inProcess(r, { d: "app/deliver.ts" }, `return await d.deliverToSujet("A", "/compact", "board", { ackTimeoutMs: 300 });`);
+    expect(res.ok).toBe(false);
+    expect(res.status).toBe(409);
+    expect(res.error).toContain("terminal");
+    expect(spawns(r)).toEqual([]);
+  }, 30_000);
+
   test("no declaration: the old routes, untouched", async () => {
     const r = rig();
     writeSujets(r, [sujet()]);

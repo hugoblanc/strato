@@ -25,6 +25,12 @@ function world(on: any, files: Record<string, string> = {}) {
     submitted.push(e)
     return { text: e.text }
   })
+  const commands: any[] = []
+  on('command.list', async () => ({ value: [{ name: 'compact', description: 'Compact', source: 'builtin' }] }))
+  on('command.run', async ($: any, e: any) => {
+    commands.push(e)
+    return { text: '' }
+  })
   on('session.start', async ($: any, e: any) => ({ cwd: e.cwd }))
   on('turn.start', async ($: any, e: any) => ({ turnId: e.turnId }))
   on('turn.complete', async ($: any, e: any) => ({ text: e.answer }))
@@ -33,7 +39,7 @@ function world(on: any, files: Record<string, string> = {}) {
   on('classic.SubagentStart', async () => ({}))
   on('classic.SubagentStop', async () => ({}))
   const live = () => JSON.parse(files[LIVE])
-  return { clock, files, submitted, live }
+  return { clock, files, submitted, commands, live }
 }
 
 test('declares the turn, its current step and its last answer', async ($: any, on: any) => {
@@ -89,4 +95,20 @@ test('an inbox message is queued while the session works, submitted once it is i
   // never twice, whatever the next passes find
   await w.clock.advance(10_000)
   expect(w.submitted.length).toBe(1)
+})
+
+test('an inbox message that is a known slash command runs as one; an unknown one is refused, never submitted', async ($: any, on: any) => {
+  const lines = [{ id: 'm1', text: '/compact keep the plan', at: 1 }, { id: 'm2', text: '/nope', at: 2 }, { id: 'm3', text: 'hello', at: 3 }]
+  const w = world(on, { [BOX]: `${lines.map((l) => JSON.stringify(l)).join('\n')}\n` })
+  await $.session.start({ cwd: '/acme', surface: null, isInteractive: false })
+  await w.clock.advance(2_100)
+  expect(w.commands.length).toBe(1)
+  expect(w.commands[0].command).toBe('compact')
+  expect(w.commands[0].args).toBe('keep the plan')
+  expect(w.submitted.length).toBe(0)
+  expect(w.files[ACKS]).toContain('"id":"m1","state":"submitted"')
+  await w.clock.advance(10_000)
+  expect(w.commands.length).toBe(1)
+  expect(w.submitted.map((x: any) => x.text)).toEqual(['hello'])
+  expect(w.files[ACKS]).toContain('"id":"m2","state":"refused"')
 })

@@ -106,7 +106,10 @@ export interface InboxMessage {
   text: string;
   at: number;
 }
-export type AckState = "queued" | "submitted";
+/** queued: the session works; submitted: it took the message (or ran the command); refused: a slash command it does not have. */
+export type AckState = "queued" | "submitted" | "refused";
+/** The acks after which the mod never takes the message again. */
+const done = (a: AckState | undefined) => a === "submitted" || a === "refused";
 
 export const inboxPath = (state: string, sessionId: string) => join(state, "mailbox", `${sessionId}.ndjson`);
 export const acksPath = (state: string, sessionId: string) => join(state, "mailbox", `${sessionId}.acks`);
@@ -129,15 +132,15 @@ const ndjson = <T>(path: string, keep: (x: unknown) => x is T): T[] => {
   return out;
 };
 const isMessage = (x: unknown): x is InboxMessage => !!x && typeof (x as InboxMessage).id === "string" && typeof (x as InboxMessage).text === "string";
-const isAck = (x: unknown): x is { id: string; state: AckState; at: number } => !!x && typeof (x as { id: unknown }).id === "string" && ((x as { state: unknown }).state === "queued" || (x as { state: unknown }).state === "submitted");
+const isAck = (x: unknown): x is { id: string; state: AckState; at: number } => !!x && typeof (x as { id: unknown }).id === "string" && ["queued", "submitted", "refused"].includes((x as { state: unknown }).state as string);
 
 /** The messages of a session's inbox, in order. */
 export const inboxMessages = (state: string, sessionId: string): InboxMessage[] => ndjson(inboxPath(state, sessionId), isMessage);
 
-/** What the mod acknowledged, by message id: `submitted` wins over `queued`. */
+/** What the mod acknowledged, by message id: `submitted` or `refused` wins over `queued`. */
 export function inboxAcks(state: string, sessionId: string): Map<string, AckState> {
   const out = new Map<string, AckState>();
-  for (const a of ndjson(acksPath(state, sessionId), isAck)) if (out.get(a.id) !== "submitted") out.set(a.id, a.state);
+  for (const a of ndjson(acksPath(state, sessionId), isAck)) if (!done(out.get(a.id))) out.set(a.id, a.state);
   return out;
 }
 
@@ -149,7 +152,7 @@ export function inboxAcks(state: string, sessionId: string): Map<string, AckStat
 export function postToInbox(state: string, sessionId: string, text: string, now = Date.now()): string {
   const id = `m_${now.toString(36)}${randomBytes(4).toString("hex")}`;
   const acks = inboxAcks(state, sessionId);
-  const kept = inboxMessages(state, sessionId).filter((m) => acks.get(m.id) !== "submitted");
+  const kept = inboxMessages(state, sessionId).filter((m) => !done(acks.get(m.id)));
   writeAtomic(inboxPath(state, sessionId), [...kept, { id, text, at: now }].map((m) => `${JSON.stringify(m)}\n`).join(""));
   return id;
 }
