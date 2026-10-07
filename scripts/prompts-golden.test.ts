@@ -64,6 +64,12 @@ const INTENDED: { why: string; names: RegExp; from: string; to: string }[] = [
     from: "only once in production, or when nothing is left to do. ",
     to: 'only once in production, or when nothing is left to do. Closing the topic as settled belongs to the board ("Settled ✅") and the master (close --settled), and that close adds the marker itself: never create a task only to add it; end your card with the topic settled (next and summary say so) and let the close do it. ',
   },
+  {
+    why: "a draft only posts a new chat message: a draft aimed at Linear went out as a reply in the thread, and a draft holding <TICKET_URL> went out as is (the board now refuses both); the card protocol is code, so overrides get it too",
+    names: /./,
+    from: "reads each text before it goes out.\n",
+    to: "reads each text before it goes out. A draft only ever posts a new chat message: a ticket to create, a message to edit or delete is a kind=action task you carry out yourself on go, with its exact text in action. A draft never holds a placeholder (<TICKET_URL>): when its text depends on something not done yet, add the draft once that thing exists.\n",
+  },
 ];
 
 function check(name: string, text: string): void {

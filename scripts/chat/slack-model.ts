@@ -347,8 +347,19 @@ export const DRAFT_MAX = 3900;
  * The error texts are shown on the board: still French, pending i18n. The French words of the "new message" regex
  * are what French policies write: keep them.
  */
+/** Words of a destination that ask to change a message already posted, not to post one. */
+const EDIT_WORDS = /(?:^|[^\p{L}])(?:édition|éditer|edit|editing|update|modifier|modification|remplacer|supprimer|delete|chat\.update)(?=$|[^\p{L}])/iu;
+/** Words of a destination that name a tool other than Slack. */
+const OTHER_TOOL = /(?:^|[^\p{L}])(?:linear|jira|github|gitlab|notion|clickup|ticket|issue|e-?mail)(?=$|[^\p{L}])/iu;
+
 export function draftDestination(s: Pick<Sujet, "key" | "draftTo" | "channel">): { channel: string; ts: string | null } | { error: string } {
   const to = (s.draftTo ?? "").trim();
+  // what the destination says once its links and channel names are set aside: a draft only ever posts a new message
+  // in Slack, so a destination that names another tool or an edit is refused, never read as the topic's thread
+  const words = to.replace(/https?:\/\/\S+/g, " ").replace(/#[a-z0-9._-]+/gi, " ");
+  if (EDIT_WORDS.test(words)) return { error: "le draft modifie un message existant : le board ne poste que des nouveaux messages, la session s'en charge" };
+  const tool = words.match(OTHER_TOOL)?.[0];
+  if (tool) return { error: `le draft part vers ${tool}, pas dans Slack : la session s'en charge` };
   const link = to.match(/https:\/\/[a-z0-9-]+\.slack\.com\/archives\/[A-Z0-9]+\/p\d{16}[^\s,;)]*/);
   if (link) {
     const p = parsePermalink(link[0]);

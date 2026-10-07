@@ -64,7 +64,7 @@ export interface SentRecord {
 }
 
 /** Why the gate refuses; the board maps the code to an HTTP status. */
-export type RefusalCode = "shadow" | "plan" | "missing" | "topic" | "task" | "sent" | "empty" | "target" | "tool" | "capability" | "tooLong" | "notPostOnly" | "unseen" | "sha" | "busy" | "unknown" | "nothingToUndo";
+export type RefusalCode = "shadow" | "plan" | "missing" | "topic" | "task" | "sent" | "empty" | "target" | "tool" | "capability" | "tooLong" | "placeholder" | "notPostOnly" | "unseen" | "sha" | "busy" | "unknown" | "nothingToUndo";
 
 export interface Refusal {
   code: RefusalCode;
@@ -102,6 +102,12 @@ export function audienceOf(spec: AudienceSpec | undefined, given: Audience | und
 }
 
 /**
+ * A marker left for a value the draft does not have yet ("<TICKET_URL>", "<lien du ticket>"): the text is not final.
+ * Chat markup is not one: links, mentions and channels open with a scheme, @, # or !.
+ */
+const PLACEHOLDER = /<(?!https?:|mailto:|[@#!])\p{L}[^<>\n]{0,60}>/u;
+
+/**
  * The plan a draft task carries out: its text (the person's own edit when given), to its target as the provider
  * resolved it, with the audience and subject its tool declares. The same resolution the board shows (core/targets.ts).
  */
@@ -109,6 +115,8 @@ export function planOfTask(s: Pick<Sujet, "key" | "channel" | "conversation">, x
   if (x.act) return actPlanOf(s, x);
   const text = normalizeText(edited ?? taskDraftText(x));
   if (!text) return refuse("empty", t("board.api.draftEmpty"));
+  const placeholder = text.match(PLACEHOLDER)?.[0];
+  if (placeholder) return refuse("placeholder", t("board.api.draftPlaceholder", { marker: placeholder }));
   const dest = resolveTarget(s, x);
   if (!isResolved(dest)) return refuse(dest.noTool ? "tool" : "target", dest.error);
   const target = { scope: dest.target.scope, native: dest.target.native, label: dest.target.label };

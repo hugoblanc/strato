@@ -44,6 +44,10 @@ describe("the plan of a draft task", () => {
     expect(planOfTask(topic(), task({ draft: "  ", action: "" }))).toMatchObject({ code: "empty" });
     expect(planOfTask(topic(), task({ draftTo: "#acme-support" }))).toMatchObject({ code: "target" });
     expect(planOfTask(topic(), task({ to: "tickets:PLAT-12" }))).toMatchObject({ code: "tool" });
+    expect(planOfTask(topic(), task({ draft: "Ticket's here: <TICKET_URL>" }))).toMatchObject({ code: "placeholder" });
+    expect(planOfTask(topic(), task({ draft: "Ticket : <lien du ticket créé>" }))).toMatchObject({ code: "placeholder" });
+    expect(planOfTask(topic(), task({ draftTo: "Linear, team Acme" }))).toMatchObject({ code: "target" });
+    expect(planOfTask(topic(), task({ draft: "See <https://acme.io|the doc>, <@UBOB> in <#C0ACMEREQ01>, <!here>, under <5% > 3" }))).toHaveProperty("plan");
     expect(planOfTask(topic({ key: "jira:X-1" }), task({ draftTo: "" }))).toMatchObject({ code: "target" });
   });
 

@@ -436,3 +436,18 @@ describe("DMs of other people who installed the app", () => {
     expect(m && classify(m, cfg, new Set())).toBe("dm");
   });
 });
+
+describe("draft destination: never another tool, never an edit", () => {
+  const s = { key: "C0ACME0001:1790000000.000100", channel: "#acme" };
+  test("a destination naming a tracker is refused instead of falling back to the thread", () => {
+    expect(draftDestination({ ...s, draftTo: "Linear, team Acme, priority High" })).toHaveProperty("error");
+    expect(draftDestination({ ...s, draftTo: "Linear, équipe Acme (ticket, pas Slack)" })).toHaveProperty("error");
+  });
+  test("a destination asking to edit a posted message is refused, even with its link", () => {
+    expect(draftDestination({ ...s, draftTo: "#acme, édition de https://acme.slack.com/archives/C0ACME0001/p1790000100000200?thread_ts=1790000000.000100" })).toHaveProperty("error");
+  });
+  test("channel names and links do not trip the words", () => {
+    expect(draftDestination({ ...s, draftTo: "#acme-tickets-update (C0ACME0009), nouveau message" })).toEqual({ channel: "C0ACME0009", ts: null });
+    expect(draftDestination({ ...s, draftTo: "#acme, https://acme.slack.com/archives/C0ACME0001/p1790000000000100" })).toEqual({ channel: "C0ACME0001", ts: "1790000000.000100" });
+  });
+});
