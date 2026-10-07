@@ -241,10 +241,11 @@ describe("rendering", () => {
     expect(lineView(classify(base, [], null, "busy", timeOf), ctx)).toContain("animate-ping");
     expect(lineView(classify(base, [], null, "idle", timeOf), ctx)).not.toContain("animate-ping");
   });
-  test("the last message says who, where, in their words, and links to the message", () => {
+  test("the last message says who, where, in their words, and its quote and its age link to the message", () => {
     const html = lineView(classify(base, [slack({ at: "2026-09-21T07:00:00Z", text: "any news on the bank change?" })], null, null, timeOf), ctx);
     expect(html).toContain('<span class="shrink-0 font-semibold text-ink">Heidi</span>');
-    expect(html).toContain("<q class=\"min-w-0 italic\">any news on the bank change?</q>");
+    // the quote itself opens the message, not only its age
+    expect(html).toMatch(/<a href="https:\/\/acme\.slack\.com\/archives\/C0ACMECMP01\/p1788800000000000[^"]*" data-open[^>]*><q class="italic">any news on the bank change\?<\/q><\/a>/);
     expect(html).toMatch(/<a href="https:\/\/acme\.slack\.com\/archives\/C0ACMECMP01\/p1788800000000000[^"]*" data-open[^>]*><time[^>]*>5 h<\/time><\/a>/);
   });
   test("the page has the three blocks with their counts, the sessions and today's closed topics, without big counters on top", () => {

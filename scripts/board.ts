@@ -990,13 +990,13 @@ function statusView(c: CardView, cardAt: string, ctx: BoardContext): string {
   return `<span class="inline-flex min-w-0 max-w-full items-center gap-1.5 text-[12.5px] font-medium tabular-nums ${STATUS_INK[st.tone]}" data-status-kind="${st.kind}" title="${escapeHtml(tip)}">${st.pulse ? PULSE : shape(st.tone)}<span class="min-w-0 truncate">${escapeHtml(st.text)}</span>${age ? `<span class="shrink-0">${age}</span>` : ""}</span>`;
 }
 
-/** The last message of the thread, in its author's words. */
+/** The last message of the thread, in its author's words: the quote itself opens it in the tool, like its age. */
 function saidView(c: CardView, ctx: BoardContext): string {
   const m = c.said;
   if (!m) return "";
   const age = m.age ? `<time datetime="${escapeHtml(m.at)}" title="${escapeHtml(ctx.timeOf(m.at))}" class="tabular-nums">${escapeHtml(m.age)}</time>` : "";
   const tail = m.url ? `<a href="${escapeHtml(m.url)}" data-open class="shrink-0 whitespace-nowrap text-[12.5px] text-muted hover:text-link hover:underline underline-offset-2" title="${escapeHtml(t("board.card.said.open"))}">${age || "↗"}</a>` : age ? `<span class="shrink-0 whitespace-nowrap text-[12.5px] text-muted">${age}</span>` : "";
-  return `<p class="flex min-w-0 max-w-[88ch] items-baseline gap-x-2 text-[13.5px] leading-snug text-ink/85" data-said><span class="shrink-0 font-semibold text-ink">${escapeHtml(m.who)}</span>${m.where ? `<span class="shrink-0 text-muted">${escapeHtml(m.where)}</span>` : ""}${m.text ? `<q class="min-w-0 italic">${escapeHtml(m.text)}</q>` : ""}${tail}</p>`;
+  return `<p class="flex min-w-0 max-w-[88ch] items-baseline gap-x-2 text-[13.5px] leading-snug text-ink/85" data-said><span class="shrink-0 font-semibold text-ink">${escapeHtml(m.who)}</span>${m.where ? `<span class="shrink-0 text-muted">${escapeHtml(m.where)}</span>` : ""}${m.text ? (m.url ? `<a href="${escapeHtml(m.url)}" data-open class="min-w-0 hover:text-link hover:underline underline-offset-2" title="${escapeHtml(t("board.card.said.open"))}"><q class="italic">${escapeHtml(m.text)}</q></a>` : `<q class="min-w-0 italic">${escapeHtml(m.text)}</q>`) : ""}${tail}</p>`;
 }
 
 /** What the session said since the card was written. */
