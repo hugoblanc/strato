@@ -78,6 +78,21 @@ describe("tasks on the board", () => {
     expect(html).toContain('data-go="C0ACMECMP01:1788788755.025729" data-task="t2"');
   });
 
+  test("a draft for a destination the board cannot post to: Go hands it to the session, Edit and Copy stay, Send is gone", () => {
+    const linear = sujet({ tasks: [task({ id: "t2", draft: "Already fixed since 15 Sep.", draftTo: "Linear TAG-3133, nouveau commentaire" })] });
+    const html = lineView(classify(linear, [], null, "idle", timeOf), ctx);
+    expect(html).toContain('data-postable="0"');
+    expect(html).not.toContain("data-post ");
+    expect(html).toContain('data-go="C0ACMECMP01:1788788755.025729" data-task="t2"');
+    expect(html).toContain("Go, la session l'envoie");
+    expect(html).toContain("data-edit");
+    expect(html).toContain("le draft part vers Linear, pas dans Slack. Sur ton go, la session poste ce texte exact.");
+    expect(html).not.toContain("text-warn empty:hidden");
+    // a text not final yet stays refused, with the marker named
+    const marker = sujet({ tasks: [task({ id: "t2", draft: "Ticket : <TICKET_URL>", draftTo: "Linear TAG-3133" })] });
+    expect(lineView(classify(marker, [], null, "idle", timeOf), ctx)).not.toContain("Go, la session l'envoie");
+  });
+
   test("the badge counts the tasks; the edge and the sort follow the oldest", () => {
     const l = classify(two, [], null, "idle", timeOf);
     expect(l.verdict).toBe("2 tâches");

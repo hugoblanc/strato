@@ -4,7 +4,7 @@
  * way or that may have gone out, a tool that cannot do it).
  */
 import { afterEach, describe, expect, test } from "bun:test";
-import { type ActionPlan, canonicalContent, donePlan, type GateAccount, IN_FLIGHT_STALE_MS, planOfTask, planRefusal, planSha, type Refusal, resolveSettings, shaMatches, type Sujet, type Task, taskRefusal, unknownOf, useProviders, useSettings } from "./lib.ts";
+import { type ActionPlan, canonicalContent, donePlan, type GateAccount, handedToSession, IN_FLIGHT_STALE_MS, planOfTask, planRefusal, planSha, type Refusal, resolveSettings, shaMatches, type Sujet, type Task, taskRefusal, unknownOf, useProviders, useSettings } from "./lib.ts";
 import { BUILTIN_PURE } from "./providers/builtin.ts";
 import { SLACK_DESCRIPTOR } from "./providers/slack/model.ts";
 import { TEST_SETTINGS } from "./test-setup.ts";
@@ -49,6 +49,16 @@ describe("the plan of a draft task", () => {
     expect(planOfTask(topic(), task({ draftTo: "Linear, team Acme" }))).toMatchObject({ code: "target" });
     expect(planOfTask(topic(), task({ draft: "See <https://acme.io|the doc>, <@UBOB> in <#C0ACMEREQ01>, <!here>, under <5% > 3" }))).toHaveProperty("plan");
     expect(planOfTask(topic({ key: "jira:X-1" }), task({ draftTo: "" }))).toMatchObject({ code: "target" });
+  });
+
+  test("a final draft the board cannot post goes to its session; one it can post, or not final, does not", () => {
+    expect(handedToSession(topic(), task({ draftTo: "Linear TAG-3133, nouveau commentaire" }))).toBe(true);
+    expect(handedToSession(topic(), task({ draftTo: `édition du message ${LINK}` }))).toBe(true);
+    expect(handedToSession(topic(), task({ to: "tickets:PLAT-12" }))).toBe(true);
+    expect(handedToSession(topic(), task())).toBe(false);
+    expect(handedToSession(topic(), task({ draftTo: "Linear TAG-3133", draft: "Ticket's here: <TICKET_URL>" }))).toBe(false);
+    expect(handedToSession(topic(), task({ draftTo: "Linear TAG-3133", draft: "" }))).toBe(false);
+    expect(handedToSession(topic(), task({ draftTo: "Linear TAG-3133", action: "merge api!12 then post the draft" }))).toBe(false);
   });
 
   test("the check mark: the tool's marker of a settled thread, on the topic's first item", () => {

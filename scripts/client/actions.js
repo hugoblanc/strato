@@ -450,9 +450,11 @@ function runBusy(btn, label, start) {
     .then(function () { delete busy[id]; paintBusy(); });
 }
 // taskId: the go names the task, the server tells the session which one
-function sendText(key, text, statusEl, taskId) {
+function sendText(key, text, statusEl, taskId, draft) {
   if (statusEl) statusEl.textContent = tr("board.js.sending");
-  return post("/api/send", taskId ? { key: key, text: text, taskId: taskId } : { key: key, text: text })
+  var body = taskId ? { key: key, text: text, taskId: taskId } : { key: key, text: text };
+  if (typeof draft === "string") body.draft = draft;
+  return post("/api/send", body)
     .then(function (x) {
       var t = x.ok ? (x.d.note || tr("board.js.delivered")) : tr("board.js.notDelivered", { error: x.error });
       lastStatus[taskId ? key + "#" + taskId : key] = t;
@@ -574,7 +576,10 @@ document.addEventListener("click", function (ev) {
     lockGo(gid);
     noteActed(gkey);
     runBusy(go, tr("board.js.go.busy"), function () {
-      return sendText(gkey, "go", go.parentElement.querySelector("[data-go-status]"), gtask).then(function (ok) {
+      // a draft the session sends (the board cannot post there): the text edited on the card goes with the go
+      var ged = editing[gid];
+      return sendText(gkey, "go", go.parentElement.querySelector("[data-go-status]"), gtask, ged && ged.text !== ged.base ? ged.text : undefined).then(function (ok) {
+        if (ok && ged) { delete editing[gid]; }
         var b2 = null;
         app.querySelectorAll("[data-go]").forEach(function (b) { if (goIdOf(b) === gid) b2 = b; });
         var st = b2 && b2.parentElement.querySelector("[data-go-status]");

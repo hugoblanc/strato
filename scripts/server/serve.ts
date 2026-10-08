@@ -24,7 +24,7 @@ import { type SocketHealth } from "../chat/slack-model.ts";
 import { type AgentRow, claudeRefs, parsePs } from "../claude/model.ts";
 import { type ActivityStep, type AgentNode, agentTree } from "../claude/transcript.ts";
 import { type ThreadDump } from "../core/cards.ts";
-import { planOfTask, planSha } from "../core/gate.ts";
+import { handedToSession, normalizeText, placeholderOf, planOfTask, planSha } from "../core/gate.ts";
 import { permalinkOfKey } from "../core/keys.ts";
 import { hostOwner, pureOf } from "../core/links.ts";
 import { deepLinkOf } from "../core/targets.ts";
@@ -575,9 +575,16 @@ export async function serve(args: string[]) {
     return { ok: true };
   }
   /** The message a go on a task carries to the session: the task, its exact action, and how to close it. */
-  function taskGoMessage(s: Sujet, x: Task, text: string): string {
+  function taskGoMessage(s: Sujet, x: Task, text: string, edited: string | null = null): string {
     const what = x.action?.trim() || (taskDraftText(x) ? `post the draft of task ${x.id} in ${x.draftTo || "its destination"}` : x.ask);
-    return `${text} on task ${x.id}: ${what.replace(/\\n/g, " ")}\nCarry it out, then mark it done: ${selfCommand()} task ${s.key} done ${x.id}`;
+    const done = `${selfCommand()} task ${s.key} done ${x.id}`;
+    if (handedToSession(s, x)) {
+      // the board cannot post there: the session posts the words the person read, as they are
+      const where = x.to?.trim() || x.draftTo?.trim() || "its destination";
+      const body = edited ?? taskDraftText(x);
+      return `${text} on task ${x.id}: post this exact text${edited !== null ? `, as ${settings().owner.name} edited it on the board` : ""}, unchanged, in ${where}, with your own tools (the board cannot post there):\n${body}\nThen mark it done with the link: ${done} note="<the link>"`;
+    }
+    return `${text} on task ${x.id}: ${what.replace(/\\n/g, " ")}\nCarry it out, then mark it done: ${done}`;
   }
   /**
    * Done or Drop on a task, from the board: the task closes under the lock, then the session is told, so it does not
@@ -963,9 +970,9 @@ export async function serve(args: string[]) {
     }
     if (route === "POST /api/send") {
       if (!localOrigin(req)) return Response.json({ error: t("board.api.originRefused") }, { status: 403 });
-      let body: { key?: unknown; text?: unknown; taskId?: unknown };
+      let body: { key?: unknown; text?: unknown; taskId?: unknown; draft?: unknown };
       try {
-        body = (await req.json()) as { key?: unknown; text?: unknown; taskId?: unknown };
+        body = (await req.json()) as { key?: unknown; text?: unknown; taskId?: unknown; draft?: unknown };
       } catch {
         return Response.json({ error: t("board.api.jsonExpected") }, { status: 400 });
       }
@@ -981,7 +988,10 @@ export async function serve(args: string[]) {
         if (shadow) return Response.json({ error: SHADOW_REFUSAL, code: "shadow" }, { status: 409 });
         // a go would publish words never shown: refused here too, whatever the page shows
         if (sendsUnseenMessage(x)) return Response.json({ error: t("board.api.textsMissing", { id: x.id }) }, { status: 409 });
-        message = taskGoMessage(s, x, message);
+        const edited = typeof body.draft === "string" && body.draft.trim() && handedToSession(s, x) ? normalizeText(body.draft) : null;
+        const marker = edited !== null ? placeholderOf(edited) : null;
+        if (marker) return Response.json({ error: t("board.api.draftPlaceholder", { marker }) }, { status: 409 });
+        message = taskGoMessage(s, x, message, edited);
       }
       // Server-side safety net: the same message to the same topic does not go twice in parallel (double click on Go,
       // two open tabs). A delivery takes 10 to 15 s, the window in which a second click would otherwise go out.

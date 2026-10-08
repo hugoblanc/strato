@@ -85,7 +85,7 @@ export function textKind(target: Target): "reply" | "post" | "comment" {
   return target.scope === "thread" ? "reply" : target.scope === "conversation" ? "post" : "comment";
 }
 
-const normalizeText = (text: string) => text.replace(/\r\n/g, "\n").trim();
+export const normalizeText = (text: string) => text.replace(/\r\n/g, "\n").trim();
 
 /**
  * The audience a text action carries: the task's fields its tool declares for that kind, and nothing else, so the
@@ -107,6 +107,20 @@ export function audienceOf(spec: AudienceSpec | undefined, given: Audience | und
  */
 const PLACEHOLDER = /<(?!https?:|mailto:|[@#!])\p{L}[^<>\n]{0,60}>/u;
 
+/** The marker a text still holds for a value it does not have yet ("<TICKET_URL>"), or null. */
+export const placeholderOf = (text: string): string | null => text.match(PLACEHOLDER)?.[0] ?? null;
+
+/**
+ * A draft the board cannot post itself but its session can: its destination is one no connected tool resolves (a
+ * ticket comment without a tracker account, an email, the edit of a message), its text is final, and its action only
+ * posts. Its go goes to the session with the exact text shown, which the session posts as is through its own tools.
+ */
+export function handedToSession(s: Pick<Sujet, "key" | "channel" | "conversation">, x: Pick<Task, "kind" | "draft" | "action" | "draftTo" | "to" | "act">): boolean {
+  if (x.act || !x.draft?.trim() || !postOnlyAction(x)) return false;
+  if (placeholderOf(normalizeText(x.draft))) return false;
+  return !isResolved(resolveTarget(s, x));
+}
+
 /**
  * The plan a draft task carries out: its text (the person's own edit when given), to its target as the provider
  * resolved it, with the audience and subject its tool declares. The same resolution the board shows (core/targets.ts).
@@ -115,7 +129,7 @@ export function planOfTask(s: Pick<Sujet, "key" | "channel" | "conversation">, x
   if (x.act) return actPlanOf(s, x);
   const text = normalizeText(edited ?? taskDraftText(x));
   if (!text) return refuse("empty", t("board.api.draftEmpty"));
-  const placeholder = text.match(PLACEHOLDER)?.[0];
+  const placeholder = placeholderOf(text);
   if (placeholder) return refuse("placeholder", t("board.api.draftPlaceholder", { marker: placeholder }));
   const dest = resolveTarget(s, x);
   if (!isResolved(dest)) return refuse(dest.noTool ? "tool" : "target", dest.error);

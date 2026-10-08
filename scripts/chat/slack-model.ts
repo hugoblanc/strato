@@ -357,9 +357,9 @@ export function draftDestination(s: Pick<Sujet, "key" | "draftTo" | "channel">):
   // what the destination says once its links and channel names are set aside: a draft only ever posts a new message
   // in Slack, so a destination that names another tool or an edit is refused, never read as the topic's thread
   const words = to.replace(/https?:\/\/\S+/g, " ").replace(/#[a-z0-9._-]+/gi, " ");
-  if (EDIT_WORDS.test(words)) return { error: "le draft modifie un message existant : le board ne poste que des nouveaux messages, la session s'en charge" };
+  if (EDIT_WORDS.test(words)) return { error: "le draft modifie un message existant, le board ne poste que des nouveaux messages" };
   const tool = words.match(OTHER_TOOL)?.[0];
-  if (tool) return { error: `le draft part vers ${tool}, pas dans Slack : la session s'en charge` };
+  if (tool) return { error: `le draft part vers ${tool}, pas dans Slack` };
   const link = to.match(/https:\/\/[a-z0-9-]+\.slack\.com\/archives\/[A-Z0-9]+\/p\d{16}[^\s,;)]*/);
   if (link) {
     const p = parsePermalink(link[0]);

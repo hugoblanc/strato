@@ -130,6 +130,26 @@ describe("board task routes", () => {
     }
   }, 30_000);
 
+  test("Go on a draft the board cannot post: the session gets the exact text, edited or not, and a placeholder is refused", async () => {
+    const r = rig();
+    writeSujets(r, [sujet({ status: "gate", gate: "draft", tasks: [task({ id: "t1", draft: "Already fixed since 15 Sep.", draftTo: "Linear TAG-3133, new comment" })] })]);
+    const serve = await serveWithSlack(r);
+    try {
+      expect((await postBoard(serve.port, "/api/post-draft", { key: KEY, taskId: "t1", text: "Already fixed since 15 Sep." })).status).toBeGreaterThanOrEqual(400);
+      expect((await postBoard(serve.port, "/api/send", { key: KEY, text: "go", taskId: "t1", draft: "See <TICKET_URL>" })).status).toBe(409);
+      const go = await postBoard(serve.port, "/api/send", { key: KEY, text: "go", taskId: "t1", draft: "Already fixed since 15 Sep, see the logs." });
+      expect(go.status).toBe(200);
+      const spawned = readFileSync(join(r.dir, "spawns.log"), "utf8");
+      expect(spawned).toContain("post this exact text, as");
+      expect(spawned).toContain("in Linear TAG-3133, new comment");
+      expect(spawned).toContain("Already fixed since 15 Sep, see the logs.");
+      expect(spawned).toContain(`task ${KEY} done t1`);
+      expect(lines(join(r.dir, "slack.log")).filter((m) => m === "chat.postMessage").length).toBe(0);
+    } finally {
+      await serve.stop();
+    }
+  }, 30_000);
+
   test("closing the topic from the board drops its open tasks", async () => {
     const r = rig();
     writeSujets(r, [twoTasks()]);

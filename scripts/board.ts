@@ -7,7 +7,7 @@
  * Every visible word goes through core/i18n.ts: t() on the server, tr() in the page's script.
  */
 import { faviconHref, stratoMark } from "./core/brand.ts";
-import { isItemEvent, postOnlyAction, truncate, t, clientMessages, locale, type MessageKey, type ActivityStep, type AgentNode, agentCounts, type Due, type MasterRequest, type MrStage, MR_STAGE_ORDER, parseDue, REVUE_STALE_MS, REVUE_WINDOWS, draftText, isSnoozed, type Snooze, parseSteps, permalinkOfKey, providerKeyLabel, providerLabel, repoLabel, isResolved, maxTextOf, planOfTask, planSha, providerOfKey, unknownOf, renderHtml, resolveTarget, type ResolvedTarget, targetLink, threadInfoOfKey, type UnresolvedTarget, type SessionContext, settings, shellQuote, ticketUrl, type SocketHealth, socketDeaf, type Sujet, sujetKeys, takenBy, freshness, gateSince, checkable, hasDoneMarker, descriptorOf, openTasks, tasksOf, taskDraftText, taskReady, sendsUnseenMessage, type Task, type TaskKind } from "./lib.ts";
+import { isItemEvent, handedToSession, postOnlyAction, truncate, t, clientMessages, locale, type MessageKey, type ActivityStep, type AgentNode, agentCounts, type Due, type MasterRequest, type MrStage, MR_STAGE_ORDER, parseDue, REVUE_STALE_MS, REVUE_WINDOWS, draftText, isSnoozed, type Snooze, parseSteps, permalinkOfKey, providerKeyLabel, providerLabel, repoLabel, isResolved, maxTextOf, planOfTask, planSha, providerOfKey, unknownOf, renderHtml, resolveTarget, type ResolvedTarget, targetLink, threadInfoOfKey, type UnresolvedTarget, type SessionContext, settings, shellQuote, ticketUrl, type SocketHealth, socketDeaf, type Sujet, sujetKeys, takenBy, freshness, gateSince, checkable, hasDoneMarker, descriptorOf, openTasks, tasksOf, taskDraftText, taskReady, sendsUnseenMessage, type Task, type TaskKind } from "./lib.ts";
 import { type StaleSignal, staleSignals } from "./core/refresh.ts";
 import type { StateSource } from "./claude/mod-state.ts";
 import { roleT } from "./core/i18n.ts";
@@ -837,7 +837,9 @@ function taskBox(s: Sujet, x: Task, hint: boolean): string {
     const dest = resolveTarget(s, x);
     const tool = dest.provider;
     const max = tool ? maxTextOf(tool) : null;
-    const why = !isResolved(dest) ? dest.error : max !== null && text.length > max ? t("board.draft.tooLong", { tool: providerLabel(dest.provider), n: text.length }) : "";
+    // a destination the board cannot post to (another tool, an edit): the go goes to the session with the exact text
+    const handed = handedToSession(s, x);
+    const why = handed ? "" : !isResolved(dest) ? dest.error : max !== null && text.length > max ? t("board.draft.tooLong", { tool: providerLabel(dest.provider), n: text.length }) : "";
     const legacy = !x.draft?.trim();
     // the action does more than post (merge then post…): Go to the session, which runs everything in order
     const viaSession = !postOnlyAction(x);
@@ -845,16 +847,18 @@ function taskBox(s: Sujet, x: Task, hint: boolean): string {
     // Send becomes "Send again" (data-retry), which tells the gate the person checked
     const maybe = unknownOf(x, Date.now());
     const postButtons = `<div class="mt-2.5 flex flex-wrap items-center gap-1.5">${shadow ? shadowButton() : `<button type="button" data-post class="${BTN_PRIMARY}"${why ? ` disabled title="${escapeHtml(why)}"` : ` title="${escapeHtml(t("board.draft.send.tip"))}"`}><span data-label>${t(maybe && !why ? "board.js.post.again" : "board.draft.send")}</span>${keyHint}</button>`}<button type="button" data-edit class="${BTN}">${t("board.draft.edit")}</button><button type="button" data-copy class="${BTN}">${t("board.draft.copy")}</button>${ops}</div>`;
+    // handed to the session: Go sends it the exact text (edited or not); Edit and Copy stay
+    const handedButtons = `<div class="mt-2.5 flex flex-wrap items-center gap-1.5">${shadow ? shadowButton() : `<button type="button" data-go="${key}" data-task="${id}" class="${BTN_PRIMARY}" title="${escapeHtml(t("board.draft.handed.tip"))}">${t("board.draft.handed")}${keyHint}</button>`}<button type="button" data-edit class="${BTN}">${t("board.draft.edit")}</button><button type="button" data-copy class="${BTN}">${t("board.draft.copy")}</button><span class="min-w-0 truncate text-[12.5px] text-muted" data-go-status></span>${ops}</div>`;
     // the hash of the plan shown: Send sends it back, and the gate acts only if the task still hashes to it
     const plan = planOfTask(s, x);
     const sha = "plan" in plan ? ` data-sha="${planSha(plan.plan)}"` : "";
-    return `<form class="cursor-auto rounded-lg border border-accent/40 bg-accent-soft/30 px-4 py-3" data-draft data-key="${key}" data-task="${id}" data-draft-to="${escapeHtml(x.draftTo ?? "")}"${sha}${maybe ? " data-retry" : ""} data-postable="${why || viaSession || shadow ? "0" : "1"}">
+    return `<form class="cursor-auto rounded-lg border border-accent/40 bg-accent-soft/30 px-4 py-3" data-draft data-key="${key}" data-task="${id}" data-draft-to="${escapeHtml(x.draftTo ?? "")}"${sha}${maybe ? " data-retry" : ""} data-postable="${why || viaSession || handed || shadow ? "0" : "1"}">
 <div class="flex items-center gap-2 text-[12.5px]"><span class="font-semibold text-accent-ink">${t("board.draft.label")}</span>${draftToLink(x, dest)}<span class="ml-auto shrink-0 text-[11.5px] tabular-nums text-muted">${t("board.draft.chars", { n: text.length })}</span></div>${audienceLine(plan)}
 <div class="mt-1.5 max-h-80 max-w-[88ch] overflow-y-auto whitespace-pre-wrap text-[13.5px] leading-relaxed text-ink" data-draft-text>${draftHtml(tool ?? providerOfKey(s.key), text)}</div>
 <textarea name="draft" rows="${Math.min(14, Math.max(4, text.split("\n").length + Math.ceil(text.length / 90)))}" hidden data-draft-edit class="mt-1.5 w-full resize-y rounded-md border border-line bg-bg px-2.5 py-2 text-[13.5px] leading-relaxed focus:border-accent focus:outline-none focus:ring-2 focus:ring-accent/20">${escapeHtml(text)}</textarea>
 ${legacy ? `<p class="mt-1 text-[11.5px] text-muted">${t("board.draft.legacy")}</p>` : ""}
-${viaSession ? `<div class="mt-2.5 flex flex-wrap items-center gap-2">${shadow ? shadowButton() : `<button type="button" data-go="${key}" data-task="${id}" class="${BTN_PRIMARY}" title="${escapeHtml(t("board.draft.viaSession.tip"))}">${t("board.draft.viaSession")}${keyHint}</button>`}<span class="min-w-0 truncate text-[12.5px] text-muted" data-go-status>${escapeHtml(truncate(x.action ?? "", 140))}</span>${ops}</div>` : postButtons}
-<p class="mt-1.5 text-[12.5px] leading-snug ${why || maybe ? "text-warn" : "text-muted"} empty:hidden" data-draft-status>${why ? escapeHtml(why) : maybe ? escapeHtml(t("gate.mayHaveGone", { id: x.id, link: maybe.link ?? s.permalink })) : ""}</p>
+${viaSession ? `<div class="mt-2.5 flex flex-wrap items-center gap-2">${shadow ? shadowButton() : `<button type="button" data-go="${key}" data-task="${id}" class="${BTN_PRIMARY}" title="${escapeHtml(t("board.draft.viaSession.tip"))}">${t("board.draft.viaSession")}${keyHint}</button>`}<span class="min-w-0 truncate text-[12.5px] text-muted" data-go-status>${escapeHtml(truncate(x.action ?? "", 140))}</span>${ops}</div>` : handed ? handedButtons : postButtons}
+<p class="mt-1.5 text-[12.5px] leading-snug ${why || maybe ? "text-warn" : "text-muted"} empty:hidden" data-draft-status>${why ? escapeHtml(why) : handed && !isResolved(dest) ? escapeHtml(t("board.draft.handed.why", { why: dest.error })) : maybe ? escapeHtml(t("gate.mayHaveGone", { id: x.id, link: maybe.link ?? s.permalink })) : ""}</p>
 </form>`;
   }
   if (x.action?.trim() && sendsUnseenMessage(x)) {
@@ -1589,7 +1593,7 @@ export function rowAction(s: Sujet, x: CardTask): RowAction | null {
   if (draft) {
     if (!task.draft?.trim() || !postOnlyAction(task)) return null;
     const dest = resolveTarget(s, task);
-    if (!isResolved(dest)) return null;
+    if (!isResolved(dest)) return handedToSession(s, task) ? fits({ kind: "go", text: draft, dest: dest.label || "?", provider: dest.provider ?? undefined }) : null;
     const max = maxTextOf(dest.provider);
     if (max !== null && draft.length > max) return null;
     const plan = planOfTask(s, task);
